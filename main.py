@@ -17,10 +17,10 @@ if sys.stdout is None or sys.stderr is None:
     except OSError:
         pass
 
-from karina.assistant import Assistant
 
 
 def run_console(cfg):
+    from karina.assistant import Assistant
     def emit(ev):
         if ev["type"] == "log":
             print(f"[{ev['ts']}] {ev['kind']:8} {ev['text']}")
@@ -40,6 +40,7 @@ def run_console(cfg):
 
 def run_gui(cfg):
     import webview
+    from karina.assistant import Assistant
     holder = {}
     from karina.ui_api import Api
     api = Api(cfg, lambda: holder.get("w"))
