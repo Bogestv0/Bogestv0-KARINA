@@ -53,32 +53,66 @@ def run_gui(cfg):
 
 
 def selftest() -> int:
-    """Проверка собранного exe в CI: все библиотеки на месте, ресурсы найдены. Результат — в код выхода и в selftest.log."""
-    import importlib, traceback
+    """Проверка собранного exe в CI. Пишет ход проверки в selftest.log; сторожевой таймер не даёт зависнуть."""
+    import importlib, os, threading, traceback
     from karina.config import DATA, ROOT
+    DATA.mkdir(parents=True, exist_ok=True)
+    logf = open(DATA / "selftest.log", "w", encoding="utf-8", buffering=1)
+    step = {"now": "старт"}
+
+    def watchdog():
+        logf.write(f"ТАЙМАУТ 90 с на шаге: {step['now']}\n")
+        logf.flush()
+        os._exit(2)
+
+    timer = threading.Timer(90, watchdog)
+    timer.daemon = True
+    timer.start()
     bad = []
     for m in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "sounddevice", "numpy", "rapidfuzz", "edge_tts",
               "pyautogui", "pyperclip", "PIL", "webview", "comtypes", "pycaw.pycaw"):
+        step["now"] = "импорт " + m
+        logf.write(step["now"] + "\n")
         try:
             importlib.import_module(m)
-        except Exception:
+        except BaseException:
             bad.append(m + ": " + traceback.format_exc().strip().splitlines()[-1])
+            logf.write("  ОШИБКА: " + bad[-1] + "\n")
+    step["now"] = "проверка ресурсов"
     for rel in ("ui/index.html", "ui/app.js", "ui/app.css", "ui/fonts.css", "ui/logo.png"):
         if not (ROOT / rel).exists():
             bad.append("нет ресурса " + rel)
     try:
-        import faster_whisper, os
+        import faster_whisper
         if not (Path(faster_whisper.__file__).parent / "assets").exists():
             bad.append("нет faster_whisper/assets")
     except Exception:
         pass
-    DATA.mkdir(parents=True, exist_ok=True)
-    (DATA / "selftest.log").write_text("OK\n" if not bad else "\n".join(bad), "utf-8")
+    timer.cancel()
+    logf.write("ИТОГ: " + ("OK" if not bad else "ОШИБКИ\n" + "\n".join(bad)) + "\n")
+    logf.close()
     return 1 if bad else 0
 
 
+def _crash(exc: BaseException):
+    """Ошибка при старте: в журнал и выход. Без этого собранный exe показывает окно с ошибкой и ждёт нажатия."""
+    import traceback
+    try:
+        DATA.mkdir(parents=True, exist_ok=True)
+        with open(DATA / "crash.log", "a", encoding="utf-8") as f:
+            f.write(traceback.format_exc() + "\n")
+    except OSError:
+        pass
+    sys.exit(1)
+
+
 if __name__ == "__main__":
-    if "--selftest" in sys.argv:
-        sys.exit(selftest())
-    c = Config()
-    run_console(c) if "--console" in sys.argv else run_gui(c)
+    try:
+        if "--selftest" in sys.argv:
+            sys.exit(selftest())
+        c = Config()
+        run_console(c) if "--console" in sys.argv else run_gui(c)
+    except SystemExit:
+        raise
+    except BaseException as e:
+        _crash(e)
