@@ -49,15 +49,20 @@ def find_release(flavors=("cpu", "vulkan")) -> dict:
     h = {"User-Agent": "Bogestv0-KARINA", "Accept": "application/vnd.github+json"}
     if os.environ.get("GITHUB_TOKEN"):
         h["Authorization"] = "Bearer " + os.environ["GITHUB_TOKEN"]          # в GitHub Actions — без лимита запросов
-    rels = json.loads(urllib.request.urlopen(urllib.request.Request(API, headers=h), timeout=30).read().decode("utf-8"))
     seen = []
-    for rel in rels:
-        if rel.get("draft") or rel.get("prerelease"):
-            continue
-        if all(_asset(rel, f) for f in flavors):
-            return rel
-        seen.append(rel.get("tag_name"))
-    raise EngineError(f"Не нашла релиз llama.cpp со сборками Windows {'/'.join(flavors)} (проверены: {', '.join(map(str, seen[:8])) or 'ничего'}).")
+    for page in (1, 2, 3):
+        rels = json.loads(urllib.request.urlopen(urllib.request.Request(f"{API}&page={page}", headers=h), timeout=30).read().decode("utf-8"))
+        for rel in rels:
+            # Пре-релизы НЕ пропускаем: llama.cpp помечает свои автоматические сборки именно так.
+            if rel.get("draft"):
+                continue
+            if all(_asset(rel, f) for f in flavors):
+                return rel
+            names = [a["name"] for a in rel.get("assets", [])]
+            seen.append(f"{rel.get('tag_name')} (файлы: {', '.join(names[:6]) or 'нет'})")
+        if len(rels) < 30:
+            break
+    raise EngineError(f"Не нашла релиз llama.cpp со сборками Windows {'/'.join(flavors)}. Проверены: {', '.join(seen[:8]) or 'список релизов пуст'}.")
 
 
 def fetch_engine(flavor: str, dest: Path, progress=None, rel: dict | None = None) -> Path:
