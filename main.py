@@ -175,7 +175,10 @@ def run_gui(cfg):
     threading.Thread(target=heartbeat, daemon=True, name="heartbeat").start()
     trace("Окно создано, запускаю")
     trace("webview.start: вход")
-    webview.start(lambda: (trace("Окно открыто, запускаю ассистента"), assistant.start(), trace("Ассистент запущен")), icon=str(ROOT / "ui" / "logo.png") if (ROOT / "ui" / "logo.png").exists() else None)
+    # icon не передаём на Windows: окно принимает только .ico, а PNG даёт System.ArgumentException в Icon.Initialize
+    # и роняет весь процесс (код 0xE0434352). Значок окна и так берётся из exe (build/karina.spec: icon=logo.ico).
+    icon = None if sys.platform == "win32" else (str(ROOT / "ui" / "logo.png") if (ROOT / "ui" / "logo.png").exists() else None)
+    webview.start(lambda: (trace("Окно открыто, запускаю ассистента"), assistant.start(), trace("Ассистент запущен")), icon=icon)
     trace("Окно закрыто, завершение")
     assistant.stop()
 
