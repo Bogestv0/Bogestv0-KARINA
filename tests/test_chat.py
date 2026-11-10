@@ -65,6 +65,7 @@ class T(unittest.TestCase):
     def test_voice_speaks_short_and_shows_full(self):
         said = []
         svc, ev = make(FakeEngine("ГОЛОС: Отчёт готов.\n\n## Отчёт\nПодробности"), said)
+        svc.cfg.update({"search": {"mode": "off"}})      # здесь проверяем только голосовой формат; поиск — в test_research.py
         cid = svc.send(None, "найди и напиши отчёт про х", voice=True, wait=True)
         self.assertEqual(said, ["Отчёт готов."])
         self.assertEqual(svc.store.get(cid)["messages"][-1]["text"], "## Отчёт\nПодробности")

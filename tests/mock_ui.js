@@ -17,7 +17,7 @@
     check_update: async()=>({available:true,current:'1.1.0',latest:'1.2.0',notes:'## Что нового\n* Окно «Чат»\n* Поиск в интернете',can_install:true}), install_update: async()=>({ok:true}),
     chat_list: async()=>({chats:[{id:'a1',title:'Отчёт про солнечные панели',updated:2,count:2},{id:'b2',title:'Что такое Vulkan',updated:1,count:2}],busy:false,current:null}),
     chat_get: async()=>({id:'a1',messages:[{id:'1',role:'user',text:'Объясни, что такое Vulkan, коротко'},{id:'2',role:'assistant',text:'## Vulkan\nЭто **графический API** нового поколения.\n\n- работает ближе к железу\n- кроссплатформенный\n1. шаг один\n\n```\nvkCreateInstance()\n```\nПодробнее: [Khronos](https://www.khronos.org/vulkan/) или https://example.com/x'}]}),
-    chat_new: async()=>({id:'c3',messages:[]}), chat_send: async()=>({ok:true,chat:'a1'}), chat_stop: async()=>true, chat_delete: async()=>true, open_url: async()=>true,
+    chat_new: async()=>({id:'c3',messages:[]}), chat_send: async()=>({ok:true,chat:'a1'}), chat_stop: async()=>true, search_test: async()=>true, chat_delete: async()=>true, open_url: async()=>true,
     list_apps: async()=>[{name:'Bogestv0 MIXER',aliases:['миксер','mixer'],src:'bogestv0',path:'',found:true},{name:'Bogestv0 REMOTE',aliases:['ремоут'],src:'bogestv0',path:'',found:false},{name:'Моя программа',aliases:['моя'],src:'user',path:'C:\\Tools\\my.exe',found:true},{name:'Блокнот',aliases:['блокнот'],src:'system',path:'',found:true}],
     send_text: async()=>true, set_listening: async()=>true, test_voice: async()=>true, wake_up: async()=>true, save_settings: async()=>cfg
   }};

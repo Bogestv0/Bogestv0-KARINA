@@ -201,7 +201,7 @@ class Assistant:
             return
         cid = self.chat.voice_chat_id()
         self.emit({"type": "chat_open", "chat": cid})
-        self.say("Хорошо, подумаю.")
+        self.say("Хорошо, поищу в интернете." if self.chat.will_search(text) else "Хорошо, подумаю.")
         self.chat.send(cid, text, voice=True)
 
     def _try_llm(self, ctx: Ctx, text: str):

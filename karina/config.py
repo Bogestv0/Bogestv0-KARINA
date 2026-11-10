@@ -24,6 +24,8 @@ DEFAULTS: dict = {
     "search_engine": "google",    # google | yandex
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-5-5"},
     # встроенные модели (llama.cpp): active — id выбранной модели; gpu: auto | cpu; ctx/threads: 0 = по умолчанию
+    # поиск в интернете для чата: mode — auto (когда просьба этого требует) | always | off; depth — quick | normal | deep | max
+    "search": {"mode": "auto", "depth": "normal"},
     "updates": {"auto": True},   # проверять новую версию при запуске
     "models": {"active": "", "gpu": "auto", "ctx": 0, "threads": 0},
     "apps": [],       # свои программы: {"name","aliases":[],"path","args","proc":[]}

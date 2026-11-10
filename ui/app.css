@@ -169,6 +169,10 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .cmsg .copy{font-size:12px;align-self:flex-start;opacity:.7}
 .chat-step{padding:6px 20px;font-size:13px;color:var(--accent)}
 .chat-step[hidden]{display:none}
+.steps{font-size:12.5px;color:var(--muted);align-self:flex-start}
+.steps summary{cursor:pointer;user-select:none}
+.steps ol{margin:6px 0 0;padding-left:20px}
+.chat-input #chWeb{white-space:nowrap;font-size:13px;padding:9px 12px}
 .chat-input{display:flex;gap:10px;align-items:flex-end;padding:14px 16px;border-top:1px solid var(--line)}
 .chat-input textarea{flex:1;resize:none;max-height:160px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--fg);font:inherit;line-height:1.4}
 .chat-input textarea:focus{outline:none;border-color:var(--accent)}

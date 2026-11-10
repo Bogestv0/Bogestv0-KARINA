@@ -2,8 +2,10 @@
 from __future__ import annotations
 import datetime, json, re, threading, time, uuid
 from pathlib import Path
+from . import net, research, websearch
 from .config import DATA
 from .engine import EngineError
+from .textutil import norm
 
 CHATS_DIR = DATA / "chats"
 MAX_TOKENS = 1500
@@ -26,10 +28,12 @@ def wants_open_chat(text: str) -> bool:
     return bool(OPEN_CHAT.search(text))
 
 
-def system_prompt(voice: bool = False) -> str:
+def system_prompt(voice: bool = False, web: bool = False) -> str:
     today = datetime.date.today().strftime("%d.%m.%Y")
+    access = ("Ты можешь пользоваться материалами из интернета, которые тебе дадут. " if web
+              else "Сейчас у тебя нет доступа к интернету и файлам: не утверждай, что что-то нашла или открыла. ")
     p = ("Ты — Карина, помощник на компьютере пользователя. Отвечай по-русски (если не просят иначе), по делу и без воды. "
-         f"Сегодня {today}. Сейчас у тебя нет доступа к интернету и файлам: не утверждай, что что-то нашла или открыла. "
+         f"Сегодня {today}. {access}"
          "Не выдумывай факты, цифры, имена и ссылки; если не уверена или не знаешь — скажи об этом прямо. "
          "Знания могут быть устаревшими, для свежих событий предупреждай об этом. "
          "Оформление: короткие абзацы, списки и **жирный** можно, код — в блоках ```.")
@@ -136,15 +140,16 @@ class ChatService:
         self._stop.set()
 
     # ---------- ответ ----------
-    def send(self, cid: str | None, text: str, voice: bool = False, wait: bool = False) -> str | None:
-        """Запускает ответ в фоне. Возвращает id диалога или None, если уже идёт другой ответ."""
+    def send(self, cid: str | None, text: str, voice: bool = False, wait: bool = False, search: bool | None = None) -> str | None:
+        """Запускает ответ в фоне. Возвращает id диалога или None, если уже идёт другой ответ.
+        search: True — искать в интернете, False — не искать, None — по настройке («Авто»: когда просьба этого требует)."""
         text = (text or "").strip()
         if not text:
             return cid
         if self.busy:
             return None
         chat = (cid and self.store.get(cid)) or self.store.new()
-        t = threading.Thread(target=self._run, args=(chat, text, voice), daemon=True, name="karina-chat")
+        t = threading.Thread(target=self._run, args=(chat, text, voice, search), daemon=True, name="karina-chat")
         t.start()
         if wait:
             t.join()
@@ -158,7 +163,22 @@ class ChatService:
             ctx = int(m["ctx"]) if m else 8192
         return int(max(1000, ctx - MAX_TOKENS - 600) * CHARS_PER_TOKEN)
 
-    def _run(self, chat: dict, text: str, voice: bool):
+    def _search_cfg(self) -> dict:
+        c = self.cfg.get("search", {}) or {}
+        mode = c.get("mode") if c.get("mode") in ("auto", "always", "off") else "auto"
+        depth = c.get("depth") if c.get("depth") in research.DEPTH else research.DEFAULT_DEPTH
+        return {"mode": mode, "depth": depth}
+
+    def _use_search(self, text: str, override: bool | None) -> bool:
+        if override is not None:
+            return override
+        mode = self._search_cfg()["mode"]
+        return mode == "always" or (mode == "auto" and research.wants_search(norm(text)))
+
+    def will_search(self, text: str) -> bool:
+        return self._use_search(text, None) and net.is_online()
+
+    def _run(self, chat: dict, text: str, voice: bool, search: bool | None = None):
         if not self._busy.acquire(blocking=False):
             return
         cid = chat["id"]
@@ -171,28 +191,61 @@ class ChatService:
         reply = {"id": uuid.uuid4().hex[:8], "role": "assistant", "text": "", "ts": now}
         self.emit({"type": "chat_start", "chat": cid, "user": chat["messages"][-1], "reply_id": reply["id"], "title": chat["title"]})
         err, spoken = "", ""
+        steps: list[str] = []
+
+        def step(t: str):
+            if not steps or steps[-1] != t:
+                steps.append(t)
+            self.emit({"type": "chat_step", "chat": cid, "text": t})
+
         try:
             if self.engine.state != "ready":
-                self.emit({"type": "chat_step", "chat": cid, "text": "Загружаю модель в память…"})
+                step("Загружаю модель в память…")
             api_msgs = [{"role": m["role"] if m["role"] == "user" else "assistant", "content": m["text"]} for m in chat["messages"] if m["text"]]
-            hist = fit_history(api_msgs, self._history_budget())
-            messages = [{"role": "system", "content": system_prompt(voice)}] + hist
+            budget = self._history_budget()
+            hist = fit_history(api_msgs, budget)
             last = [0.0]
 
             def on_delta(t: str):
                 if not last[0]:
-                    self.emit({"type": "chat_step", "chat": cid, "text": "Пишу ответ…"})
+                    step("Пишу ответ…")
                     last[0] = 1e-9
                 if time.time() - last[0] > 0.12:
                     last[0] = time.time()
                     self.emit({"type": "chat_delta", "chat": cid, "id": reply["id"], "text": t})
 
-            out = self.engine.chat(messages, max_tokens=MAX_TOKENS, on_delta=on_delta, stop=self._stop)
+            note, sources, out = "", [], ""
+            if self._use_search(text, search):
+                if not net.is_online():
+                    note = "⚠ Нет интернета, поэтому поиск не выполнен. Отвечаю из собственных знаний — возможны неточности и устаревшие данные.\n\n"
+                    step("Нет интернета — отвечаю без поиска")
+                else:
+                    sc = self._search_cfg()
+                    rs = research.Researcher(self.engine, step, self._stop, sc["depth"], budget, system=system_prompt(voice, web=True))
+                    try:
+                        ctx_q = "; ".join(m["content"][:120] for m in api_msgs[:-1] if m["role"] == "user")[-400:]
+                        rs.collect(text, ctx_q)
+                        out = rs.answer(text, fit_history(api_msgs, int(budget * 0.25)), on_delta, MAX_TOKENS)
+                        sources = rs.res.sources
+                    except websearch.Cancelled:
+                        self._stop.set()
+                    except websearch.SearchError as e:
+                        note = f"⚠ Не удалось найти информацию в интернете ({e}). Отвечаю из собственных знаний — возможны неточности.\n\n"
+                        step("Поиск не удался — отвечаю без него")
+            if not out and not self._stop.is_set():
+                messages = [{"role": "system", "content": system_prompt(voice)}] + hist
+                out = self.engine.chat(messages, max_tokens=MAX_TOKENS, on_delta=on_delta, stop=self._stop)
+            if voice and out:
+                spoken, out = parse_voice(out)
+            if sources and out:
+                out = research.format_sources(out, sources)
             if self._stop.is_set():
                 out = (out + "\n\n*(остановлено)*").strip()
-            if voice:
-                spoken, out = parse_voice(out)
-            reply["text"] = out or "Модель вернула пустой ответ. Попробуйте переформулировать."
+            reply["text"] = (note + out) if out else "Модель вернула пустой ответ. Попробуйте переформулировать."
+            if sources:
+                reply["sources"] = [{"n": x.n, "url": x.url, "title": x.title} for x in sources]
+            if any(x.startswith(("Ищу", "Читаю")) for x in steps):
+                reply["steps"] = steps[-40:]          # «Ход работы» сохраняется вместе с ответом
         except EngineError as e:
             err = str(e)
             reply["text"] = "⚠ " + err
@@ -202,7 +255,7 @@ class ChatService:
         chat["messages"].append(reply)
         chat["updated"] = time.time()
         self.store.save(chat)
-        self.emit({"type": "chat_done", "chat": cid, "id": reply["id"], "text": reply["text"], "error": err, "title": chat["title"]})
+        self.emit({"type": "chat_done", "chat": cid, "id": reply["id"], "text": reply["text"], "error": err, "title": chat["title"], "steps": reply.get("steps")})
         self._busy.release()
         self.current = None
         if voice and self.speak:

@@ -98,12 +98,38 @@ class Api:
     def chat_delete(self, cid: str):
         return self.assistant.chat.store.delete(cid)
 
-    def chat_send(self, cid: str, text: str):
-        r = self.assistant.chat.send(cid or None, text)
+    def chat_send(self, cid: str, text: str, search=None):
+        r = self.assistant.chat.send(cid or None, text, search=None if search is None else bool(search))
         return {"ok": r is not None, "chat": r, "error": "" if r else "Я ещё отвечаю. Нажмите «Стоп» или подождите."}
 
     def chat_stop(self):
         self.assistant.chat.stop()
+        return True
+
+    def search_test(self):
+        """Проверка поиска: каждый поисковик отдельно + чтение одной страницы. Результат придёт событием search_test."""
+        from . import websearch
+
+        def run():
+            lines, ok = [], False
+            if not net.is_online():
+                lines.append("Нет подключения к интернету.")
+            else:
+                for name, fn in websearch.PROVIDERS:
+                    try:
+                        res = fn("Байкал глубина озера", 5, None)
+                        lines.append(f"✔ {name}: найдено {len(res)}" if res else f"✖ {name}: пусто")
+                        ok = ok or bool(res)
+                    except Exception as e:
+                        lines.append(f"✖ {name}: {e}")
+                try:
+                    p = websearch.fetch_page("https://ru.wikipedia.org/wiki/Байкал")
+                    lines.append(f"✔ Чтение страниц: {len(p['text'])} символов")
+                except Exception as e:
+                    lines.append(f"✖ Чтение страниц: {e}")
+                    ok = False
+            self.emit({"type": "search_test", "ok": ok, "lines": lines})
+        threading.Thread(target=run, daemon=True, name="search-test").start()
         return True
 
     def open_url(self, url: str):

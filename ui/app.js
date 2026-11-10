@@ -93,6 +93,7 @@
       else if (ev.type === 'chat_step') { if (ev.chat === chCur) setStep(ev.text); }
       else if (ev.type === 'chat_delta') { if (ev.chat === chCur && chBubble) renderMd(chBubble, ev.text); scrollChat(); }
       else if (ev.type === 'chat_done') chatDone(ev);
+      else if (ev.type === 'search_test') { const b = $('#searchTest'); b.hidden = false; b.textContent = ev.lines.join('\n'); flash($('#searchMsg'), ev.ok ? 'Поиск работает' : 'Поиск не работает', !ev.ok); }
       else if (ev.type === 'model_progress') modelProgress(ev);
       else if (ev.type === 'model_done') { if (ev.error && ev.error !== 'cancelled') flash($('#mdMsg'), ev.error, true); loadModels(); }
       else if (ev.type === 'engine') renderEngine(ev);
@@ -173,12 +174,19 @@
       i++;
     }
   }
-  function addMsg(role, text, id) {
+  function attachSteps(row, steps) {
+    if (!steps || !steps.length || row.querySelector('.steps')) return;
+    const d = el('details', 'steps'); d.append(el('summary', '', 'Ход работы'));
+    const ol = el('ol'); steps.forEach(s => ol.append(el('li', '', s))); d.append(ol);
+    row.insertBefore(d, row.querySelector('.copy'));
+  }
+  function addMsg(role, text, id, steps) {
     const m = $('#chMsgs'); const row = el('div', 'cmsg ' + role); if (id) row.dataset.id = id;
     const b = el('div', 'bubble');
     if (role === 'assistant') renderMd(b, text); else b.textContent = text;
     row.append(b);
     if (role === 'assistant') { const c = el('button', 'link copy', 'Копировать'); c.onclick = () => { try { navigator.clipboard.writeText(b.innerText); c.textContent = 'Скопировано'; setTimeout(() => c.textContent = 'Копировать', 1500); } catch (_) {} }; row.append(c); }
+    if (role === 'assistant') attachSteps(row, steps);
     m.append(row); scrollChat(); return b;
   }
   function showWelcome() {
@@ -200,7 +208,7 @@
     const c = await call('chat_get', id); if (!c) return;
     chCur = id; chBubble = null; $('#chMsgs').textContent = '';
     if (!c.messages.length) showWelcome();
-    for (const m of c.messages) addMsg(m.role, m.text, m.id);
+    for (const m of c.messages) addMsg(m.role, m.text, m.id, m.steps);
     loadChatList(); scrollChat();
   }
   async function openChatTab() {
@@ -217,7 +225,7 @@
     setBusy(true); setStep('Думаю…'); loadChatList();
   }
   function chatDone(ev) {
-    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
+    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); attachSteps(chBubble.parentElement, ev.steps); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
     if (ev.chat === chCur) setBusy(false);
     loadChatList(); scrollChat();
   }
@@ -225,12 +233,22 @@
   $('#chForm').addEventListener('submit', async e => {
     e.preventDefault(); const t = $('#chText'); const text = t.value.trim(); if (!text || chBusy) return;
     t.value = ''; t.style.height = '';
-    const r = await call('chat_send', chCur || '', text);
+    const wm = webMode(); const r = await call('chat_send', chCur || '', text, wm === 'always' ? true : wm === 'off' ? false : null);
     if (r && !r.ok) { t.value = text; setStep(r.error); }
   });
   $('#chText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chForm').requestSubmit(); } });
   $('#chText').addEventListener('input', e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight) + 'px'; });
   $('#chStop').onclick = () => call('chat_stop');
+  const WEB_LABEL = { auto: '🌐 Поиск: авто', always: '🌐 Поиск: вкл', off: '🌐 Поиск: выкл' };
+  const webMode = () => ((cfg && cfg.search) || {}).mode || 'auto';
+  function showWeb() { $('#chWeb').textContent = WEB_LABEL[webMode()] || WEB_LABEL.auto; }
+  $('#chWeb').onclick = async () => {
+    const order = ['auto', 'always', 'off']; const next = order[(order.indexOf(webMode()) + 1) % 3];
+    const c = await call('save_settings', { search: { mode: next } }); if (c) { cfg = c; showWeb(); }
+  };
+  $('#btnSearchTest').onclick = async () => {
+    const box = $('#searchTest'); box.hidden = false; box.textContent = 'Проверяю…'; call('search_test');
+  };
   document.addEventListener('click', e => { const a = e.target.closest('a[data-href]'); if (a) { e.preventDefault(); call('open_url', a.dataset.href); } });
 
   // ---------- обновления ----------
@@ -340,6 +358,7 @@
     f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold;
     f.tts_enabled.checked = !!c.tts.enabled; f.engine.value = c.tts.engine; f.rate.value = c.tts.rate;
     f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
+    f.search_mode.value = (c.search || {}).mode || 'auto'; f.search_depth.value = (c.search || {}).depth || 'normal'; showWeb();
     $('#apiKey').placeholder = c.llm.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : 'sk-ant-…';
     const ms = $('#micSelect'); ms.textContent = '';
     const o0 = el('option', '', 'По умолчанию (системный)'); o0.value = ''; ms.append(o0);
@@ -365,6 +384,7 @@
       wake_required: f.wake_required.checked, followup_seconds: Number(f.followup_seconds.value),
       stt: { model: f.model.value, mic_device: mic === '' ? null : Number(mic), vad_threshold: Number(f.vad_threshold.value) },
       tts: { enabled: f.tts_enabled.checked, engine: f.engine.value, rate: Number(f.rate.value) },
+      search: { mode: f.search_mode.value, depth: f.search_depth.value },
       updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value },
       llm: { enabled: f.llm_enabled.checked, api_key: $('#apiKey').value.trim() },
     };

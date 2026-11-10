@@ -13,8 +13,10 @@ IS_WIN = sys.platform == "win32"
 EXE = "llama-server.exe" if IS_WIN else "llama-server"
 BUNDLED = ROOT / "engine"            # кладётся в сборку на GitHub
 LOCAL = DATA / "engine"              # скачивается при запуске из исходников
-API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
-FLAVORS = {"vulkan": r"bin-win-vulkan-x64\.zip$", "cpu": r"bin-win-cpu-x64\.zip$"}
+API = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30"
+# Для каждой сборки — шаблоны имён файлов по убыванию предпочтения (имена в релизах llama.cpp со временем меняются).
+FLAVORS = {"vulkan": (r"bin-win-vulkan-x64\.zip$",),
+           "cpu": (r"bin-win-cpu-x64\.zip$", r"bin-win-avx2-x64\.zip$")}
 _NOOP = {}
 
 
@@ -33,12 +35,35 @@ def find_server(flavor: str) -> Path | None:
     return None
 
 
-def fetch_engine(flavor: str, dest: Path, progress=None) -> Path:
+def _asset(rel: dict, flavor: str):
+    for pat in FLAVORS[flavor]:
+        for a in rel.get("assets", []):
+            if re.search(pat, a["name"]) and "cudart" not in a["name"]:
+                return a
+    return None
+
+
+def find_release(flavors=("cpu", "vulkan")) -> dict:
+    """Самый свежий релиз llama.cpp, в котором есть сборки Windows для всех нужных вариантов (обе из одного релиза).
+    «latest» не годится: иногда последним числится релиз без Windows-файлов."""
+    h = {"User-Agent": "Bogestv0-KARINA", "Accept": "application/vnd.github+json"}
+    if os.environ.get("GITHUB_TOKEN"):
+        h["Authorization"] = "Bearer " + os.environ["GITHUB_TOKEN"]          # в GitHub Actions — без лимита запросов
+    rels = json.loads(urllib.request.urlopen(urllib.request.Request(API, headers=h), timeout=30).read().decode("utf-8"))
+    seen = []
+    for rel in rels:
+        if rel.get("draft") or rel.get("prerelease"):
+            continue
+        if all(_asset(rel, f) for f in flavors):
+            return rel
+        seen.append(rel.get("tag_name"))
+    raise EngineError(f"Не нашла релиз llama.cpp со сборками Windows {'/'.join(flavors)} (проверены: {', '.join(map(str, seen[:8])) or 'ничего'}).")
+
+
+def fetch_engine(flavor: str, dest: Path, progress=None, rel: dict | None = None) -> Path:
     """Скачивает сборку движка с GitHub (ggml-org/llama.cpp) и распаковывает в dest/flavor."""
-    pat = re.compile(FLAVORS[flavor])
-    req = urllib.request.Request(API, headers={"User-Agent": "Bogestv0-KARINA", "Accept": "application/vnd.github+json"})
-    rel = json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
-    asset = next((a for a in rel.get("assets", []) if pat.search(a["name"])), None)
+    rel = rel or find_release((flavor,))
+    asset = _asset(rel, flavor)
     if not asset:
         raise EngineError(f"В релизе {rel.get('tag_name')} нет сборки «{flavor}» для Windows.")
     out = dest / flavor

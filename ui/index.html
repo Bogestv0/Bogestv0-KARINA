@@ -84,7 +84,8 @@
       <div class="chat-msgs" id="chMsgs"></div>
       <div class="chat-step" id="chStep" hidden></div>
       <form class="chat-input" id="chForm">
-        <textarea id="chText" rows="1" placeholder="Спросите что угодно… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
+        <button class="btn" type="button" id="chWeb" title="Поиск в интернете: авто (когда просьба этого требует) → всегда → выключен">🌐 Поиск: авто</button>
+        <textarea id="chText" rows="1" placeholder="Спросите что угодно… (Enter — отправить)"></textarea>
         <button class="btn primary" type="submit" id="chSend">Отправить</button>
         <button class="btn danger" type="button" id="chStop" hidden>Стоп</button>
       </form>
@@ -213,6 +214,29 @@
         <label>Поисковик
           <select name="search_engine"><option value="google">Google</option><option value="yandex">Яндекс</option></select>
         </label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Поиск в интернете (для чата)</div>
+      <p class="muted small">Карина сама придумывает запросы, открывает и читает страницы, при нехватке данных ищет заново и в конце даёт ссылки на источники. Ключи не нужны. Тексты страниц считаются данными, а не командами.</p>
+      <div class="form">
+        <label>Когда искать
+          <select name="search_mode">
+            <option value="auto">Автоматически: когда в просьбе есть «найди», «новости», «сегодня», «цена»…</option>
+            <option value="always">Всегда, на каждый вопрос</option>
+            <option value="off">Никогда (отвечать из знаний модели)</option>
+          </select>
+        </label>
+        <label>Глубина поиска
+          <select name="search_depth">
+            <option value="quick">Быстро: около 6 страниц</option>
+            <option value="normal">Обычно: около 12 страниц</option>
+            <option value="deep">Глубоко: около 24 страниц (дольше)</option>
+            <option value="max">Максимум: до 50 страниц (долго, нужна мощная модель)</option>
+          </select>
+        </label>
+        <div class="form-actions"><button class="btn" type="button" id="btnSearchTest">Проверить поиск</button><span class="msg" id="searchMsg"></span></div>
+        <pre class="muted small" id="searchTest" hidden style="white-space:pre-wrap;margin:0"></pre>
       </div>
     </div>
     <div class="card">
