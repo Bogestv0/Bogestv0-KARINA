@@ -1,0 +1,90 @@
+name: Build Windows (Bogestv0 KARINA)
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Тег релиза, в который залить файлы (например v1.0.0). Пусто — только собрать артефакт'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller==6.11.1
+
+      - name: Тесты
+        run: python -m unittest discover -s tests -v
+
+      - name: Версия из кода
+        id: ver
+        shell: pwsh
+        run: |
+          $v = python -c "import karina; print(karina.__version__)"
+          "version=$v" >> $env:GITHUB_OUTPUT
+          $tag = "${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}"
+          if ($tag -and $tag -ne "v$v") { Write-Error "Тег $tag не совпадает с версией в karina/__init__.py ($v)"; exit 1 }
+
+      - name: Сборка приложения (PyInstaller)
+        run: pyinstaller build/karina.spec --noconfirm --distpath dist --workpath build/work
+
+      - name: Самопроверка собранного exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\Karina\Bogestv0-KARINA.exe" -ArgumentList "--selftest" -Wait -PassThru
+          $log = Join-Path $env:APPDATA "Bogestv0 KARINA\selftest.log"
+          if (Test-Path $log) { Get-Content $log }
+          if ($p.ExitCode -ne 0) { Write-Error "Самопроверка не пройдена (код $($p.ExitCode))"; exit 1 }
+
+      - name: Установщик (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=${{ steps.ver.outputs.version }}" build\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Портативная версия и контрольные суммы
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          Compress-Archive -Path dist\Karina\* -DestinationPath "dist\Bogestv0-KARINA-Portable-$v.zip"
+          Get-ChildItem dist\*.exe, dist\*.zip | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content dist\SHA256SUMS.txt -Encoding ascii
+          Get-Content dist\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bogestv0-KARINA-windows-x64
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Публикация в релиз
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "Bogestv0 KARINA $TAG. Установщик: Bogestv0-KARINA-Setup-*.exe"
+          gh release upload "$TAG" dist/*.exe dist/*.zip dist/SHA256SUMS.txt --clobber
