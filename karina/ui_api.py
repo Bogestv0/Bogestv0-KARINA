@@ -85,6 +85,34 @@ class Api:
         self.cfg.update({"llm": {"api_key": "", "enabled": False}})
         return self._safe_cfg()
 
+    # ---- чат ----
+    def chat_list(self):
+        return {"chats": self.assistant.chat.store.list(), "busy": self.assistant.chat.busy, "current": self.assistant.chat.current}
+
+    def chat_new(self):
+        return self.assistant.chat.store.new()
+
+    def chat_get(self, cid: str):
+        return self.assistant.chat.store.get(cid)
+
+    def chat_delete(self, cid: str):
+        return self.assistant.chat.store.delete(cid)
+
+    def chat_send(self, cid: str, text: str):
+        r = self.assistant.chat.send(cid or None, text)
+        return {"ok": r is not None, "chat": r, "error": "" if r else "Я ещё отвечаю. Нажмите «Стоп» или подождите."}
+
+    def chat_stop(self):
+        self.assistant.chat.stop()
+        return True
+
+    def open_url(self, url: str):
+        import webbrowser
+        if isinstance(url, str) and url.lower().startswith(("http://", "https://")):
+            webbrowser.open(url)
+            return True
+        return False
+
     # ---- обновление ----
     def check_update(self, manual: bool = True):
         """manual=False — тихая проверка при запуске: ошибки не показываем."""

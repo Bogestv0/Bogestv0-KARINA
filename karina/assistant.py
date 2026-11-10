@@ -1,7 +1,7 @@
 """Ядро: микрофон → распознавание → имя → команда → голосовой ответ."""
 from __future__ import annotations
 import queue, threading, time, traceback
-from . import actions, llm, net
+from . import actions, chat as chatmod, llm, models, net
 from .engine import Engine
 from .actions import Ctx
 from .apps import AppIndex
@@ -20,6 +20,7 @@ class Assistant:
         self.cfg, self.emit = cfg, emit
         self.apps = AppIndex(cfg)
         self.engine = Engine(cfg, emit)
+        self.chat = chatmod.ChatService(cfg, self.engine, emit, speak=self.say)
         self.stt, self.tts = STT(cfg), Speaker(cfg)
         self.listener = Listener(cfg, self._on_audio, lambda v: self.emit({"type": "level", "v": v}))
         self.q: queue.Queue = queue.Queue(maxsize=4)
@@ -42,6 +43,7 @@ class Assistant:
         self._stop.set()
         self.tts.stop()
         self.listener.stop()
+        self.chat.stop()
         self.engine.stop()
 
     def _set_state(self, s: str, detail: str = ""):
@@ -167,13 +169,40 @@ class Assistant:
         if not rest:
             self.say("Слушаю.")
             return
+        if chatmod.wants_open_chat(rest):
+            self.emit({"type": "goto", "tab": "chat"})
+            self.say("Открываю чат.")
+            return
+        if chatmod.is_chat_request(rest):
+            self._to_chat(rest)
+            return
         ctx = Ctx(self.cfg, self.apps, self, raw=text)
         handled, reply = actions.dispatch(ctx, rest)
+        if not handled and self._local_ready():
+            self._to_chat(rest)          # свободная фраза — отвечает встроенная модель
+            return
         if not handled:
             handled, reply = self._try_llm(ctx, rest)
         if not handled:
             reply = "Не поняла команду. Скажите «что ты умеешь», чтобы услышать список."
         self.say(reply)
+
+    def _local_ready(self) -> bool:
+        mid = (self.cfg.get("models", {}) or {}).get("active", "")
+        return bool(mid and models.local_path(mid))
+
+    def _to_chat(self, text: str):
+        """Голосовой вопрос: коротко отвечаем голосом, подробности показываем в окне «Чат»."""
+        if not self._local_ready():
+            self.say("Модель не выбрана. Откройте вкладку «Модели», скачайте и выберите одну.")
+            return
+        if self.chat.busy:
+            self.say("Я ещё отвечаю на предыдущий вопрос.")
+            return
+        cid = self.chat.voice_chat_id()
+        self.emit({"type": "chat_open", "chat": cid})
+        self.say("Хорошо, подумаю.")
+        self.chat.send(cid, text, voice=True)
 
     def _try_llm(self, ctx: Ctx, text: str):
         if not net.is_online():

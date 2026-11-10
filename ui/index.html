@@ -12,6 +12,7 @@
   <div class="brand"><img src="logo.png" alt=""><span>Bogestv0 <b>KARINA</b></span></div>
   <nav class="tabs" id="tabs">
     <button data-tab="home" class="on">Главная</button>
+    <button data-tab="chat">Чат</button>
     <button data-tab="commands">Команды</button>
     <button data-tab="models">Модели</button>
     <button data-tab="apps">Программы</button>
@@ -67,6 +68,25 @@
       <form class="send" id="sendForm">
         <input id="sendInput" placeholder="Напишите команду без голоса…" autocomplete="off">
         <button class="btn primary" type="submit">Отправить</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ЧАТ ============ -->
+<section id="tab-chat" class="tab">
+  <div class="chat-layout">
+    <aside class="card chat-side">
+      <button class="btn primary" id="chNew">+ Новый чат</button>
+      <div class="chat-list" id="chList"></div>
+    </aside>
+    <div class="card chat-main">
+      <div class="chat-msgs" id="chMsgs"></div>
+      <div class="chat-step" id="chStep" hidden></div>
+      <form class="chat-input" id="chForm">
+        <textarea id="chText" rows="1" placeholder="Спросите что угодно… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
+        <button class="btn primary" type="submit" id="chSend">Отправить</button>
+        <button class="btn danger" type="button" id="chStop" hidden>Стоп</button>
       </form>
     </div>
   </div>

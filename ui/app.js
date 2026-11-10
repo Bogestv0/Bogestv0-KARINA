@@ -16,6 +16,7 @@
     if (b.dataset.tab === 'apps') loadApps();
     if (b.dataset.tab === 'commands') loadCommands();
     if (b.dataset.tab === 'models') loadModels();
+    if (b.dataset.tab === 'chat') openChatTab();
     try { localStorage.setItem('karina.tab', b.dataset.tab); } catch (_) {}
   });
 
@@ -86,6 +87,12 @@
         document.documentElement.style.setProperty('--lvl', ev.v.toFixed(2));
         $('#meter').style.width = Math.round(ev.v * 100) + '%';
       } else if (ev.type === 'log') addLog(ev.kind, ev.text, ev.ts);
+      else if (ev.type === 'goto') { const b = $(`#tabs [data-tab="${ev.tab}"]`); if (b) b.click(); }
+      else if (ev.type === 'chat_open') { chOpenId = ev.chat; const b = $('#tabs [data-tab="chat"]'); if (b) b.click(); }
+      else if (ev.type === 'chat_start') chatStart(ev);
+      else if (ev.type === 'chat_step') { if (ev.chat === chCur) setStep(ev.text); }
+      else if (ev.type === 'chat_delta') { if (ev.chat === chCur && chBubble) renderMd(chBubble, ev.text); scrollChat(); }
+      else if (ev.type === 'chat_done') chatDone(ev);
       else if (ev.type === 'model_progress') modelProgress(ev);
       else if (ev.type === 'model_done') { if (ev.error && ev.error !== 'cancelled') flash($('#mdMsg'), ev.error, true); loadModels(); }
       else if (ev.type === 'engine') renderEngine(ev);
@@ -121,6 +128,110 @@
     const r = await call('add_custom', f.phrases.value, f.type.value, f.value.value, f.reply.value);
     if (r && r.ok) { f.reset(); flash($('#customMsg'), 'Добавлено'); loadCommands(); } else flash($('#customMsg'), (r && r.error) || 'Ошибка', true);
   });
+
+  // ---------- чат ----------
+  let chCur = null, chOpenId = null, chBubble = null, chBusy = false;
+  const scrollChat = () => { const m = $('#chMsgs'); m.scrollTop = m.scrollHeight; };
+  function setStep(t) { const s = $('#chStep'); s.hidden = !t; s.textContent = t || ''; }
+  function setBusy(b) { chBusy = b; $('#chSend').hidden = b; $('#chStop').hidden = !b; if (!b) setStep(''); }
+
+  // Разметка ответа строим узлами DOM (не innerHTML): текст модели не может внедрить разметку или скрипт.
+  function link(label, url) { const a = el('a', '', label); a.href = '#'; a.dataset.href = url; a.title = url; return a; }
+  function inline(parent, text) {
+    const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\(https?:\/\/[^)\s]+\))|(https?:\/\/[^\s)<]+)/g;
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) parent.append(text.slice(last, m.index));
+      const t = m[0];
+      if (m[1]) parent.append(el('code', '', t.slice(1, -1)));
+      else if (m[2]) parent.append(el('strong', '', t.slice(2, -2)));
+      else if (m[3]) { const i = t.indexOf(']('); parent.append(link(t.slice(1, i), t.slice(i + 2, -1))); }
+      else if (m[4]) parent.append(link(t, t));
+      last = m.index + t.length;
+    }
+    if (last < text.length) parent.append(text.slice(last));
+  }
+  function renderMd(box, text) {
+    box.textContent = '';
+    const lines = String(text).split('\n'); let i = 0, list = null, para = null;
+    const endBlocks = () => { list = null; para = null; };
+    while (i < lines.length) {
+      const ln = lines[i];
+      if (/^```/.test(ln)) {
+        endBlocks(); const code = []; i++;
+        while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
+        i++; const pre = el('pre'); pre.append(el('code', '', code.join('\n'))); box.append(pre); continue;
+      }
+      let m;
+      if ((m = /^(#{1,4})\s+(.*)$/.exec(ln))) { endBlocks(); const h = el('h' + Math.min(4, m[1].length + 2)); inline(h, m[2]); box.append(h); }
+      else if ((m = /^\s*(?:[-*•]|\d+[.)])\s+(.*)$/.exec(ln))) {
+        const ord = /^\s*\d/.test(ln);
+        if (!list || list.tagName !== (ord ? 'OL' : 'UL')) { list = el(ord ? 'ol' : 'ul'); box.append(list); para = null; }
+        const li = el('li'); inline(li, m[1]); list.append(li);
+      } else if (!ln.trim()) endBlocks();
+      else { list = null; if (!para) { para = el('p'); box.append(para); } else para.append(document.createElement('br')); inline(para, ln); }
+      i++;
+    }
+  }
+  function addMsg(role, text, id) {
+    const m = $('#chMsgs'); const row = el('div', 'cmsg ' + role); if (id) row.dataset.id = id;
+    const b = el('div', 'bubble');
+    if (role === 'assistant') renderMd(b, text); else b.textContent = text;
+    row.append(b);
+    if (role === 'assistant') { const c = el('button', 'link copy', 'Копировать'); c.onclick = () => { try { navigator.clipboard.writeText(b.innerText); c.textContent = 'Скопировано'; setTimeout(() => c.textContent = 'Копировать', 1500); } catch (_) {} }; row.append(c); }
+    m.append(row); scrollChat(); return b;
+  }
+  function showWelcome() {
+    const m = $('#chMsgs'); m.textContent = '';
+    const w = el('div', 'empty'); w.textContent = 'Задайте вопрос, и я отвечу. Голосом: «Карина, объясни…» или «Карина, найди и напиши отчёт про…» — коротко отвечу вслух, подробности будут здесь.';
+    m.append(w);
+  }
+  async function loadChatList() {
+    const r = await call('chat_list'); if (!r) return r;
+    const box = $('#chList'); box.textContent = '';
+    for (const c of r.chats) {
+      const it = el('div', 'citem' + (c.id === chCur ? ' on' : '')); it.append(el('span', 't', c.title || 'Новый чат'));
+      const x = el('button', 'x', '×'); x.title = 'Удалить'; x.onclick = async e => { e.stopPropagation(); if (confirm('Удалить этот чат?')) { await call('chat_delete', c.id); if (chCur === c.id) { chCur = null; showWelcome(); } loadChatList(); } };
+      it.append(x); it.onclick = () => openChat(c.id); box.append(it);
+    }
+    return r;
+  }
+  async function openChat(id) {
+    const c = await call('chat_get', id); if (!c) return;
+    chCur = id; chBubble = null; $('#chMsgs').textContent = '';
+    if (!c.messages.length) showWelcome();
+    for (const m of c.messages) addMsg(m.role, m.text, m.id);
+    loadChatList(); scrollChat();
+  }
+  async function openChatTab() {
+    const r = await loadChatList();
+    const id = chOpenId || chCur || (r && r.chats[0] && r.chats[0].id); chOpenId = null;
+    if (id) openChat(id); else showWelcome();
+    if (r) setBusy(!!r.busy);
+    setTimeout(() => $('#chText').focus(), 50);
+  }
+  function chatStart(ev) {
+    if (!chCur || ev.chat !== chCur) { chCur = ev.chat; $('#chMsgs').textContent = ''; }
+    const w = $('#chMsgs .empty'); if (w) w.remove();
+    addMsg('user', ev.user.text, ev.user.id); chBubble = addMsg('assistant', '', ev.reply_id); chBubble.classList.add('typing');
+    setBusy(true); setStep('Думаю…'); loadChatList();
+  }
+  function chatDone(ev) {
+    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
+    if (ev.chat === chCur) setBusy(false);
+    loadChatList(); scrollChat();
+  }
+  $('#chNew').onclick = async () => { const c = await call('chat_new'); if (c) { chCur = c.id; showWelcome(); loadChatList(); $('#chText').focus(); } };
+  $('#chForm').addEventListener('submit', async e => {
+    e.preventDefault(); const t = $('#chText'); const text = t.value.trim(); if (!text || chBusy) return;
+    t.value = ''; t.style.height = '';
+    const r = await call('chat_send', chCur || '', text);
+    if (r && !r.ok) { t.value = text; setStep(r.error); }
+  });
+  $('#chText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chForm').requestSubmit(); } });
+  $('#chText').addEventListener('input', e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight) + 'px'; });
+  $('#chStop').onclick = () => call('chat_stop');
+  document.addEventListener('click', e => { const a = e.target.closest('a[data-href]'); if (a) { e.preventDefault(); call('open_url', a.dataset.href); } });
 
   // ---------- обновления ----------
   function showUpdate(u) {
