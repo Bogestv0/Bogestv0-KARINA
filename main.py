@@ -101,6 +101,44 @@ def run_console(cfg):
     a.stop()
 
 
+def _hook_dotnet():
+    """Необработанное исключение .NET (код 0xE0434352) убивает процесс без следа в Python. Пишем его текст в журнал."""
+    try:
+        trace(f"pywebview {getattr(__import__('webview'), '__version__', '?')}, WebView2 {webview2_version()}")
+        import clr  # noqa: F401  (pythonnet)
+        from System import AppDomain
+        def on_unhandled(sender, e):
+            trace("НЕОБРАБОТАННОЕ ИСКЛЮЧЕНИЕ .NET: " + str(e.ExceptionObject).replace("\r", "")[:3000])
+        AppDomain.CurrentDomain.UnhandledException += on_unhandled
+        try:
+            from System.Windows.Forms import Application, UnhandledExceptionMode
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException)
+            def on_thread(sender, e):
+                trace("ИСКЛЮЧЕНИЕ .NET в потоке окна: " + str(e.Exception).replace("\r", "")[:3000])
+            Application.ThreadException += on_thread
+        except Exception as e:
+            trace(f"WinForms-перехват не поставлен: {e}")
+    except Exception as e:
+        trace(f"Перехват исключений .NET не поставлен: {e}")
+
+
+def webview2_version() -> str:
+    if sys.platform != "win32":
+        return "-"
+    try:
+        import winreg
+        key = r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+        for root, sub in ((winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node" + key[8:]), (winreg.HKEY_LOCAL_MACHINE, key), (winreg.HKEY_CURRENT_USER, key)):
+            try:
+                with winreg.OpenKey(root, sub) as k:
+                    return str(winreg.QueryValueEx(k, "pv")[0])
+            except OSError:
+                continue
+    except Exception:
+        pass
+    return "не найден"
+
+
 def run_gui(cfg):
     if not webview2_installed():
         trace("WebView2 не найден")
@@ -108,6 +146,7 @@ def run_gui(cfg):
         sys.exit(1)
     trace("Загружаю библиотеки окна")
     import webview
+    _hook_dotnet()
     from karina.assistant import Assistant
     holder = {}
     from karina.ui_api import Api
@@ -119,14 +158,23 @@ def run_gui(cfg):
         width=1080, height=760, min_size=(760, 560), background_color="#131318")
     try:
         holder["w"].events.loaded += lambda: trace("Окно: страница загружена")
-        holder["w"].events.closed += lambda: trace("Окно: закрыто пользователем")
+        holder["w"].events.closed += lambda: trace("Окно: закрыто")
+        holder["w"].events.shown += lambda: trace("Окно: показано")
+        holder["w"].events.closing += lambda: trace("Окно: получена команда закрыть")
     except Exception as e:
         trace(f"Окно: не удалось подписаться на события ({e})")
     try:
         faulthandler.dump_traceback_later(25, file=_log)      # если за 25 с запуск не завершён — в журнал стеки всех потоков
     except Exception:
         pass
+    def heartbeat():
+        import time
+        for i in range(1, 16):
+            time.sleep(2)
+            trace(f"жив ({i * 2} с), потоков: {threading.active_count()}")
+    threading.Thread(target=heartbeat, daemon=True, name="heartbeat").start()
     trace("Окно создано, запускаю")
+    trace("webview.start: вход")
     webview.start(lambda: (trace("Окно открыто, запускаю ассистента"), assistant.start(), trace("Ассистент запущен")), icon=str(ROOT / "ui" / "logo.png") if (ROOT / "ui" / "logo.png").exists() else None)
     trace("Окно закрыто, завершение")
     assistant.stop()
