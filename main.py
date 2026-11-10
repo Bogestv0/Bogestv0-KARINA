@@ -188,6 +188,9 @@ if __name__ == "__main__":
     try:
         if "--selftest" in sys.argv:
             sys.exit(selftest())
+        if len(sys.argv) > 1 and sys.argv[1] == "--stt-probe":      # дочерний процесс: проверка загрузки модели распознавания
+            from karina.stt import probe_main
+            sys.exit(probe_main(sys.argv[2:]))
         c = Config()
         run_console(c) if "--console" in sys.argv else run_gui(c)
     except SystemExit:
