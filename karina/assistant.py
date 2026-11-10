@@ -78,6 +78,11 @@ class Assistant:
         try:
             self.listener.start()
             trace("Микрофон: слушаю")
+            try:
+                import faulthandler
+                faulthandler.cancel_dump_traceback_later()
+            except Exception:
+                pass
             if self.stt.model is not None:
                 self._set_state("idle")
         except Exception as e:

@@ -117,6 +117,15 @@ def run_gui(cfg):
     holder["w"] = webview.create_window(
         f"Bogestv0 KARINA", url=str(ROOT / "ui" / "index.html"), js_api=api,
         width=1080, height=760, min_size=(760, 560), background_color="#131318")
+    try:
+        holder["w"].events.loaded += lambda: trace("Окно: страница загружена")
+        holder["w"].events.closed += lambda: trace("Окно: закрыто пользователем")
+    except Exception as e:
+        trace(f"Окно: не удалось подписаться на события ({e})")
+    try:
+        faulthandler.dump_traceback_later(25, file=_log)      # если за 25 с запуск не завершён — в журнал стеки всех потоков
+    except Exception:
+        pass
     trace("Окно создано, запускаю")
     webview.start(lambda: (trace("Окно открыто, запускаю ассистента"), assistant.start(), trace("Ассистент запущен")), icon=str(ROOT / "ui" / "logo.png") if (ROOT / "ui" / "logo.png").exists() else None)
     trace("Окно закрыто, завершение")

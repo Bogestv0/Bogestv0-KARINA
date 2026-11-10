@@ -1,6 +1,7 @@
 """Мост между окном (HTML) и ассистентом. Все методы вызываются из JavaScript: pywebview.api.<метод>()."""
 from __future__ import annotations
-import json, os, subprocess, sys, threading, time
+import json, os, queue, subprocess, sys, threading, time
+from .diag import trace
 from . import actions, net, models, updater, __version__
 from .audio import Listener
 from .config import DATA, DEFAULTS
@@ -12,19 +13,39 @@ class Api:
         self._win = window_getter
         self.assistant = None
         self._downloads: dict = {}
+        self._events: queue.Queue = queue.Queue(maxsize=500)
+        threading.Thread(target=self._emit_loop, daemon=True, name="karina-emit").start()
 
     def bind(self, assistant):
         self.assistant = assistant
 
     # ---- события в окно ----
     def emit(self, ev: dict):
-        w = self._win()
-        if not w:
-            return
+        """Только кладёт событие в очередь и сразу возвращается: ассистент никогда не ждёт окно
+        (если страница не загрузилась, evaluate_js может не вернуться — раньше это вешало загрузку модели)."""
         try:
-            w.evaluate_js(f"window.karina && window.karina.event({json.dumps(ev, ensure_ascii=False)})")
-        except Exception:
+            self._events.put_nowait(ev)
+        except queue.Full:
             pass
+
+    def _emit_loop(self):
+        first = True
+        while True:
+            ev = self._events.get()
+            w = self._win()
+            if not w:
+                continue
+            try:
+                if first:
+                    trace("Окно: первое событие, жду ответа evaluate_js")
+                w.evaluate_js(f"window.karina && window.karina.event({json.dumps(ev, ensure_ascii=False)})")
+                if first:
+                    trace("Окно: evaluate_js ответил")
+                    first = False
+            except Exception as e:
+                if first:
+                    trace(f"Окно: evaluate_js ошибка {e.__class__.__name__}: {e}")
+                    first = False
 
     # ---- состояние ----
     def get_state(self):
