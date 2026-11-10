@@ -2,6 +2,7 @@
 from __future__ import annotations
 import queue, threading, time, traceback
 from . import actions, chat as chatmod, llm, models, net
+from .diag import trace
 from .engine import Engine
 from .actions import Ctx
 from .apps import AppIndex
@@ -51,6 +52,8 @@ class Assistant:
         self.emit({"type": "state", "state": s, "detail": detail, "sleeping": self.sleeping, "listening": self.listening})
 
     def log(self, kind: str, text: str):
+        if kind == "error":
+            trace("ОШИБКА: " + text)
         self.emit({"type": "log", "kind": kind, "text": text, "ts": time.strftime("%H:%M:%S")})
 
     def status(self) -> dict:
@@ -60,17 +63,22 @@ class Assistant:
 
     def _worker(self):
         # 1) модель
+        t0 = time.time()
         try:
+            trace("Распознавание речи: загружаю модель " + str(self.cfg["stt"].get("model")))
             self._set_state("loading", "Загружаю модель распознавания… при первом запуске нужен интернет (один раз)")
-            self.stt.load()
+            self.stt.load(lambda mb: self._set_state("loading", f"Скачиваю модель распознавания: {mb} МБ (один раз, около 460 МБ для «Хорошей»)"))
+            trace(f"Распознавание речи: модель готова за {time.time() - t0:.1f} с")
         except Exception as e:
             traceback.print_exc()
-            self.log("error", f"Не удалось загрузить модель распознавания: {e}. При первом запуске нужен интернет, чтобы скачать модель.")
+            self.log("error", f"Не удалось загрузить модель распознавания: {e}")
             self._set_state("error", "Модель не загружена")
         # 2) микрофон
         try:
             self.listener.start()
-            self._set_state("idle")
+            trace("Микрофон: слушаю")
+            if self.stt.model is not None:
+                self._set_state("idle")
         except Exception as e:
             self.log("error", f"Микрофон недоступен: {e}")
             self._set_state("error", "Нет микрофона")
