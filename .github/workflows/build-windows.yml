@@ -28,7 +28,7 @@ jobs:
       - name: Установка зависимостей
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller==6.11.1
+          pip install -r requirements.txt --upgrade pyinstaller pyinstaller-hooks-contrib
 
       - name: Тесты
         run: python -m unittest discover -s tests -v
