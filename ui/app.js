@@ -3,7 +3,7 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  let api = null, cfg = null, status = {}, logCount = 0;
+  let api = null, cfg = null, status = {}, logCount = 0, upd = null, version = '';
 
   const call = async (name, ...args) => { try { return await api[name](...args); } catch (e) { console.error(name, e); return null; } };
   const flash = (node, text, err) => { node.textContent = text; node.classList.toggle('err', !!err); clearTimeout(node._t); node._t = setTimeout(() => node.textContent = '', 4000); };
@@ -15,6 +15,7 @@
     $$('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'apps') loadApps();
     if (b.dataset.tab === 'commands') loadCommands();
+    if (b.dataset.tab === 'models') loadModels();
     try { localStorage.setItem('karina.tab', b.dataset.tab); } catch (_) {}
   });
 
@@ -85,6 +86,13 @@
         document.documentElement.style.setProperty('--lvl', ev.v.toFixed(2));
         $('#meter').style.width = Math.round(ev.v * 100) + '%';
       } else if (ev.type === 'log') addLog(ev.kind, ev.text, ev.ts);
+      else if (ev.type === 'model_progress') modelProgress(ev);
+      else if (ev.type === 'model_done') { if (ev.error && ev.error !== 'cancelled') flash($('#mdMsg'), ev.error, true); loadModels(); }
+      else if (ev.type === 'engine') renderEngine(ev);
+      else if (ev.type === 'update_progress') { const pb = $('#updPbar'); pb.hidden = false; $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%'; $('#updNotes').textContent = ev.total ? `Скачано ${fmtGb(ev.done)} из ${fmtGb(ev.total)}` : 'Скачиваю…'; }
+      else if (ev.type === 'update_ready') { $('#updNotes').textContent = 'Скачано. Запускаю установку — Карина закроется и откроется заново.'; }
+      else if (ev.type === 'update_done') { $('#updInstall').disabled = false; $('#updPbar').hidden = true; if (ev.error && ev.error !== 'cancelled') { $('#updNotes').textContent = ev.error; $('#updNotes').classList.add('err'); } }
+      else if (ev.type === 'model_test') { const o = $('#mdTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `${ev.text}\n(${ev.sec} с)` : ev.text; $('#mdTest').disabled = false; }
       else if (ev.type === 'state') { status.state = ev.state; status.sleeping = ev.sleeping; status.listening = ev.listening; renderState(ev.state, ev.detail, ev.sleeping, ev.listening); }
     },
   };
@@ -113,6 +121,82 @@
     const r = await call('add_custom', f.phrases.value, f.type.value, f.value.value, f.reply.value);
     if (r && r.ok) { f.reset(); flash($('#customMsg'), 'Добавлено'); loadCommands(); } else flash($('#customMsg'), (r && r.error) || 'Ошибка', true);
   });
+
+  // ---------- обновления ----------
+  function showUpdate(u) {
+    upd = u; const bar = $('#updBar');
+    if (!u || !u.available) { bar.hidden = true; return; }
+    bar.hidden = false; $('#updNotes').classList.remove('err'); $('#updPbar').hidden = true; $('#updInstall').disabled = false;
+    $('#updTitle').textContent = `Доступна новая версия ${u.latest} (у вас ${u.current})`;
+    const notes = (u.notes || '').replace(/[#*`]/g, '').split('\n').map(x => x.trim()).filter(Boolean).slice(0, 4).join(' · ');
+    $('#updNotes').textContent = notes || 'Список изменений — на странице релиза.';
+    $('#updInstall').textContent = u.can_install ? 'Скачать и установить' : 'Открыть страницу загрузки';
+    $('#updLabel').textContent = 'Обновить ●';
+  }
+  async function checkUpdate(manual) {
+    const lab = $('#updLabel'); if (manual) lab.textContent = 'Проверяю…';
+    const u = await call('check_update', manual);
+    lab.textContent = 'Обновить';
+    if (!u) return;
+    if (u.error) { if (manual) { flash($('#updMsg'), u.error, true); alert(u.error); } return; }
+    if (u.available) showUpdate(u);
+    else if (manual) { showUpdate(null); flash($('#updMsg'), `Установлена последняя версия (${u.current})`); alert(`У вас последняя версия: ${u.current}`); }
+  }
+  $('#btnUpdate').onclick = () => checkUpdate(true);
+  $('#btnUpdate2').onclick = () => checkUpdate(true);
+  $('#updLater').onclick = () => { $('#updBar').hidden = true; };
+  $('#updInstall').onclick = async () => {
+    $('#updInstall').disabled = true; $('#updNotes').classList.remove('err'); $('#updNotes').textContent = 'Подготовка…';
+    const r = await call('install_update');
+    if (r && r.opened) $('#updInstall').disabled = false;
+    else if (!r || !r.ok) { $('#updInstall').disabled = false; $('#updNotes').textContent = (r && r.error) || 'Не удалось'; }
+  };
+
+  // ---------- модели ----------
+  const fmtGb = b => (b / 2 ** 30).toFixed(1) + ' ГБ';
+  const ENG = { stopped: 'остановлен (запустится при первом вопросе)', starting: 'запускается…', ready: 'работает', error: 'ошибка' };
+  function renderEngine(e) {
+    let t = ENG[e.state] || e.state;
+    if (e.state === 'ready') t += e.flavor === 'vulkan' ? ' · на видеокарте' : ' · на процессоре';
+    if (e.detail && e.state !== 'ready' && e.state !== 'stopped') t += ' — ' + e.detail;
+    const n = $('#mdEngine'); if (n) n.textContent = t;
+  }
+  function modelProgress(ev) {
+    const row = $(`[data-mid="${ev.id}"]`); if (!row) return;
+    const bar = $('.pbar i', row), lab = $('.plab', row);
+    if (ev.stage === 'verify') { lab.textContent = 'Проверяю целостность…'; bar.style.width = '100%'; return; }
+    if (ev.stage === 'search') { lab.textContent = 'Ищу файл…'; return; }
+    const pct = ev.total ? Math.min(100, ev.done / ev.total * 100) : 0;
+    bar.style.width = pct.toFixed(1) + '%';
+    lab.textContent = ev.total ? `${fmtGb(ev.done)} из ${fmtGb(ev.total)} · ${pct.toFixed(0)}%` : fmtGb(ev.done);
+  }
+  async function loadModels() {
+    const s = await call('models_state'); if (!s) return;
+    const hw = $('#mdHw'); hw.hidden = !s.ram;
+    hw.textContent = `Оперативной памяти: ${s.ram} ГБ. Подходящая модель отмечена «Рекомендуется».`;
+    $('#mdGpu').value = s.gpu; renderEngine(s.engine);
+    const box = $('#mdList'); box.textContent = '';
+    for (const m of s.models) {
+      const it = el('div', 'item model ' + (m.active ? 'ok' : m.too_big ? 'miss' : '')); it.dataset.mid = m.id;
+      const t = el('div', 't');
+      const head = el('b', '', m.title);
+      t.append(head, el('span', 'wrap', `${m.tier_label} · ${m.size_gb} ГБ · русский: ${m.ru} · память от ${m.ram} ГБ`), el('span', 'wrap', m.desc));
+      if (m.dl) { const pb = el('div', 'pbar'); pb.append(el('i')); t.append(pb, el('span', 'plab', 'Подготовка…')); }
+      it.append(t);
+      if (m.id === s.recommended) it.append(el('span', 'tag', 'Рекомендуется'));
+      if (m.active) it.append(el('span', 'tag', 'Выбрана'));
+      if (m.dl) { const b = el('button', 'btn', 'Отмена'); b.onclick = () => call('model_cancel', m.id); it.append(b); }
+      else if (m.installed) {
+        if (!m.active) { const b = el('button', 'btn primary', 'Выбрать'); b.onclick = async () => { await call('model_select', m.id); loadModels(); }; it.append(b); }
+        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (confirm('Удалить модель с диска?')) { await call('model_delete', m.id); loadModels(); } }; it.append(d);
+      } else {
+        const b = el('button', 'btn primary', 'Скачать'); b.onclick = async () => { b.disabled = true; await call('model_download', m.id); loadModels(); }; it.append(b);
+      }
+      box.append(it);
+    }
+  }
+  $('#mdGpu').onchange = e => call('models_settings', { gpu: e.target.value });
+  $('#mdTest').onclick = async () => { $('#mdTest').disabled = true; const o = $('#mdTestOut'); o.hidden = false; o.className = 'note'; o.textContent = 'Думаю… (первый запуск грузит модель в память, это может занять до минуты)'; await call('model_test'); };
 
   // ---------- программы ----------
   const SRC = { user: 'моя', bogestv0: 'Bogestv0', system: 'Windows' };
@@ -144,7 +228,7 @@
     f.wake_required.checked = !!c.wake_required; f.followup_seconds.value = c.followup_seconds;
     f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold;
     f.tts_enabled.checked = !!c.tts.enabled; f.engine.value = c.tts.engine; f.rate.value = c.tts.rate;
-    f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
+    f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
     $('#apiKey').placeholder = c.llm.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : 'sk-ant-…';
     const ms = $('#micSelect'); ms.textContent = '';
     const o0 = el('option', '', 'По умолчанию (системный)'); o0.value = ''; ms.append(o0);
@@ -170,7 +254,7 @@
       wake_required: f.wake_required.checked, followup_seconds: Number(f.followup_seconds.value),
       stt: { model: f.model.value, mic_device: mic === '' ? null : Number(mic), vad_threshold: Number(f.vad_threshold.value) },
       tts: { enabled: f.tts_enabled.checked, engine: f.engine.value, rate: Number(f.rate.value) },
-      search_engine: f.search_engine.value, ui: { theme: f.theme.value },
+      updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value },
       llm: { enabled: f.llm_enabled.checked, api_key: $('#apiKey').value.trim() },
     };
     const c = await call('save_settings', patch);
@@ -183,12 +267,13 @@
   async function refresh() {
     const s = await call('get_state'); if (!s) return;
     if (s.mics && s.mics.length) fillSettings(s.config, s.mics); else { const keep = $('#micSelect').value; fillSettings(s.config, [...$('#micSelect').options].slice(1).map(o => ({ id: o.value, name: o.textContent }))); $('#micSelect').value = keep; }
-    renderStatus(s.status);
+    version = s.version || version; $('#kvVer').textContent = version; renderStatus(s.status);
   }
 
   async function init() {
     api = window.pywebview.api;
     await refresh();
+    setTimeout(() => checkUpdate(false), 3000);
     setInterval(async () => { const s = await call('get_status'); if (s) renderStatus(s); }, 5000);
     let t = null; try { t = localStorage.getItem('karina.tab'); } catch (_) {}
     if (t) { const b = $(`#tabs [data-tab="${t}"]`); if (b) b.click(); }

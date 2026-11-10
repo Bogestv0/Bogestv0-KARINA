@@ -2,6 +2,7 @@
 from __future__ import annotations
 import queue, threading, time, traceback
 from . import actions, llm, net
+from .engine import Engine
 from .actions import Ctx
 from .apps import AppIndex
 from .audio import Listener
@@ -18,6 +19,7 @@ class Assistant:
     def __init__(self, cfg, emit):
         self.cfg, self.emit = cfg, emit
         self.apps = AppIndex(cfg)
+        self.engine = Engine(cfg, emit)
         self.stt, self.tts = STT(cfg), Speaker(cfg)
         self.listener = Listener(cfg, self._on_audio, lambda v: self.emit({"type": "level", "v": v}))
         self.q: queue.Queue = queue.Queue(maxsize=4)
@@ -40,6 +42,7 @@ class Assistant:
         self._stop.set()
         self.tts.stop()
         self.listener.stop()
+        self.engine.stop()
 
     def _set_state(self, s: str, detail: str = ""):
         self.state = s

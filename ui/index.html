@@ -13,13 +13,23 @@
   <nav class="tabs" id="tabs">
     <button data-tab="home" class="on">Главная</button>
     <button data-tab="commands">Команды</button>
+    <button data-tab="models">Модели</button>
     <button data-tab="apps">Программы</button>
     <button data-tab="settings">Настройки</button>
   </nav>
   <div class="chips">
+    <button class="chip btn-chip" id="btnUpdate" title="Проверить обновления"><span id="updLabel">Обновить</span></button>
     <span class="chip" id="chipNet"><i></i><span>…</span></span>
   </div>
 </header>
+
+<div class="updbar" id="updBar" hidden>
+  <div class="upd-text"><b id="updTitle"></b><span id="updNotes"></span><div class="pbar" id="updPbar" hidden><i></i></div></div>
+  <div class="upd-actions">
+    <button class="btn primary" id="updInstall">Скачать и установить</button>
+    <button class="btn" id="updLater">Позже</button>
+  </div>
+</div>
 
 <main>
 <!-- ============ ГЛАВНАЯ ============ -->
@@ -45,6 +55,7 @@
         <dt>Распознавание</dt><dd id="kvStt">—</dd>
         <dt>Голос</dt><dd id="kvVoice">—</dd>
         <dt>Режим</dt><dd id="kvMode">—</dd>
+        <dt>Версия</dt><dd id="kvVer">—</dd>
       </dl>
       <div class="note warn" id="ttsWarn" hidden></div>
       <div class="note bad" id="pluginWarn" hidden></div>
@@ -88,6 +99,33 @@
       <label>Ответ голосом<input name="reply" placeholder="Запись включена"></label>
       <div class="form-actions"><button class="btn primary" type="submit">Добавить команду</button><span class="msg" id="customMsg"></span></div>
     </form>
+  </div>
+</section>
+
+<!-- ============ МОДЕЛИ ============ -->
+<section id="tab-models" class="tab">
+  <div class="card">
+    <div class="eyebrow">Встроенные модели</div>
+    <p class="muted small">Работают прямо в Карине, бесплатно и без интернета. Модель скачивается один раз. Есть видеокарта — она ускорит ответы, нет — всё пойдёт на процессоре, но медленнее.</p>
+    <div class="note" id="mdHw" hidden></div>
+    <div class="list" id="mdList"></div>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Движок</div>
+    <dl class="kv"><dt>Состояние</dt><dd id="mdEngine">—</dd></dl>
+    <div class="form">
+      <label>Где считать
+        <select id="mdGpu">
+          <option value="auto">Видеокарта, а если не получится — процессор (рекомендуется)</option>
+          <option value="cpu">Только процессор</option>
+        </select>
+      </label>
+      <div class="form-actions">
+        <button class="btn" type="button" id="mdTest">Проверить модель</button>
+        <span class="msg" id="mdMsg"></span>
+      </div>
+      <div class="note" id="mdTestOut" hidden></div>
+    </div>
   </div>
 </section>
 
@@ -164,6 +202,13 @@
         <label class="switch"><input type="checkbox" name="llm_enabled"><span class="sw"></span><span>Использовать Claude, когда есть интернет</span></label>
         <label>Ключ API <input type="password" name="api_key" id="apiKey" autocomplete="off" placeholder="sk-ant-…"></label>
         <div class="form-actions"><button class="btn" type="button" id="btnClearKey">Удалить сохранённый ключ</button><span class="msg" id="keyMsg"></span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Обновления</div>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="upd_auto"><span class="sw"></span><span>Проверять новую версию при запуске</span></label>
+        <div class="form-actions"><button class="btn" type="button" id="btnUpdate2">Проверить обновления сейчас</button><span class="msg" id="updMsg"></span></div>
       </div>
     </div>
     <div class="card">

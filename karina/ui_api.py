@@ -1,7 +1,7 @@
 """Мост между окном (HTML) и ассистентом. Все методы вызываются из JavaScript: pywebview.api.<метод>()."""
 from __future__ import annotations
-import json, os, subprocess, sys, threading
-from . import actions, net
+import json, os, subprocess, sys, threading, time
+from . import actions, net, models, updater, __version__
 from .audio import Listener
 from .config import DATA, DEFAULTS
 
@@ -11,6 +11,7 @@ class Api:
         self.cfg = cfg
         self._win = window_getter
         self.assistant = None
+        self._downloads: dict = {}
 
     def bind(self, assistant):
         self.assistant = assistant
@@ -27,7 +28,7 @@ class Api:
 
     # ---- состояние ----
     def get_state(self):
-        return {"status": self.assistant.status(), "config": self._safe_cfg(), "mics": self._mics()}
+        return {"status": self.assistant.status(), "config": self._safe_cfg(), "mics": self._mics(), "version": __version__}
 
     def get_status(self):
         return self.assistant.status()
@@ -83,6 +84,145 @@ class Api:
     def clear_api_key(self):
         self.cfg.update({"llm": {"api_key": "", "enabled": False}})
         return self._safe_cfg()
+
+    # ---- обновление ----
+    def check_update(self, manual: bool = True):
+        """manual=False — тихая проверка при запуске: ошибки не показываем."""
+        if not manual and not self.cfg["updates"].get("auto", True):
+            return {"available": False, "skipped": True, "current": __version__}
+        try:
+            r = updater.check()
+        except Exception as e:
+            return {"available": False, "error": "Не удалось проверить обновления: нет связи с GitHub." if not manual else f"Не удалось проверить обновления: {e}", "current": __version__}
+        self._update = r
+        return r
+
+    def install_update(self):
+        info = getattr(self, "_update", None)
+        if not info or not info.get("available"):
+            return {"ok": False, "error": "Сначала проверьте обновления"}
+        if not info.get("can_install"):
+            import webbrowser
+            webbrowser.open(info.get("page") or updater.PAGE)
+            return {"ok": True, "opened": True}
+        cancel = self._upd_cancel = threading.Event()
+
+        def run():
+            err = ""
+            try:
+                p = updater.download(info, lambda d, t: self.emit({"type": "update_progress", "done": d, "total": t}), cancel)
+                self.emit({"type": "update_ready"})
+                time.sleep(0.6)
+                updater.launch_installer(p)
+                time.sleep(0.5)
+                w = self._win()
+                if w:
+                    w.destroy()
+                os._exit(0)
+            except updater.Cancelled:
+                err = "cancelled"
+            except Exception as e:
+                err = str(e) or e.__class__.__name__
+            self.emit({"type": "update_done", "error": err})
+        threading.Thread(target=run, daemon=True, name="updater").start()
+        return {"ok": True}
+
+    def cancel_update(self):
+        c = getattr(self, "_upd_cancel", None)
+        if c:
+            c.set()
+        return True
+
+    # ---- модели ----
+    def _engine(self):
+        return self.assistant.engine
+
+    def models_state(self):
+        ram = models.system_ram_gb()
+        inst = set(models.installed_ids())
+        act = self.cfg["models"].get("active", "")
+        items = []
+        for m in models.CATALOG:
+            dl = self._downloads.get(m["id"])
+            items.append({**{k: m[k] for k in ("id", "title", "tier", "size_gb", "ram", "ru", "desc")},
+                          "tier_label": models.TIER_LABEL[m["tier"]], "installed": m["id"] in inst, "active": m["id"] == act,
+                          "dl": dl and {"done": dl["done"], "total": dl["total"], "stage": dl["stage"]},
+                          "too_big": bool(ram) and ram < m["ram"] * 0.75})
+        return {"models": items, "ram": ram, "recommended": models.recommended_id(ram), "engine": self._engine().info(),
+                "gpu": self.cfg["models"].get("gpu", "auto")}
+
+    def model_download(self, mid: str):
+        if mid in self._downloads or not models.by_id(mid):
+            return False
+        cancel = threading.Event()
+        self._downloads[mid] = {"done": 0, "total": 0, "stage": "search", "cancel": cancel}
+
+        def run():
+            def prog(done, total, stage):
+                self._downloads[mid].update(done=done, total=total, stage=stage)
+                self.emit({"type": "model_progress", "id": mid, "done": done, "total": total, "stage": stage})
+            err = ""
+            try:
+                models.download(mid, prog, cancel)
+                if not self.cfg["models"].get("active"):
+                    self.cfg.update({"models": {"active": mid}})
+            except models.Cancelled:
+                err = "cancelled"
+            except Exception as e:
+                err = str(e) or e.__class__.__name__
+            finally:
+                self._downloads.pop(mid, None)
+                self.emit({"type": "model_done", "id": mid, "error": err})
+        threading.Thread(target=run, daemon=True, name="model-download").start()
+        return True
+
+    def model_cancel(self, mid: str):
+        d = self._downloads.get(mid)
+        if d:
+            d["cancel"].set()
+        return True
+
+    def model_delete(self, mid: str):
+        if self.cfg["models"].get("active") == mid:
+            self._engine().stop()
+            self.cfg.update({"models": {"active": ""}})
+        return models.delete(mid)
+
+    def model_select(self, mid: str):
+        if mid not in models.installed_ids():
+            return {"ok": False, "error": "Сначала скачайте модель"}
+        self.cfg.update({"models": {"active": mid}})
+        threading.Thread(target=self._warm, args=(mid,), daemon=True).start()
+        return {"ok": True}
+
+    def _warm(self, mid):
+        try:
+            self._engine().start(mid)
+        except Exception as e:
+            self.assistant.log("error", str(e))
+
+    def model_test(self, prompt: str = ""):
+        """Короткая проверка: модель отвечает на вопрос. Возвращает текст и скорость."""
+        def run():
+            t0 = time.time()
+            try:
+                text = self._engine().chat([{"role": "user", "content": prompt or "Скажи по-русски одним предложением, что ты работаешь."}], max_tokens=120)
+                ok, out = True, text
+            except Exception as e:
+                ok, out = False, str(e)
+            self.emit({"type": "model_test", "ok": ok, "text": out, "sec": round(time.time() - t0, 1)})
+        threading.Thread(target=run, daemon=True, name="model-test").start()
+        return True
+
+    def models_settings(self, patch: dict):
+        allowed = {k: patch[k] for k in ("gpu", "ctx", "threads") if k in patch}
+        if allowed.get("gpu") not in (None, "auto", "cpu"):
+            allowed.pop("gpu")
+        old = dict(self.cfg["models"])
+        self.cfg.update({"models": allowed})
+        if {k: self.cfg["models"][k] for k in allowed} != {k: old.get(k) for k in allowed}:
+            self._engine().stop()      # новые параметры вступят в силу при следующем запуске
+        return True
 
     # ---- программы ----
     def list_apps(self):

@@ -8,6 +8,13 @@
     get_status: async()=>st,
     get_commands: async()=>[{name:'open_app',desc:'Открыть программу или сайт',examples:['открой миксер','запусти блокнот']},{name:'volume_set',desc:'Установить громкость в процентах',examples:['громкость пятьдесят процентов']},{name:'time',desc:'Сказать время',examples:['который час']}],
     list_custom: async()=>cfg.commands,
+    models_state: async()=>({ram:32,recommended:'gemma4-26b',gpu:'auto',engine:{state:'ready',flavor:'vulkan',detail:'Готово'},models:[
+      {id:'qwen35-4b',title:'Qwen 3.5 · 4B',tier_label:'Слабый ПК',size_gb:2.7,ram:8,ru:'хороший',desc:'Для слабых компьютеров и ноутбуков (от 8 ГБ памяти). Быстрая, подходит и для процессора.',installed:true,active:false,dl:null},
+      {id:'gemma4-e4b',title:'Gemma 4 · E4B',tier_label:'Средний ПК',size_gb:5.0,ram:12,ru:'очень хороший',desc:'Золотая середина: от 12 ГБ памяти.',installed:false,active:false,dl:{done:2.1*2**30,total:5*2**30,stage:'download'}},
+      {id:'qwen35-9b',title:'Qwen 3.5 · 9B',tier_label:'Мощный ПК',size_gb:5.7,ram:16,ru:'отличный',desc:'Для мощного компьютера.',installed:true,active:true,dl:null},
+      {id:'gemma4-26b',title:'Gemma 4 · 26B-A4B (MoE)',tier_label:'Максимум',size_gb:16.9,ram:32,ru:'отличный',desc:'Самая умная из встроенных.',installed:false,active:false,dl:null}]}),
+    model_download: async()=>true, model_cancel: async()=>true, model_select: async()=>({ok:true}), models_settings: async()=>true, model_test: async()=>true,
+    check_update: async()=>({available:true,current:'1.1.0',latest:'1.2.0',notes:'## Что нового\n* Окно «Чат»\n* Поиск в интернете',can_install:true}), install_update: async()=>({ok:true}),
     list_apps: async()=>[{name:'Bogestv0 MIXER',aliases:['миксер','mixer'],src:'bogestv0',path:'',found:true},{name:'Bogestv0 REMOTE',aliases:['ремоут'],src:'bogestv0',path:'',found:false},{name:'Моя программа',aliases:['моя'],src:'user',path:'C:\\Tools\\my.exe',found:true},{name:'Блокнот',aliases:['блокнот'],src:'system',path:'',found:true}],
     send_text: async()=>true, set_listening: async()=>true, test_voice: async()=>true, wake_up: async()=>true, save_settings: async()=>cfg
   }};

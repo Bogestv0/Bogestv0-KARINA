@@ -89,6 +89,22 @@ def selftest() -> int:
             bad.append("нет faster_whisper/assets")
     except Exception:
         pass
+    step["now"] = "движок моделей"
+    try:
+        import subprocess
+        from karina.engine import find_server
+        exe = find_server("cpu")
+        if not exe:
+            bad.append("нет движка llama-server (cpu)")
+        else:
+            r = subprocess.run([str(exe), "--version"], capture_output=True, text=True, timeout=40, cwd=str(exe.parent))
+            logf.write(f"llama-server --version -> код {r.returncode}\n{(r.stdout + r.stderr).strip()[-300:]}\n")
+            if r.returncode != 0:
+                bad.append("llama-server (cpu) не запускается")
+        if not find_server("vulkan"):
+            bad.append("нет движка llama-server (vulkan)")
+    except BaseException:
+        bad.append("движок: " + traceback.format_exc().strip().splitlines()[-1])
     timer.cancel()
     logf.write("ИТОГ: " + ("OK" if not bad else "ОШИБКИ\n" + "\n".join(bad)) + "\n")
     logf.close()

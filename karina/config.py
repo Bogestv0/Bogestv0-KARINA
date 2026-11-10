@@ -23,6 +23,9 @@ DEFAULTS: dict = {
     "tts": {"enabled": True, "engine": "auto", "voice_online": "ru-RU-SvetlanaNeural", "rate": 0},
     "search_engine": "google",    # google | yandex
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-5-5"},
+    # встроенные модели (llama.cpp): active — id выбранной модели; gpu: auto | cpu; ctx/threads: 0 = по умолчанию
+    "updates": {"auto": True},   # проверять новую версию при запуске
+    "models": {"active": "", "gpu": "auto", "ctx": 0, "threads": 0},
     "apps": [],       # свои программы: {"name","aliases":[],"path","args","proc":[]}
     "commands": [],   # свои команды: {"phrases":[],"do":{"type","value"},"reply"}
 }

@@ -8,6 +8,8 @@ for pkg in ("numpy", "faster_whisper", "ctranslate2", "onnxruntime", "av", "webv
     d, b, h = collect_all(pkg)
     datas += d; binaries += b; hidden += h
 datas += [(str(ROOT / "ui"), "ui"), (str(ROOT / "plugins"), "plugins")]
+if (ROOT / "engine").exists():          # движок llama.cpp кладёт в сборку build/fetch_engine.py
+    datas += [(str(ROOT / "engine"), "engine")]
 
 a = Analysis([str(ROOT / "main.py")], pathex=[str(ROOT)], binaries=binaries, datas=datas, hiddenimports=hidden,
              excludes=["tkinter", "matplotlib", "scipy", "pandas", "IPython", "torch", "pytest"], noarchive=False)
