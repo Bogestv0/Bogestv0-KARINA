@@ -42,6 +42,9 @@ jobs:
           $tag = "${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}"
           if ($tag -and $tag -ne "v$v") { Write-Error "Тег $tag не совпадает с версией в karina/__init__.py ($v)"; exit 1 }
 
+      - name: Движок моделей (llama.cpp: Vulkan и CPU)
+        run: python build/fetch_engine.py
+
       - name: Сборка приложения (PyInstaller)
         run: pyinstaller build/karina.spec --noconfirm --distpath dist --workpath build/work
 
