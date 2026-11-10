@@ -43,6 +43,8 @@ jobs:
           if ($tag -and $tag -ne "v$v") { Write-Error "Тег $tag не совпадает с версией в karina/__init__.py ($v)"; exit 1 }
 
       - name: "Движок моделей (llama.cpp — Vulkan и CPU)"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python build/fetch_engine.py
 
       - name: Сборка приложения (PyInstaller)
