@@ -8,15 +8,65 @@ sys.path.insert(0, str(ROOT))
 from karina.config import Config, DATA
 
 # В собранном exe без консоли stdout/stderr отсутствуют: пишем их в журнал, чтобы ошибки не пропадали.
-if sys.stdout is None or sys.stderr is None:
-    try:
-        DATA.mkdir(parents=True, exist_ok=True)
-        _log = open(DATA / "karina.log", "a", encoding="utf-8", buffering=1)
+_log = None
+try:
+    DATA.mkdir(parents=True, exist_ok=True)
+    _log = open(DATA / "karina.log", "a", encoding="utf-8", buffering=1)
+    if sys.stdout is None or sys.stderr is None:
         sys.stdout = sys.stdout or _log
         sys.stderr = sys.stderr or _log
-    except OSError:
-        pass
+except OSError:
+    pass
 
+
+def trace(msg: str):
+    """Строка в karina.log: по ней видно, на каком этапе остановилась программа."""
+    if _log:
+        try:
+            import time
+            _log.write(time.strftime("[%Y-%m-%d %H:%M:%S] ") + msg + "\n")
+        except (OSError, ValueError):
+            pass
+
+
+def fatal_box(text: str):
+    """Окно с ошибкой (в exe без консоли иначе программа исчезает молча)."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, text, "Bogestv0 KARINA", 0x10)
+        except Exception:
+            pass
+
+
+def webview2_installed() -> bool:
+    """Окно Карины рисует Microsoft Edge WebView2. Без него процесс закрывается без единого слова."""
+    if sys.platform != "win32":
+        return True
+    try:
+        import winreg
+        key = r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+        for root, sub in ((winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node" + key[8:]), (winreg.HKEY_LOCAL_MACHINE, key), (winreg.HKEY_CURRENT_USER, key)):
+            try:
+                with winreg.OpenKey(root, sub) as k:
+                    if winreg.QueryValueEx(k, "pv")[0] not in ("", "0.0.0.0"):
+                        return True
+            except OSError:
+                continue
+        return False
+    except Exception:
+        return True          # не смогли проверить — не мешаем запуску
+
+
+try:
+    import faulthandler
+    if _log:
+        faulthandler.enable(file=_log, all_threads=True)      # аварийное падение (не Python-ошибка) оставит след в журнале
+except Exception:
+    pass
+
+from karina import __version__
+trace(f"Запуск Карины {__version__} (Python {sys.version.split()[0]}, {'exe' if getattr(sys, 'frozen', False) else 'исходники'}, аргументы: {sys.argv[1:]})")
 
 
 def run_console(cfg):
@@ -39,6 +89,11 @@ def run_console(cfg):
 
 
 def run_gui(cfg):
+    if not webview2_installed():
+        trace("WebView2 не найден")
+        fatal_box("Для окна Карины нужен Microsoft Edge WebView2, он не установлен.\n\nСкачайте «Evergreen Standalone Installer» на странице\nhttps://developer.microsoft.com/microsoft-edge/webview2/\nи запустите Карину снова.")
+        sys.exit(1)
+    trace("Загружаю библиотеки окна")
     import webview
     from karina.assistant import Assistant
     holder = {}
@@ -49,7 +104,9 @@ def run_gui(cfg):
     holder["w"] = webview.create_window(
         f"Bogestv0 KARINA", url=str(ROOT / "ui" / "index.html"), js_api=api,
         width=1080, height=760, min_size=(760, 560), background_color="#131318")
-    webview.start(lambda: assistant.start(), icon=str(ROOT / "ui" / "logo.png") if (ROOT / "ui" / "logo.png").exists() else None)
+    trace("Окно создано, запускаю")
+    webview.start(lambda: (trace("Окно открыто, запускаю ассистента"), assistant.start(), trace("Ассистент запущен")), icon=str(ROOT / "ui" / "logo.png") if (ROOT / "ui" / "logo.png").exists() else None)
+    trace("Окно закрыто, завершение")
     assistant.stop()
 
 
@@ -114,12 +171,16 @@ def selftest() -> int:
 def _crash(exc: BaseException):
     """Ошибка при старте: в журнал и выход. Без этого собранный exe показывает окно с ошибкой и ждёт нажатия."""
     import traceback
+    tb = traceback.format_exc()
+    trace("ОШИБКА: " + tb.strip().splitlines()[-1])
     try:
         DATA.mkdir(parents=True, exist_ok=True)
         with open(DATA / "crash.log", "a", encoding="utf-8") as f:
-            f.write(traceback.format_exc() + "\n")
+            f.write(tb + "\n")
     except OSError:
         pass
+    if "--selftest" not in sys.argv:
+        fatal_box(f"Карина не запустилась:\n{tb.strip().splitlines()[-1]}\n\nПодробности: {DATA / 'crash.log'}")
     sys.exit(1)
 
 
