@@ -82,9 +82,10 @@ class RealProcess(unittest.TestCase):
         st, why = self.run_with("""
             import os
             class WhisperModel:
-                def __init__(self, *a, **k): os._exit(0xC000001D if os.name == 'nt' else 139)
+                def __init__(self, *a, **k): os._exit(-1073741795 if os.name == 'nt' else 139)   # 0xC000001D как знаковое int
         """)
         self.assertEqual(st, "crash"); self.assertTrue(why)
+        if os.name == "nt": self.assertIn("0xC000001D", why)
 
     def test_python_error_in_transcribe(self):
         st, why = self.run_with("""
