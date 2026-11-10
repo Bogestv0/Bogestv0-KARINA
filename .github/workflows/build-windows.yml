@@ -15,6 +15,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -45,11 +46,18 @@ jobs:
         run: pyinstaller build/karina.spec --noconfirm --distpath dist --workpath build/work
 
       - name: Самопроверка собранного exe
+        timeout-minutes: 5
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist\Karina\Bogestv0-KARINA.exe" -ArgumentList "--selftest" -Wait -PassThru
-          $log = Join-Path $env:APPDATA "Bogestv0 KARINA\selftest.log"
-          if (Test-Path $log) { Get-Content $log }
+          $dir = Join-Path $env:APPDATA "Bogestv0 KARINA"
+          $p = Start-Process -FilePath "dist\Karina\Bogestv0-KARINA.exe" -ArgumentList "--selftest" -PassThru
+          $hung = -not $p.WaitForExit(150000)
+          if ($hung) { taskkill /F /T /PID $p.Id | Out-Null }
+          foreach ($f in "selftest.log", "crash.log", "karina.log") {
+            $path = Join-Path $dir $f
+            if (Test-Path $path) { Write-Host "----- $f"; Get-Content $path }
+          }
+          if ($hung) { Write-Error "Самопроверка зависла (150 с) — см. журнал выше"; exit 1 }
           if ($p.ExitCode -ne 0) { Write-Error "Самопроверка не пройдена (код $($p.ExitCode))"; exit 1 }
 
       - name: Установщик (Inno Setup)
