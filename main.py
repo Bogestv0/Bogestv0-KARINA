@@ -65,6 +65,19 @@ try:
 except Exception:
     pass
 
+def _install_hooks():
+    """Необработанные ошибки (в том числе в потоках) — в журнал, а не в пустоту."""
+    import threading, traceback
+    def eh(t, v, tb):
+        trace("НЕОБРАБОТАННАЯ ОШИБКА: " + "".join(traceback.format_exception(t, v, tb)).strip().splitlines()[-1])
+    def th(a):
+        trace(f"ОШИБКА В ПОТОКЕ {a.thread.name if a.thread else '?'}: {a.exc_type.__name__}: {a.exc_value}")
+    sys.excepthook, threading.excepthook = eh, th
+    import atexit
+    atexit.register(lambda: trace("Процесс завершается штатно"))
+
+
+_install_hooks()
 from karina import __version__
 trace(f"Запуск Карины {__version__} (Python {sys.version.split()[0]}, {'exe' if getattr(sys, 'frozen', False) else 'исходники'}, аргументы: {sys.argv[1:]})")
 

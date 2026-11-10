@@ -3,6 +3,7 @@ from __future__ import annotations
 import json, os, re, socket, subprocess, sys, tempfile, threading, time
 import numpy as np
 from .config import DATA, FROZEN, ROOT
+from .diag import trace
 from .textutil import norm
 
 # типичные «галлюцинации» Whisper на тишине и шуме
@@ -74,10 +75,12 @@ def probe_main(argv: list[str]) -> int:
     save()   # заранее: если процесс упадёт, файл скажет «не завершилась» и родитель найдёт причину по коду выхода
     step = "импорт faster_whisper"
     try:
+        trace("Проба: импорт faster_whisper")
         from faster_whisper import WhisperModel
         step = "загрузка модели" if mode == "local" else "скачивание и загрузка модели"
+        trace("Проба: " + step)
         try:
-            model = WhisperModel(name, device="auto", compute_type="int8", download_root=str(root),
+            model = WhisperModel(name, device="cpu", compute_type="int8", download_root=str(root),
                                  local_files_only=(mode == "local"))
         except Exception as e:
             if mode == "local":
@@ -86,11 +89,13 @@ def probe_main(argv: list[str]) -> int:
                 return _MISSING
             raise
         step = "пробное распознавание"
+        trace("Проба: пробное распознавание тишины")
         import numpy as np
         segs, _ = model.transcribe(np.zeros(16000, dtype=np.float32), language="ru", beam_size=1, vad_filter=True)
         list(segs)
         res = {"status": "ok", "message": ""}
         save()
+        trace("Проба: всё хорошо")
         return _OK
     except BaseException as e:
         res = {"status": "error", "message": f"{step}: {e.__class__.__name__}: {e}"}
@@ -107,6 +112,7 @@ def run_probe(name: str, root, download: bool, progress=None, timeout: float | N
     os.close(fd)
     flags = 0x08000000 if sys.platform == "win32" else 0
     done = threading.Event()
+    trace(f"Проверка модели «{name}» в отдельном процессе ({'скачивание' if download else 'из кэша'})")
     try:
         if download and progress:
             threading.Thread(target=_poll_size, args=(DATA / "models", progress, done), daemon=True, name="stt-download-progress").start()
@@ -122,6 +128,7 @@ def run_probe(name: str, root, download: bool, progress=None, timeout: float | N
                 res = json.load(f)
         except (OSError, ValueError):
             res = {}
+        trace(f"Проверка модели: процесс завершился, код {r.returncode} (0x{r.returncode & 0xFFFFFFFF:08X}), результат: {res.get('status', 'нет файла результата')}")
         tail = (r.stderr or b"").decode("utf-8", "replace").strip()[-300:]
         if r.returncode == _OK and res.get("status") == "ok":
             return "ok", ""
@@ -169,7 +176,7 @@ class STT:
         if status != "ok":
             raise RuntimeError(f"не удалось загрузить модель «{name}»: {why}")
         from faster_whisper import WhisperModel      # проверка прошла — теперь безопасно загружать здесь
-        self.model = WhisperModel(name, device="auto", compute_type="int8", download_root=str(root), local_files_only=True)
+        self.model = WhisperModel(name, device="cpu", compute_type="int8", download_root=str(root), local_files_only=True)
         self.loaded_name = name
 
     def transcribe(self, audio: np.ndarray) -> str:

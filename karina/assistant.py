@@ -67,6 +67,7 @@ class Assistant:
         try:
             trace("Распознавание речи: загружаю модель " + str(self.cfg["stt"].get("model")))
             self._set_state("loading", "Загружаю модель распознавания… при первом запуске нужен интернет (один раз)")
+            trace("Распознавание речи: окно уведомлено, начинаю проверку модели")
             self.stt.load(lambda mb: self._set_state("loading", f"Скачиваю модель распознавания: {mb} МБ (один раз, около 460 МБ для «Хорошей»)"))
             trace(f"Распознавание речи: модель готова за {time.time() - t0:.1f} с")
         except Exception as e:
