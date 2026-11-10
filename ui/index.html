@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bogestv0 KARINA</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><img src="logo.png" alt=""><span>Bogestv0 <b>KARINA</b></span></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="home" class="on">Главная</button>
+    <button data-tab="commands">Команды</button>
+    <button data-tab="apps">Программы</button>
+    <button data-tab="settings">Настройки</button>
+  </nav>
+  <div class="chips">
+    <span class="chip" id="chipNet"><i></i><span>…</span></span>
+  </div>
+</header>
+
+<main>
+<!-- ============ ГЛАВНАЯ ============ -->
+<section id="tab-home" class="tab on">
+  <div class="grid-home">
+    <div class="card hero" id="hero" data-state="loading">
+      <div class="orb-wrap"><div class="orb" id="orb"><img src="logo.png" alt=""></div></div>
+      <div class="hero-text">
+        <div class="eyebrow" id="stateLabel">Запуск</div>
+        <h1 id="stateTitle">Загружаюсь…</h1>
+        <p class="muted" id="stateHint">Подождите немного.</p>
+      </div>
+      <div class="hero-actions">
+        <button class="btn primary" id="btnListen">Выключить микрофон</button>
+        <button class="btn" id="btnVoice">Проверить голос</button>
+      </div>
+    </div>
+
+    <div class="card side">
+      <div class="eyebrow">Состояние</div>
+      <dl class="kv">
+        <dt>Интернет</dt><dd id="kvNet">—</dd>
+        <dt>Распознавание</dt><dd id="kvStt">—</dd>
+        <dt>Голос</dt><dd id="kvVoice">—</dd>
+        <dt>Режим</dt><dd id="kvMode">—</dd>
+      </dl>
+      <div class="note warn" id="ttsWarn" hidden></div>
+      <div class="note bad" id="pluginWarn" hidden></div>
+    </div>
+
+    <div class="card log-card">
+      <div class="log-head"><div class="eyebrow">Разговор</div><button class="link" id="btnClear">Очистить</button></div>
+      <div class="log" id="log"><div class="empty">Скажите «<span class="nm">Карина</span>, открой блокнот» или напишите команду ниже.</div></div>
+      <form class="send" id="sendForm">
+        <input id="sendInput" placeholder="Напишите команду без голоса…" autocomplete="off">
+        <button class="btn primary" type="submit">Отправить</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- ============ КОМАНДЫ ============ -->
+<section id="tab-commands" class="tab">
+  <div class="card">
+    <div class="eyebrow">Встроенные команды</div>
+    <p class="muted small">Начинайте с имени: «<span class="nm">Карина</span>, …». После ответа можно говорить без имени в течение нескольких секунд.</p>
+    <div class="cmd-grid" id="cmdList"></div>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Свои команды</div>
+    <p class="muted small">Привяжите фразу к действию: запуск программы, сочетание клавиш, ссылка, запрос к локальному API вашей программы.</p>
+    <div class="list" id="customList"></div>
+    <form class="form" id="customForm">
+      <label>Фразы (через запятую)<input name="phrases" placeholder="включи запись, начни запись" required></label>
+      <label>Действие
+        <select name="type">
+          <option value="keys">Сочетание клавиш</option>
+          <option value="run">Запустить программу</option>
+          <option value="url">Открыть ссылку</option>
+          <option value="http">HTTP-запрос к программе</option>
+          <option value="type">Напечатать текст</option>
+          <option value="shell">Команда командной строки</option>
+        </select>
+      </label>
+      <label>Значение<input name="value" placeholder="ctrl+shift+r  ·  C:\Program Files\App\app.exe  ·  http://127.0.0.1:8080/record" required></label>
+      <label>Ответ голосом<input name="reply" placeholder="Запись включена"></label>
+      <div class="form-actions"><button class="btn primary" type="submit">Добавить команду</button><span class="msg" id="customMsg"></span></div>
+    </form>
+  </div>
+</section>
+
+<!-- ============ ПРОГРАММЫ ============ -->
+<section id="tab-apps" class="tab">
+  <div class="card">
+    <div class="eyebrow">Программы, которыми можно управлять</div>
+    <p class="muted small">«Карина, открой миксер» · «закрой ремоут» · «переключись на анблок». Ассистент также находит всё из меню «Пуск» по названию.</p>
+    <div class="list" id="appList"></div>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Добавить свою программу</div>
+    <form class="form" id="appForm">
+      <label>Название<input name="name" placeholder="Моя программа" required></label>
+      <label>Как называть голосом (через запятую)<input name="aliases" placeholder="моя, программа, мой редактор"></label>
+      <label>Путь к программе
+        <span class="row"><input name="path" id="appPath" placeholder="C:\Program Files\…\app.exe" required><button type="button" class="btn" id="btnPick">Выбрать…</button></span>
+      </label>
+      <label>Аргументы запуска (необязательно)<input name="args" placeholder="--minimized"></label>
+      <div class="form-actions"><button class="btn primary" type="submit">Добавить</button><span class="msg" id="appMsg"></span></div>
+    </form>
+  </div>
+</section>
+
+<!-- ============ НАСТРОЙКИ ============ -->
+<section id="tab-settings" class="tab">
+  <form id="setForm" class="settings">
+    <div class="card">
+      <div class="eyebrow">Обращение</div>
+      <div class="form">
+        <label>Имя ассистента<input name="name" required></label>
+        <label>Другие варианты, как её может «услышать» распознавание (через запятую)<input name="aliases"></label>
+        <label class="switch"><input type="checkbox" name="wake_required"><span class="sw"></span><span>Откликаться только на имя</span></label>
+        <label>Слушать без имени после ответа, секунд <output id="outFollow"></output><input type="range" name="followup_seconds" min="0" max="20" step="1"></label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Слух</div>
+      <div class="form">
+        <label>Микрофон<select name="mic_device" id="micSelect"></select></label>
+        <label>Точность распознавания
+          <select name="model">
+            <option value="tiny">Минимальная — самая быстрая</option>
+            <option value="base">Базовая</option>
+            <option value="small">Хорошая (рекомендуется)</option>
+            <option value="medium">Высокая — нужен мощный компьютер</option>
+          </select>
+        </label>
+        <label>Чувствительность микрофона <output id="outVad"></output><input type="range" name="vad_threshold" min="0.004" max="0.05" step="0.002"></label>
+        <div class="meter"><div class="meter-bar" id="meter"></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Голос</div>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="tts_enabled"><span class="sw"></span><span>Отвечать голосом</span></label>
+        <label>Источник голоса
+          <select name="engine">
+            <option value="auto">Автоматически: онлайн-голос, а без интернета — системный</option>
+            <option value="online">Только онлайн-голос (Microsoft Svetlana)</option>
+            <option value="offline">Только системный голос Windows (офлайн)</option>
+          </select>
+        </label>
+        <label>Скорость речи <output id="outRate"></output><input type="range" name="rate" min="-5" max="5" step="1"></label>
+        <label>Поисковик
+          <select name="search_engine"><option value="google">Google</option><option value="yandex">Яндекс</option></select>
+        </label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Понимание свободных фраз (необязательно)</div>
+      <p class="muted small">Со включённым интернетом и ключом Claude API Карина поймёт и фразы, которых нет в списке команд. Без этого всё работает офлайн по списку команд.</p>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="llm_enabled"><span class="sw"></span><span>Использовать Claude, когда есть интернет</span></label>
+        <label>Ключ API <input type="password" name="api_key" id="apiKey" autocomplete="off" placeholder="sk-ant-…"></label>
+        <div class="form-actions"><button class="btn" type="button" id="btnClearKey">Удалить сохранённый ключ</button><span class="msg" id="keyMsg"></span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Оформление</div>
+      <div class="form">
+        <label>Тема<select name="theme"><option value="auto">Как в Windows</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
+      </div>
+    </div>
+    <div class="savebar">
+      <button class="btn primary" type="submit">Сохранить</button>
+      <button class="btn" type="button" id="btnData">Открыть папку с данными</button>
+      <span class="msg" id="setMsg"></span>
+    </div>
+  </form>
+</section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
