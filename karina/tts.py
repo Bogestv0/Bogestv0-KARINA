@@ -62,6 +62,7 @@ class Speaker:
         self.cfg = cfg
         self.engine_used = ""
         self.warning = ""
+        self.out_warning = ""      # проблема с выбранным устройством вывода (вкладка «Звук»)
         self._stop = threading.Event()
         self._edge_fail_until = 0.0
         self.cache_dir = Path(cfg.path).parent / "voice_cache"   # рядом с config.json
@@ -120,7 +121,26 @@ class Speaker:
         self.engine_used = "offline"
 
     def _play(self, path: str):
-        _mci_play(path, self._stop)
+        """Играет файл на устройство из вкладки «Звук». Устройство Windows по умолчанию на полной громкости — системным
+        проигрывателем, как раньше; иначе — через sounddevice. Если не вышло, говорим через устройство по умолчанию."""
+        from . import playback
+        dev, vol, found = playback.resolve_output(self.cfg)
+        if not found:
+            self.out_warning = "Выбранное устройство вывода не найдено — говорю через устройство Windows по умолчанию."
+        elif self.out_warning.startswith("Выбранное"):
+            self.out_warning = ""
+        if dev is None and vol >= 1.0:
+            _mci_play(path, self._stop)
+            return
+        try:
+            playback.play_file(path, dev, vol, self._stop)
+            if found:
+                self.out_warning = ""
+        except Exception as e:
+            if self._stop.is_set():
+                return
+            self.out_warning = f"Не удалось играть на выбранное устройство ({e.__class__.__name__}: {e}) — говорю через устройство по умолчанию."
+            _mci_play(path, self._stop)
 
     def _cache_file(self, text: str, voice_id: str | None = None) -> Path:
         return self.cache_dir / cache_name(text, *voice_params(self.cfg["tts"], voice_id))
@@ -212,6 +232,27 @@ class Speaker:
         except OSError:
             pass
 
+    def _sapi_volume(self) -> int:
+        try:
+            return max(0, min(100, int((self.cfg.get("audio_out") or {}).get("volume", 100))))
+        except (TypeError, ValueError):
+            return 100
+
+    def _sapi_output(self, v):
+        """Системный голос тоже направляем на выбранное устройство (по имени; если не нашли — остаётся по умолчанию)."""
+        want = str((self.cfg.get("audio_out") or {}).get("name") or "").strip().lower()
+        if not want:
+            return
+        try:
+            outs = v.GetAudioOutputs()
+            for i in range(outs.Count):
+                d = outs.Item(i).GetDescription().lower()
+                if want in d or d.startswith(want):
+                    v.AudioOutput = outs.Item(i)
+                    return
+        except Exception:
+            pass
+
     def _sapi(self, text: str):
         if not IS_WIN:
             print("[Карина]", text)
@@ -242,7 +283,8 @@ class Speaker:
             else:
                 self.warning = "В Windows нет русского голоса: Параметры → Время и язык → Речь → Добавить голоса."
             v.Rate = max(-10, min(10, int(self.cfg["tts"].get("rate", 0))))
-            v.Volume = 100
+            v.Volume = self._sapi_volume()
+            self._sapi_output(v)
             v.Speak(text, 0)
         finally:
             comtypes.CoUninitialize()

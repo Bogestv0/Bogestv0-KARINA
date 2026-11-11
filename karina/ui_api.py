@@ -3,6 +3,7 @@ from __future__ import annotations
 import json, os, queue, subprocess, sys, threading, time
 from .diag import trace
 from . import actions, claude as claudemod, files as filesmod, net, models, updater, __version__
+from . import audio as audiomod
 from .audio import Listener
 from .config import DATA, DEFAULTS
 
@@ -51,7 +52,8 @@ class Api:
 
     # ---- состояние ----
     def get_state(self):
-        return {"status": self.assistant.status(), "config": self._safe_cfg(), "mics": self._mics(), "version": __version__,
+        return {"status": self.assistant.status(), "config": self._safe_cfg(), "mics": self._mics(), "outs": self._outs(),
+                "version": __version__,
                 "frameless": self.frame is not None, "maximized": bool(self.frame and self.frame.maximized)}
 
     def get_status(self):
@@ -61,6 +63,9 @@ class Api:
         d = json.loads(json.dumps(self.cfg.data))
         d["llm"]["has_key"] = bool(d["llm"].get("api_key"))
         d["llm"]["api_key"] = ""       # ключ в окно не отдаём
+        for pv in ((d.get("cloud") or {}).get("providers") or {}).values():
+            pv["has_key"] = bool(pv.get("key"))
+            pv["key"] = ""             # ключи облачных провайдеров тоже не отдаём
         return d
 
     def _mics(self):
@@ -68,6 +73,60 @@ class Api:
             return Listener.devices()
         except Exception:
             return []
+
+    def _outs(self):
+        try:
+            return audiomod.list_devices("output")
+        except Exception:
+            return []
+
+    def audio_devices(self):
+        """Обновить списки устройств (подключили наушники или микрофон, не перезапуская Карину)."""
+        return {"mics": self._mics(), "outs": self._outs()}
+
+    # ---- вывод звука (вкладка «Звук») ----
+    def audio_out_set(self, device, volume):
+        """Выбрать устройство вывода (None — по умолчанию) и громкость голоса 0–100. Имя устройства берём из своего списка."""
+        try:
+            dev = None if device in (None, "") else int(device)
+        except (TypeError, ValueError):
+            dev = None
+        try:
+            vol = max(0, min(100, int(volume)))
+        except (TypeError, ValueError):
+            vol = 100
+        name = ""
+        if dev is not None:
+            name = next((d["name"] for d in self._outs() if d["id"] == dev), "")
+            if not name:
+                dev = None
+        self.cfg.update({"audio_out": {"device": dev, "name": name, "volume": vol}})
+        return self.audio_out_state()
+
+    def audio_out_state(self):
+        from . import playback
+        o = self.cfg["audio_out"]
+        _, _, found = playback.resolve_output(self.cfg)
+        return {"device": o.get("device"), "name": o.get("name", ""), "volume": o.get("volume", 100), "found": found,
+                "warning": self.assistant.tts.out_warning if self.assistant else ""}
+
+    def audio_out_test(self):
+        """Короткий сигнал на выбранное устройство. Результат придёт событием out_test."""
+        from . import playback
+
+        def run():
+            err = ""
+            try:
+                dev, vol, found = playback.resolve_output(self.cfg)
+                if not found:
+                    err = "Выбранное устройство не найдено. Подключите его или обновите список."
+                else:
+                    playback.play_chime(dev, vol, threading.Event())
+            except Exception as e:
+                err = f"{e.__class__.__name__}: {e}"
+            self.emit({"type": "out_test", "error": err})
+        threading.Thread(target=run, daemon=True, name="audio-out-test").start()
+        return True
 
     def get_commands(self):
         return [{"name": c.name, "desc": c.desc, "examples": c.examples} for c in actions.REGISTRY]
@@ -186,7 +245,7 @@ class Api:
 
     def save_settings(self, patch: dict):
         old_model = self.cfg["stt"]["model"]
-        old_mic = self.cfg["stt"].get("mic_device")
+        old_mics = audiomod.mic_slots(self.cfg)
         old_tts = dict(self.cfg["tts"])
         llm = patch.get("llm") or {}
         if "api_key" in llm and not llm["api_key"]:
@@ -194,10 +253,18 @@ class Api:
         patch.pop("apps", None)
         patch.pop("commands", None)
         patch.pop("brain", None)        # «мозг» меняется только через brain_set (с проверкой значений)
+        patch.pop("cloud", None)        # облачные модели меняются только через cloud_* (с проверкой значений)
+        patch.pop("audio_out", None)    # вывод звука меняется только через audio_out_set
+        stt = patch.get("stt") or {}
+        if "mics" in stt:
+            stt["mics"] = audiomod.sanitize_mics(stt["mics"], self._mics())
+            stt["mic_device"] = stt["mics"][0]["device"]          # старый ключ держим в согласии с первым микрофоном
+        if "assist" in stt and stt["assist"] not in ("smart", "all", "best"):
+            stt.pop("assist")
         self.cfg.update(patch)
         if self.cfg["stt"]["model"] != old_model:
             self.assistant.reload_model()
-        if self.cfg["stt"].get("mic_device") != old_mic:
+        if audiomod.mic_slots(self.cfg) != old_mics:
             self.assistant.reload_audio()
         if self.cfg["tts"] != old_tts:
             self.assistant.warm_voice()      # другой голос/скорость — заранее готовим записи под него
@@ -298,6 +365,78 @@ class Api:
             ok, text, sec = self.assistant.brain.claude.ping()
             self.emit({"type": "brain_test", "ok": ok, "text": text, "sec": sec})
         threading.Thread(target=run, daemon=True, name="claude-test").start()
+        return True
+
+    # ---- бесплатные облачные модели ----
+    def cloud_state(self):
+        c = self.assistant.brain.cloud
+        return {"providers": c.describe(), "strategy": c.strategy}
+
+    def cloud_save(self, pid: str, data: dict):
+        """Настройки одного провайдера. Пустой ключ = «оставить как было» (удаляется через cloud_clear_key)."""
+        from . import cloud as cloudmod
+        if pid not in cloudmod.PRESETS or not isinstance(data, dict):
+            return self.cloud_state()
+        patch: dict = {}
+        if "enabled" in data:
+            patch["enabled"] = bool(data["enabled"])
+        key = str(data.get("key") or "").strip()
+        if key and len(key) <= 400 and not any(ch.isspace() for ch in key):
+            patch["key"] = key
+        if "model" in data:
+            patch["model"] = str(data["model"] or "").strip()[:120]
+        if pid == "custom":
+            if "url" in data:
+                url = str(data["url"] or "").strip().rstrip("/")
+                patch["url"] = url if url.lower().startswith(("http://", "https://")) else ""
+            if "name" in data:
+                patch["name"] = str(data["name"] or "").strip()[:40]
+        if patch:
+            self.cfg.update({"cloud": {"providers": {pid: patch}}})
+            if "model" in patch or "url" in patch or "key" in patch:
+                self.assistant.brain.cloud._auto.pop(pid, None)        # сменили модель/адрес/ключ — подбор заново
+                self.assistant.brain.cloud._st.pop(pid, None)          # и забываем прежний отказ
+        return self.cloud_state()
+
+    def cloud_clear_key(self, pid: str):
+        from . import cloud as cloudmod
+        if pid in cloudmod.PRESETS:
+            self.cfg.update({"cloud": {"providers": {pid: {"key": "", "enabled": False}}}})
+        return self.cloud_state()
+
+    def cloud_move(self, pid: str, delta: int):
+        """Сдвинуть провайдера в очереди (−1 выше, +1 ниже)."""
+        c = self.assistant.brain.cloud
+        order = c.order()
+        if pid in order:
+            i = order.index(pid)
+            j = max(0, min(len(order) - 1, i + (1 if int(delta) > 0 else -1)))
+            order[i], order[j] = order[j], order[i]
+            self.cfg.update({"cloud": {"order": order}})
+        return self.cloud_state()
+
+    def cloud_strategy(self, strategy: str):
+        from . import cloud as cloudmod
+        if strategy in cloudmod.STRATEGIES:
+            self.cfg.update({"cloud": {"strategy": strategy}})
+        return self.cloud_state()
+
+    def cloud_models(self, pid: str):
+        """Список моделей провайдера для выбора (нужен ключ)."""
+        from . import cloud as cloudmod
+        if pid not in cloudmod.PRESETS:
+            return {"ok": False, "models": [], "error": "Неизвестный провайдер"}
+        try:
+            return {"ok": True, "models": self.assistant.brain.cloud.list_models(pid), "error": ""}
+        except Exception as e:
+            return {"ok": False, "models": [], "error": str(e)}
+
+    def cloud_test(self, pid: str):
+        """Проверка ключа и модели провайдера. Результат придёт событием cloud_test."""
+        def run():
+            ok, text, sec = self.assistant.brain.cloud.ping(pid)
+            self.emit({"type": "cloud_test", "pid": pid, "ok": ok, "text": text, "sec": sec})
+        threading.Thread(target=run, daemon=True, name="cloud-test").start()
         return True
 
     def open_url(self, url: str):

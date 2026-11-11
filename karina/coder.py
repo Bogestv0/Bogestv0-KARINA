@@ -29,7 +29,7 @@ INLINE_BYTES = 24_000          # файл такого размера и мен�
 INLINE_TOTAL = 60_000          # всего в первом сообщении
 RUN_TIMEOUT = 60
 OUT_LIMIT = 6000
-LIMITS = {"local": 4000, "claude": 8000}     # токенов на один шаг
+LIMITS = {"local": 4000, "claude": 8000, "cloud": 3000}     # токенов на один шаг
 
 # что можно записывать (код и данные); программы и скрипты запуска Windows — нельзя
 WRITE_EXT = (set(filesmod.KINDS) - {"docx", "xlsx", "pdf"}) | {"cfg", "gitignore", "ts", "vue", "in"}
@@ -509,8 +509,8 @@ class CoderService:
                 out.insert(1, {"role": "user", "content": "[Часть прежней переписки удалена для экономии памяти. Актуальные файлы смотри командой [[ЧИТАТЬ: путь]].]"})
         return out
 
-    def _budget(self, claude: bool, max_tokens: int) -> int:
-        ctx = 32768 if claude else int((self.cfg.get("models", {}) or {}).get("ctx") or 0)
+    def _budget(self, claude: bool, max_tokens: int, ctx: int = 0) -> int:
+        ctx = ctx or (32768 if claude else int((self.cfg.get("models", {}) or {}).get("ctx") or 0))
         if not ctx:
             from . import models
             m = models.by_id((self.cfg.get("models", {}) or {}).get("active", ""))
@@ -547,7 +547,7 @@ class CoderService:
                 if self._stop.is_set():
                     break
                 self._say("step", f"Шаг {step} из {st['max_steps']}: думаю…")
-                msgs = self._trim(msgs, self._budget(is_claude, max_tokens))
+                msgs = self._trim(msgs, self._budget(is_claude, max_tokens, backend.ctx_tokens if choice.name == "cloud" else 0))
                 reply = backend.chat([sysmsg] + msgs, max_tokens=max_tokens, temperature=0.3, stop=self._stop)
                 if self._stop.is_set():
                     break

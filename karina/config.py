@@ -20,7 +20,11 @@ DEFAULTS: dict = {
     "followup_seconds": 8,        # после имени слушаем без повторного обращения
     "ui": {"theme": "auto", "background": True, "frameless": True,
            "admin": False, "admin_asked": False},   # admin: запускать Карину с правами администратора (через задачу планировщика)   # frameless: свой заголовок вместо рамки Windows   # background: закрытие окна сворачивает Карину в трей, а не выключает
-    "stt": {"model": "small", "mic_device": None, "vad_threshold": 0.012},
+    # mics — до 4 микрофонов сразу: {"enabled","device","name"} (пусто = старая настройка mic_device, слот 1);
+    # assist — как микрофоны помогают друг другу: smart (лучший слушает, остальные помогают при плохом распознавании) | all (распознать со всех, выбрать лучшее) | best (только самый чистый)
+    "stt": {"model": "small", "mic_device": None, "vad_threshold": 0.012, "mics": [], "assist": "smart"},
+    # куда Карина выводит свой голос: device — номер устройства (None = по умолчанию в Windows), name — его имя (номера меняются), volume — громкость голоса 0–100 %
+    "audio_out": {"device": None, "name": "", "volume": 100},
     # voice — svetlana_cute | ava_calm (см. tts.VOICES); pronounce — словарь «слово → как произнести»
     # offline — auto (нейросетевой Piper, если скачан, иначе системный) | system
     "tts": {"enabled": True, "engine": "auto", "voice": "svetlana_cute", "rate": 0, "offline": "auto",
@@ -34,6 +38,9 @@ DEFAULTS: dict = {
     "brain": {"mode": "local", "claude_model": "claude-sonnet-5-5"},
     # «Кодер»: run — разрешить запускать написанный код для проверки (python / pytest / node в папке проекта); max_steps — шагов на задачу
     "coder": {"run": False, "max_steps": 12},
+    # бесплатные облачные модели (свои ключи): strategy — failover (по порядку, при исчерпании лимита — следующий) | spread (по кругу);
+    # order — порядок провайдеров; providers — {id: {"enabled","key","model","url","name"}} (см. cloud.PRESETS)
+    "cloud": {"strategy": "failover", "order": [], "providers": {}},
     "updates": {"auto": True},   # проверять новую версию при запуске
     "models": {"active": "", "gpu": "auto", "ctx": 0, "threads": 0},
     "apps": [],       # свои программы: {"name","aliases":[],"path","args","proc":[]}

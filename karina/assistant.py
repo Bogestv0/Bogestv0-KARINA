@@ -8,7 +8,7 @@ from .diag import trace
 from .engine import Engine
 from .actions import Ctx
 from .apps import AppIndex
-from .audio import Listener
+from .audio import Listener, format_status
 from .stt import STT
 from .tts import Speaker
 from .textutil import norm
@@ -32,6 +32,8 @@ STATIC_PHRASES = [
 ] + [f"Громкость {v}." for v in range(0, 101, 10)] + [f"Громкость {v} процентов." for v in range(0, 101, 10)]
 
 
+GOOD_CONF = 0.70       # от такой уверенности модели распознавание считаем хорошим и помощь остальных микрофонов не нужна
+
 YES = {"да", "давай", "подтверждаю", "конечно", "ага", "выполняй", "точно", "да да"}
 NO = {"нет", "не надо", "отмена", "отменяю", "стоп", "не нужно"}
 
@@ -45,7 +47,10 @@ class Assistant:
         self.coder = CoderService(cfg, self.brain, emit)
         self.chat = chatmod.ChatService(cfg, self.engine, emit, speak=self.say, brain=self.brain, coder=self.coder)
         self.stt, self.tts = STT(cfg), Speaker(cfg)
-        self.listener = Listener(cfg, self._on_audio, lambda v: self.emit({"type": "level", "v": v}))
+        self.listener = Listener(cfg, self._on_audio, self._on_level, self._on_mics)
+        self.mic_status: list = []
+        self._levels: dict = {}
+        self._lvl_emit = 0.0
         self.q: queue.Queue = queue.Queue(maxsize=4)
         self.state = "loading"
         self.sleeping = False
@@ -105,7 +110,8 @@ class Assistant:
         return {"online": net.is_online(), "model": self.cfg["stt"]["model"], "voice": self.tts.engine_used or self.cfg["tts"]["engine"],
                 "tts_warning": self.tts.warning, "state": self.state, "sleeping": self.sleeping, "listening": self.listening,
                 "name": self.cfg["name"], "plugin_errors": self.plugin_errors, "llm": bool(self.cfg["llm"].get("enabled") and (self.cfg["llm"].get("api_key"))),
-                "brain": self.brain.mode}
+                "brain": self.brain.mode, "mics": self.mic_status, "mics_text": format_status(self.mic_status),
+                "out_warning": self.tts.out_warning}
 
     def _worker(self):
         # 1) модель
@@ -123,7 +129,7 @@ class Assistant:
         # 2) микрофон
         try:
             self.listener.start()
-            trace("Микрофон: слушаю")
+            trace("Микрофоны: слушаю — " + format_status(self.mic_status))
             try:
                 import faulthandler
                 faulthandler.cancel_dump_traceback_later()
@@ -137,14 +143,14 @@ class Assistant:
         # 3) цикл
         while not self._stop.is_set():
             try:
-                audio = self.q.get(timeout=0.4)
+                group = self.q.get(timeout=0.4)
             except queue.Empty:
                 continue
             if not self.listening or self.stt.model is None:
                 continue
             try:
                 self._set_state("thinking")
-                text = self.stt.transcribe(audio)
+                text = self._recognize(group)
                 if text:
                     self.handle(text)
             except Exception as e:
@@ -153,11 +159,69 @@ class Assistant:
             finally:
                 self._set_state("idle")
 
-    def _on_audio(self, audio):
+    def _on_audio(self, group):
+        """Фраза от микрофонов: список записей одной и той же речи (лучшая первой)."""
         try:
-            self.q.put_nowait(audio)
+            self.q.put_nowait(group)
         except queue.Full:
             pass
+
+    # ---------- несколько микрофонов ----------
+    def _on_level(self, slot: int, v: float):
+        self._levels[slot] = v
+        now = time.time()
+        if now - self._lvl_emit < 0.07:
+            return
+        self._lvl_emit = now
+        self.emit({"type": "level", "v": max(self._levels.values()), "mics": {str(k): round(x, 3) for k, x in self._levels.items()}})
+
+    def _on_mics(self, statuses: list):
+        """Состояние микрофонов изменилось (открылся, пропал, вернулся)."""
+        old = {s["slot"]: s["state"] for s in self.mic_status}
+        self.mic_status = statuses
+        self._levels = {k: v for k, v in self._levels.items() if any(s["slot"] == k and s["state"] == "ok" for s in statuses)}
+        self.emit({"type": "mics", "mics": statuses})
+        for s in statuses:
+            if s["state"] in ("error", "missing", "dup", "unset") and old.get(s["slot"]) != s["state"]:
+                self.log("error", f"Микрофон {s['slot'] + 1}: {s['text']}")
+            elif s["state"] == "ok" and old.get(s["slot"]) in ("error", "missing"):
+                self.log("info", f"Микрофон {s['slot'] + 1} снова работает.")
+        if self.state == "error" and self.stt.model is not None and any(s["state"] == "ok" for s in statuses):
+            self._set_state("idle")
+
+    def _addressed_ok(self, text: str) -> bool:
+        """Фраза годится для команды: обращение по имени (или оно не нужно)."""
+        if not self.cfg["wake_required"] or time.time() < self.followup_until:
+            return True
+        return split_wake(text, self.cfg.wake_names())[0]
+
+    def _recognize(self, group) -> str:
+        """Лучший текст из записей одной фразы. Один микрофон — просто распознаём. Несколько — режим stt.assist:
+        smart: сначала самый чистый микрофон; остальные подключаются, только если он расслышал плохо или пропустил имя;
+        all: распознаём со всех и берём лучший; best: самый чистый, остальные — запасные, если он ничего не расслышал."""
+        if not isinstance(group, (list, tuple)):          # на случай прямой передачи звука
+            return self.stt.transcribe(group)
+        if len(group) == 1:
+            return self.stt.transcribe(group[0].audio)
+        mode = self.cfg["stt"].get("assist", "smart")
+        best = None          # (оценка, текст, номер микрофона, уверенность)
+        tried = 0
+        for u in group:
+            text, conf = self.stt.transcribe_ex(u.audio)
+            tried += 1
+            if not text:
+                continue
+            ok = self._addressed_ok(text)
+            score = conf + (0.25 if ok else 0.0) + min(len(text.split()), 20) * 0.002
+            if best is None or score > best[0]:
+                best = (score, text, u.slot, conf)
+            if mode in ("smart", "best") and (mode == "best" or (conf >= GOOD_CONF and ok)):
+                break
+        if best is None:
+            return ""
+        trace(f"Микрофоны: фраза на {len(group)} микр., распознано с {tried}; выбран №{best[2] + 1} (уверенность {best[3]:.2f}): {best[1]}")
+        self.emit({"type": "mic_pick", "slot": best[2]})
+        return best[1]
 
     # ---------- управление ----------
     def set_listening(self, on: bool):
@@ -168,8 +232,11 @@ class Assistant:
     def reload_audio(self):
         try:
             self.listener.start()
+            if self.state == "error" and self.stt.model is not None:
+                self._set_state("idle")
         except Exception as e:
             self.log("error", f"Микрофон недоступен: {e}")
+            self._set_state("error", "Нет микрофона")
 
     def reload_model(self):
         def run():

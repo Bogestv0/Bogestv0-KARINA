@@ -106,6 +106,25 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .switch input:checked+.sw{background:var(--accent)} .switch input:checked+.sw::after{left:20px}
 .switch input:focus-visible+.sw{box-shadow:0 0 0 3px var(--accent-soft)}
 .settings{display:flex;flex-direction:column;gap:16px}
+.cloud-list{display:flex;flex-direction:column;gap:10px;margin:14px 0}
+.cloud-row{padding:12px 14px;border-radius:13px;background:var(--surface-2);border:1px solid var(--line);border-left:3px solid var(--line)}
+.cloud-row.ok{border-left-color:var(--ok)} .cloud-row.cooldown,.cloud-row.error{border-left-color:var(--warn)}
+.cloud-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cloud-title{display:flex;align-items:center;gap:10px;flex:1;min-width:140px}
+.cloud-head .switch{display:flex}
+.cloud-row .sw{background:color-mix(in srgb,var(--muted) 40%,transparent)} .cloud-row .switch input:checked+.sw{background:var(--accent)}
+.cloud-move{display:flex;gap:6px} .cloud-move .btn{padding:4px 10px}
+.cloud-body{margin-top:8px} .cloud-body .form{margin-top:8px;gap:10px} .cloud-stat{margin:0 0 4px}
+.mics{display:flex;flex-direction:column;gap:10px}
+.mic-row{display:grid;grid-template-columns:minmax(130px,170px) 1fr;gap:8px 14px;align-items:center;padding:11px 13px;border-radius:13px;background:var(--surface-2);border:1px solid var(--line);transition:border-color .2s,box-shadow .2s,opacity .15s}
+.mic-row .meter{grid-column:2;background:var(--surface);height:6px}
+.mic-row .mic-state{grid-column:2;font-size:12px;min-height:0}
+.mic-row .mic-state:empty{display:none}
+.mic-row.off select{opacity:.5}
+.mic-row.picked{border-color:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.mic-state.ok{color:var(--ok)} .mic-state.bad{color:var(--bad)}
+.msgline.info{border-left-color:var(--ok)}
+@media (max-width:640px){.mic-row{grid-template-columns:1fr}.mic-row .meter,.mic-row .mic-state{grid-column:1}}
 .savebar{position:sticky;bottom:0;padding:12px 0;background:linear-gradient(transparent,var(--bg) 35%)}
 .meter{height:8px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
 .meter-bar{height:100%;width:0;background:var(--accent);transition:width .06s}

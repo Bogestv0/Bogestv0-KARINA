@@ -10,11 +10,11 @@ from .textutil import norm
 
 CHATS_DIR = DATA / "chats"
 MAX_TOKENS = 1500
-LIMITS = {"local": (1500, 3500), "claude": (3000, 8000)}     # (обычный ответ, ответ с файлом) в токенах
+LIMITS = {"local": (1500, 3500), "claude": (3000, 8000), "cloud": (1500, 3500)}     # (обычный ответ, ответ с файлом) в токенах
 CLAUDE_CTX = 32768                                          # сколько истории и найденного отдаём Claude (токенов)
 CHARS_PER_TOKEN = 2.0          # для русского с запасом: лучше обрезать историю раньше, чем переполнить контекст
 
-ATTACH_CHARS = {"local": 20_000, "claude": 90_000}          # сколько текста приложенных файлов отдаём модели при ответе «только прочитать»
+ATTACH_CHARS = {"local": 20_000, "claude": 90_000, "cloud": 30_000}          # сколько текста приложенных файлов отдаём модели при ответе «только прочитать»
 MODES = ("auto", "code", "ask")                              # авто / всегда кодер / только ответ в чате
 
 # Просьба что-то СДЕЛАТЬ с кодом (нужен кодер) — в отличие от «посмотри», «объясни», «найди ошибку» (достаточно прочитать и ответить).
@@ -288,8 +288,8 @@ class ChatService:
         reply["project"] = {"name": name, "zip": done.get("zip", ""), "ok": bool(done.get("ok"))}
         return "\n\n".join(x for x in parts if x), err, steps_out
 
-    def _history_budget(self, max_tokens: int = MAX_TOKENS, claude: bool = False) -> int:
-        ctx = CLAUDE_CTX if claude else int((self.cfg.get("models", {}) or {}).get("ctx") or 0)
+    def _history_budget(self, max_tokens: int = MAX_TOKENS, claude: bool = False, ctx: int = 0) -> int:
+        ctx = ctx or (CLAUDE_CTX if claude else int((self.cfg.get("models", {}) or {}).get("ctx") or 0))
         if not ctx:
             from . import models
             m = models.by_id((self.cfg.get("models", {}) or {}).get("active", ""))
@@ -369,7 +369,7 @@ class ChatService:
                 max_tokens = LIMITS[choice.name][1 if (want_files or paths) else 0]
                 if backend.state != "ready":
                     step("Загружаю модель в память…")
-                budget = self._history_budget(max_tokens, is_claude)
+                budget = self._history_budget(max_tokens, is_claude, backend.ctx_tokens if choice.name == "cloud" else 0)
                 if paths:                         # ответ «только прочитать»: тексты приложенных файлов идут в это сообщение
                     step("Изучаю приложенные файлы…")
                     texts, notes = codermod.read_attachments(paths, min(ATTACH_CHARS[choice.name], int(budget * 0.7)))
@@ -413,6 +413,8 @@ class ChatService:
                 if not out and not self._stop.is_set():
                     messages = [{"role": "system", "content": system_prompt(voice, files=want_files, attached=bool(paths))}] + hist
                     out = backend.chat(messages, max_tokens=max_tokens, on_delta=on_delta, stop=self._stop)
+                if choice.name == "cloud" and getattr(backend, "last_label", ""):
+                    reply["brain"] = backend.last_label            # какой именно провайдер ответил (после перехода при лимите это может быть не первый)
                 if want_files and out:
                     out, reqs = filesmod.extract(out)                 # файл создаёт Карина, и только если ответ не остановлен
                     if reqs and not self._stop.is_set():

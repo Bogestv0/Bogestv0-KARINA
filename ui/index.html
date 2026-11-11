@@ -16,6 +16,7 @@
     <button data-tab="commands">Команды</button>
     <button data-tab="models">Модели</button>
     <button data-tab="apps">Программы</button>
+    <button data-tab="sound">Звук</button>
     <button data-tab="settings">Настройки</button>
   </nav>
   <div class="chips">
@@ -71,6 +72,7 @@
       <dl class="kv">
         <dt>Интернет</dt><dd id="kvNet">—</dd>
         <dt>Распознавание</dt><dd id="kvStt">—</dd>
+        <dt>Микрофоны</dt><dd id="kvMics">—</dd>
         <dt>Голос</dt><dd id="kvVoice">—</dd>
         <dt>Мозг</dt><dd id="kvBrain">—</dd>
         <dt>Режим</dt><dd id="kvMode">—</dd>
@@ -169,6 +171,17 @@
     </div>
     <p class="muted small">В режиме Claude текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы отправляются в Anthropic по вашему ключу и оплачиваются у вас. Файлы с компьютера не отправляются. Ключ хранится только на этом компьютере.</p>
   </div>
+  <div class="card" id="cloudCard">
+    <div class="eyebrow">Бесплатные облачные модели</div>
+    <p class="muted small">Быстрый «мозг» для слабых компьютеров. Зарегистрируйтесь у провайдера (карта обычно не нужна), нажмите «Получить бесплатный ключ», вставьте ключ и включите. Можно подключить несколько: у каждого свои бесплатные лимиты, и когда у одного они кончаются, Карина сразу переходит к следующему в очереди (порядок меняется стрелками). Затем выберите режим «Бесплатные облака» или «Авто» выше.</p>
+    <div class="form"><label>Как чередовать
+      <select id="cloudStrategy">
+        <option value="failover">По очереди: пока лимит не кончится — первый, потом следующий</option>
+        <option value="spread">По кругу: каждый новый вопрос — следующему (лимиты тратятся равномерно)</option>
+      </select></label></div>
+    <div class="cloud-list" id="cloudList"></div>
+    <p class="muted small">Текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы уходят выбранному провайдеру по вашему ключу. Файлы с компьютера не отправляются. Ключи хранятся только на этом компьютере. Условия и лимиты бесплатных тарифов провайдеры меняют сами, а доступность из некоторых стран может быть ограничена.</p>
+  </div>
   <div class="card">
     <div class="eyebrow">Встроенные модели</div>
     <p class="muted small">Работают прямо в Карине, бесплатно и без интернета. Модель скачивается один раз. Есть видеокарта — она ускорит ответы, нет — всё пойдёт на процессоре, но медленнее.</p>
@@ -215,6 +228,28 @@
   </div>
 </section>
 
+<!-- ============ ЗВУК ============ -->
+<section id="tab-sound" class="tab">
+  <div class="settings">
+    <div class="card">
+      <div class="eyebrow">Куда Карина выводит звук</div>
+      <p class="muted small">Выберите колонки, наушники или виртуальный кабель, на которые Карина будет говорить. Изменения применяются сразу, сохранять не нужно.</p>
+      <div class="form">
+        <label>Устройство вывода<select id="outDev"></select></label>
+        <label>Громкость голоса Карины <output id="outVolVal"></output><input type="range" id="outVol" min="0" max="100" step="5" value="100"></label>
+        <div class="note warn" id="outWarn" hidden></div>
+        <div class="form-actions">
+          <button class="btn primary" type="button" id="outTest">Проверить звук</button>
+          <button class="btn" type="button" id="outVoice">Проверить голос</button>
+          <button class="btn" type="button" id="outRefresh">Обновить список устройств</button>
+          <span class="msg" id="outMsg"></span>
+        </div>
+        <p class="muted small" style="margin:0">«Устройство Windows по умолчанию» — то, что выбрано в системе; если его сменить в Windows, Карина пойдёт за ним. Громкость здесь — только голоса Карины, общая громкость компьютера не меняется.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ============ НАСТРОЙКИ ============ -->
 <section id="tab-settings" class="tab">
   <form id="setForm" class="settings">
@@ -230,7 +265,16 @@
     <div class="card">
       <div class="eyebrow">Слух</div>
       <div class="form">
-        <label>Микрофон<select name="mic_device" id="micSelect"></select></label>
+        <p class="muted small" style="margin:0">Можно подключить до 4 микрофонов сразу. Каждый слушает сам по себе: если один расслышал плохо, помогают остальные, и Карина берёт лучший вариант фразы. Выключатель отключает микрофон, не убирая его из списка.</p>
+        <div class="mics" id="micList"></div>
+        <div class="form-actions"><button class="btn" type="button" id="btnMicsRefresh">Обновить список устройств</button><span class="msg" id="micsMsg"></span></div>
+        <label>Как микрофоны помогают друг другу
+          <select name="assist">
+            <option value="smart">Умно (рекомендуется): лучший микрофон слушает, остальные помогают, если он расслышал плохо</option>
+            <option value="all">Максимум точности: распознавать со всех микрофонов и выбирать лучшее (медленнее)</option>
+            <option value="best">Быстро: только самый чистый микрофон, остальные — запасные</option>
+          </select>
+        </label>
         <label>Точность распознавания
           <select name="model">
             <option value="tiny">Минимальная — самая быстрая</option>
@@ -239,8 +283,7 @@
             <option value="medium">Высокая — нужен мощный компьютер</option>
           </select>
         </label>
-        <label>Чувствительность микрофона <output id="outVad"></output><input type="range" name="vad_threshold" min="0.004" max="0.05" step="0.002"></label>
-        <div class="meter"><div class="meter-bar" id="meter"></div></div>
+        <label>Чувствительность микрофонов <output id="outVad"></output><input type="range" name="vad_threshold" min="0.004" max="0.05" step="0.002"></label>
       </div>
     </div>
     <div class="card">

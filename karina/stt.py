@@ -180,14 +180,26 @@ class STT:
         self.loaded_name = name
 
     def transcribe(self, audio: np.ndarray) -> str:
+        return self.transcribe_ex(audio)[0]
+
+    def transcribe_ex(self, audio: np.ndarray) -> tuple[str, float]:
+        """(текст, уверенность 0…1). Уверенность — по оценке самой модели; по ней несколько микрофонов выбирают лучшую запись."""
         self.load()
         hint = f"{self.cfg['name']}, открой, закрой, запусти, громкость, найди в интернете, сделай скриншот."
         segs, _ = self.model.transcribe(audio, language="ru", beam_size=1, vad_filter=True,
                                         condition_on_previous_text=False, initial_prompt=hint,
                                         no_speech_threshold=0.6, temperature=0.0)
-        parts = [s.text.strip() for s in segs if s.no_speech_prob < 0.7]
-        text = " ".join(parts).strip()
+        kept = [s for s in segs if s.no_speech_prob < 0.7]
+        text = " ".join(s.text.strip() for s in kept).strip()
         low = text.lower()
         if len(norm(text)) < 2 or any(j in low for j in _JUNK):
-            return ""
-        return text
+            return "", 0.0
+        num = den = 0.0
+        for s in kept:
+            lp = getattr(s, "avg_logprob", None)
+            if lp is None:
+                continue
+            w = max(0.05, float(getattr(s, "end", 0.0)) - float(getattr(s, "start", 0.0)))
+            num, den = num + w * max(-3.0, min(0.0, float(lp))), den + w
+        import math
+        return text, (math.exp(num / den) if den else 0.5)

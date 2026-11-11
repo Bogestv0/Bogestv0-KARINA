@@ -15,8 +15,9 @@
     $$('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'apps') loadApps();
     if (b.dataset.tab === 'commands') loadCommands();
-    if (b.dataset.tab === 'models') { loadModels(); loadBrain(); }
+    if (b.dataset.tab === 'models') { loadModels(); loadBrain(); loadCloud(); }
     if (b.dataset.tab === 'chat') openChatTab();
+    if (b.dataset.tab === 'sound') loadOut(false);
     try { localStorage.setItem('karina.tab', b.dataset.tab); } catch (_) {}
   });
 
@@ -55,6 +56,7 @@
     const names = { tiny: 'минимальная', base: 'базовая', small: 'хорошая', medium: 'высокая' };
     $('#kvStt').textContent = (names[st.model] || st.model) + ' · офлайн';
     $('#kvVoice').textContent = st.voice === 'online' ? 'онлайн (нейросеть)' : st.voice === 'piper' ? 'офлайн (нейросеть «Ирина»)' : st.voice === 'offline' ? 'системный (офлайн)' : st.online ? 'онлайн' : 'системный';
+    $('#kvMics').textContent = st.mics_text || '—'; renderMicStatus(st.mics);
     const w = $('#ttsWarn'); w.hidden = !st.tts_warning; w.textContent = st.tts_warning || '';
     const p = $('#pluginWarn'); p.hidden = !(st.plugin_errors && st.plugin_errors.length); p.textContent = (st.plugin_errors || []).join('\n');
     renderState(st.state, '', st.sleeping, st.listening);
@@ -140,8 +142,11 @@
     event(ev) {
       if (ev.type === 'level') {
         document.documentElement.style.setProperty('--lvl', ev.v.toFixed(2));
-        $('#meter').style.width = Math.round(ev.v * 100) + '%';
-      } else if (ev.type === 'winstate') setMaxed(ev.max);
+        $$('.mic-row').forEach(r => { const v = (ev.mics || {})[r.dataset.slot]; $('.meter-bar', r).style.width = Math.round((v || 0) * 100) + '%'; });
+      } else if (ev.type === 'mics') renderMicStatus(ev.mics);
+      else if (ev.type === 'mic_pick') pickMic(ev.slot);
+      else if (ev.type === 'out_test') { flash($('#outMsg'), ev.error || 'Звук проигран', !!ev.error); $('#outTest').disabled = false; }
+      else if (ev.type === 'winstate') setMaxed(ev.max);
       else if (ev.type === 'log') addLog(ev.kind, ev.text, ev.ts);
       else if (ev.type === 'goto') { const b = $(`#tabs [data-tab="${ev.tab}"]`); if (b) b.click(); }
       else if (ev.type === 'chat_open') { chOpenId = ev.chat; const b = $('#tabs [data-tab="chat"]'); if (b) b.click(); }
@@ -150,6 +155,7 @@
       else if (ev.type === 'chat_delta') { if (ev.chat === chCur && chBubble) renderMd(chBubble, ev.text); scrollChat(); }
       else if (ev.type === 'chat_done') chatDone(ev);
       else if (ev.type === 'search_test') { const b = $('#searchTest'); b.hidden = false; b.textContent = ev.lines.join('\n'); flash($('#searchMsg'), ev.ok ? 'Поиск работает' : 'Поиск не работает', !ev.ok); }
+      else if (ev.type === 'cloud_test') { const r = $(`.cloud-row[data-pid="${ev.pid}"]`); if (r) { const o = $('.note', r); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Работает (${ev.sec} с): ${ev.text}` : ev.text; $$('button', r).forEach(b => b.disabled = false); } loadCloud(); loadBrain(); }
       else if (ev.type === 'brain_test') { const o = $('#brainTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Claude отвечает: «${ev.text}» (${ev.sec} с)` : ev.text; $('#brainTest').disabled = false; }
       else if (ev.type === 'voice_dl') voiceDlProgress(ev);
       else if (ev.type === 'voice_dl_done') voiceDlDone(ev);
@@ -406,24 +412,95 @@
     else if (!r || !r.ok) { $('#updInstall').disabled = false; $('#updNotes').textContent = (r && r.error) || 'Не удалось'; }
   };
 
+  // ---------- бесплатные облачные модели ----------
+  const CLOUD_STATE_LABEL = { ok: 'Готов', cooldown: 'Лимит', error: 'Ошибка', nokey: 'Нет ключа', off: 'Выключен' };
+  let cloudLast = null;
+  function cloudRow(p, idx, total) {
+    const row = el('div', 'cloud-row ' + p.state); row.dataset.pid = p.id;
+    const head = el('div', 'cloud-head');
+    const title = el('div', 'cloud-title'); title.append(el('b', '', p.name), el('span', 'tag' + (p.state === 'ok' ? '' : ' warn'), CLOUD_STATE_LABEL[p.state] || p.state));
+    const sw = el('label', 'switch'), cb = el('input'); cb.type = 'checkbox'; cb.checked = p.enabled; cb.disabled = !p.has_key; cb.title = p.has_key ? '' : 'Сначала введите ключ';
+    sw.append(cb, el('span', 'sw'), el('span', '', 'Использовать'));
+    cb.onchange = async () => { renderCloud(await call('cloud_save', p.id, { enabled: cb.checked })); loadBrain(); };
+    const mv = el('div', 'cloud-move');
+    const up = el('button', 'btn', '↑'), dn = el('button', 'btn', '↓'); up.type = dn.type = 'button'; up.disabled = idx === 0; dn.disabled = idx === total - 1;
+    up.title = 'Выше в очереди'; dn.title = 'Ниже в очереди';
+    up.onclick = async () => renderCloud(await call('cloud_move', p.id, -1)); dn.onclick = async () => renderCloud(await call('cloud_move', p.id, 1));
+    mv.append(up, dn);
+    head.append(title, sw, mv);
+    const body = el('div', 'cloud-body');
+    body.append(el('div', 'muted small', p.note));
+    const stat = el('div', 'small cloud-stat', p.text + (p.used_today ? ` · ответов сегодня: ${p.used_today}` : '')); body.append(stat);
+    const f = el('div', 'form');
+    let nameI, urlI;
+    if (p.id === 'custom') {
+      nameI = el('input'); nameI.placeholder = 'Название (любое)'; nameI.value = p.name === 'Свой сервер' ? '' : p.name;
+      urlI = el('input'); urlI.placeholder = 'Адрес API, например https://api.example.com/v1'; urlI.value = p.url || '';
+      f.append(nameI, urlI);
+    }
+    const keyI = el('input'); keyI.type = 'password'; keyI.autocomplete = 'off'; keyI.placeholder = p.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : 'Вставьте ключ API';
+    const modI = el('input'); modI.placeholder = p.model_auto ? `Модель: ${p.model_auto} (подобрана сама)` : 'Модель (можно оставить пустой — подберётся сама)'; modI.value = p.model || '';
+    const dl = el('datalist'); dl.id = 'cm-' + p.id; modI.setAttribute('list', dl.id);
+    f.append(keyI, modI, dl);
+    const acts = el('div', 'form-actions');
+    const save = el('button', 'btn primary', 'Сохранить'), test = el('button', 'btn', 'Проверить'), lst = el('button', 'btn', 'Список моделей');
+    save.type = test.type = lst.type = 'button';
+    acts.append(save, test, lst);
+    if (p.signup) { const a = el('button', 'btn', 'Получить бесплатный ключ ↗'); a.type = 'button'; a.onclick = () => call('open_url', p.signup); acts.append(a); }
+    if (p.has_key) { const d = el('button', 'btn danger', 'Удалить ключ'); d.type = 'button'; d.onclick = async () => { renderCloud(await call('cloud_clear_key', p.id)); loadBrain(); }; acts.append(d); }
+    const msg = el('span', 'msg'); acts.append(msg);
+    const out = el('div', 'note', ''); out.hidden = true;
+    const data = () => { const o = { key: keyI.value.trim(), model: modI.value.trim() }; if (nameI) { o.name = nameI.value.trim(); o.url = urlI.value.trim(); } return o; };
+    save.onclick = async () => {
+      const d = data(); const hadKey = p.has_key;
+      const st = await call('cloud_save', p.id, Object.assign({}, d, (!hadKey && d.key) ? { enabled: true } : {}));    // первый ключ сразу включает провайдера
+      if (st) { renderCloud(st); loadBrain(); }
+    };
+    test.onclick = async () => { test.disabled = true; out.hidden = false; out.className = 'note'; out.textContent = 'Проверяю…'; const d = data(); if (d.key || d.model || d.url) await call('cloud_save', p.id, d); await call('cloud_test', p.id); };
+    lst.onclick = async () => {
+      lst.disabled = true; const d = data(); if (d.key || d.url) await call('cloud_save', p.id, d);
+      const r = await call('cloud_models', p.id); lst.disabled = false;
+      if (r && r.ok) { dl.textContent = ''; r.models.forEach(m => { const o = el('option'); o.value = m; dl.append(o); }); flash(msg, `Моделей: ${r.models.length}. Нажмите на поле «Модель», чтобы выбрать.`); modI.focus(); }
+      else flash(msg, (r && r.error) || 'Не удалось получить список', true);
+    };
+    body.append(f, acts, out);
+    row.append(head, body);
+    return row;
+  }
+  function renderCloud(st) {
+    if (!st) return; cloudLast = st;
+    $('#cloudStrategy').value = st.strategy;
+    const box = $('#cloudList'); box.textContent = '';
+    st.providers.forEach((p, i) => box.append(cloudRow(p, i, st.providers.length)));
+  }
+  async function loadCloud() { renderCloud(await call('cloud_state')); }
+  $('#cloudStrategy').onchange = async e => renderCloud(await call('cloud_strategy', e.target.value));
+  // фоновое обновление статусов («лимит исчерпан, вернусь через…»), пока не печатают в полях
+  setInterval(() => {
+    const act = $('#tab-models.on'); if (!act || !api || $('#cloudList').contains(document.activeElement)) return;
+    call('cloud_state').then(st => { if (st && JSON.stringify(st) !== JSON.stringify(cloudLast) && !$('#cloudList').contains(document.activeElement)) renderCloud(st); });
+  }, 5000);
+
   // ---------- мозг ----------
   const BRAIN = {
     local: ['Локальная модель', 'Встроенная модель на этом компьютере: бесплатно и без интернета. На слабом компьютере отвечает медленнее.'],
     claude: ['Claude', 'Отвечает Claude по вашему ключу: быстрее и умнее, но нужен интернет, и запросы оплачиваются у Anthropic.'],
-    auto: ['Авто', 'Простые вопросы — локальная модель, сложные (отчёты, код, файлы, глубокий поиск) — Claude. Если одного нет, отвечает другой, и в ответе это видно.'],
+    cloud: ['Бесплатные облака', 'Отвечают бесплатные облачные модели (Groq, Gemini и др.) по вашим ключам — быстро даже на слабом компьютере. Когда у одной кончается лимит, подхватывает следующая. Нужен интернет.'],
+    auto: ['Авто', 'Простые вопросы — локальная модель, сложные (отчёты, код, файлы, глубокий поиск) — Claude или бесплатное облако. Если одного нет, отвечает другой, и в ответе это видно.'],
   };
-  const BRAIN_SHORT = { local: 'локальный', claude: 'Claude', auto: 'авто' };
+  const BRAIN_SHORT = { local: 'локальный', claude: 'Claude', cloud: 'облако', auto: 'авто' };
   let brain = null;
   const brainWhy = (b, m) => m === 'local' ? (b.local.ok ? 'готова' : b.local.reason) : m === 'claude' ? (b.claude.ok ? 'готов' : b.claude.reason)
-    : `локальная: ${b.local.ok ? 'готова' : 'нет'} · Claude: ${b.claude.ok ? 'готов' : 'нет'}`;
+    : m === 'cloud' ? (b.cloud.ok ? `готово (подключено: ${b.cloud.count})` : b.cloud.reason)
+    : `локальная: ${b.local.ok ? 'готова' : 'нет'} · Claude: ${b.claude.ok ? 'готов' : 'нет'} · облако: ${b.cloud.ok ? 'готово' : 'нет'}`;
   function renderBrain(b) {
     if (!b) return; brain = b;
     const sig = JSON.stringify(b); if (renderBrain.sig === sig) return; renderBrain.sig = sig;     // не перерисовываем без изменений (иначе закрывается открытый список)
     $('#chBrain').textContent = '🧠 Мозг: ' + BRAIN_SHORT[b.mode];
-    $('#kvBrain').textContent = b.mode === 'claude' ? b.claude.label : b.mode === 'auto' ? 'Авто (локально + Claude)' : 'Локальная модель';
+    $('#kvBrain').textContent = b.mode === 'claude' ? b.claude.label : b.mode === 'cloud' ? 'Бесплатные облака' : b.mode === 'auto' ? 'Авто (локально + облако + Claude)' : 'Локальная модель';
     const box = $('#brainList'); if (!box) return; box.textContent = '';
-    for (const m of ['local', 'claude', 'auto']) {
-      const ok = m === 'auto' ? (b.local.ok || b.claude.ok) : m === 'local' ? b.local.ok : b.claude.ok;
+    for (const m of ['local', 'cloud', 'claude', 'auto']) {
+      const ok = m === 'auto' ? (b.local.ok || b.claude.ok || b.cloud.ok) : m === 'local' ? b.local.ok : m === 'cloud' ? b.cloud.ok : b.claude.ok;
       const it = el('div', 'item model ' + (b.mode === m ? 'ok' : ''));
       const t = el('div', 't'); t.append(el('b', '', m === 'claude' ? b.claude.label : BRAIN[m][0]), el('span', 'wrap', BRAIN[m][1]));
       const st = el('span', 'wrap', (ok ? '✔ ' : '✖ ') + brainWhy(b, m)); st.style.color = ok ? 'var(--ok)' : 'var(--warn)'; t.append(st);
@@ -442,9 +519,9 @@
   $('#brainTest').onclick = async () => { $('#brainTest').disabled = true; const o = $('#brainTestOut'); o.hidden = false; o.className = 'note'; o.textContent = 'Проверяю…'; await call('brain_test_claude'); };
   $('#chBrain').onclick = async () => {
     if (!brain) await loadBrain(); if (!brain) return;
-    const order = ['local', 'claude', 'auto']; const next = order[(order.indexOf(brain.mode) + 1) % 3];
+    const order = ['local', 'cloud', 'claude', 'auto']; const next = order[(order.indexOf(brain.mode) + 1) % 4];
     renderBrain(await call('brain_set', next));
-    const ok = next === 'auto' ? (brain.local.ok || brain.claude.ok) : next === 'local' ? brain.local.ok : brain.claude.ok;
+    const ok = next === 'auto' ? (brain.local.ok || brain.claude.ok || brain.cloud.ok) : next === 'local' ? brain.local.ok : next === 'cloud' ? brain.cloud.ok : brain.claude.ok;
     if (!ok) setStep('⚠ ' + brainWhy(brain, next), 6000);
   };
 
@@ -535,21 +612,111 @@
   $('#offDl').onclick = async () => { $('#offDl').disabled = true; $('#offStatus').textContent = 'Ищу голос…'; if (!(await call('voice_offline_download'))) loadVoiceOffline(); };
   $('#offDel').onclick = async () => { const st = await call('voice_offline_delete'); if (st) voiceOfflineView(st); };
 
+  // ---------- микрофоны (до 4) ----------
+  const MAX_MICS = 4;
+  let micDevs = [], outDevs = [], micState = [];
+  // те же правила, что в audio.mic_slots: пусто = старая настройка с одним микрофоном
+  function slotsFromCfg(c) {
+    let raw = (c.stt && c.stt.mics) || [];
+    if (!raw.length) raw = [{ enabled: true, device: c.stt ? c.stt.mic_device : null }];
+    const out = raw.slice(0, MAX_MICS).map(r => ({ enabled: !!r.enabled, device: r.device == null || r.device === '' ? null : Number(r.device) }));
+    while (out.length < MAX_MICS) out.push({ enabled: false, device: null });
+    return out;
+  }
+  function buildMics(slots) {
+    const list = $('#micList'); list.textContent = '';
+    slots.forEach((sl, i) => {
+      const row = el('div', 'mic-row'); row.dataset.slot = i;
+      const sw = el('label', 'switch'), cb = el('input'); cb.type = 'checkbox'; cb.className = 'mic-on'; cb.checked = sl.enabled;
+      sw.append(cb, el('span', 'sw'), el('span', '', 'Микрофон ' + (i + 1)));
+      const sel = el('select', 'mic-dev'); sel.setAttribute('aria-label', 'Устройство для микрофона ' + (i + 1));
+      const o0 = el('option', '', i === 0 ? 'Системный по умолчанию' : '— выберите микрофон —'); o0.value = ''; sel.append(o0);
+      micDevs.forEach(m => { const o = el('option', '', m.label || m.name); o.value = m.id; sel.append(o); });
+      if (sl.device != null && !micDevs.some(m => m.id === sl.device)) { const o = el('option', '', 'Устройство №' + sl.device + ' (не найдено)'); o.value = sl.device; sel.append(o); }
+      sel.value = sl.device == null ? '' : String(sl.device);
+      const meter = el('div', 'meter'); meter.append(el('div', 'meter-bar'));
+      row.append(sw, sel, meter, el('div', 'mic-state'));
+      list.append(row);
+    });
+    syncMics(); renderMicStatus(micState);
+  }
+  function syncMics() {
+    const rows = $$('.mic-row');
+    const taken = rows.map(r => $('.mic-dev', r).value);
+    rows.forEach((r, i) => {
+      r.classList.toggle('off', !$('.mic-on', r).checked);
+      $$('option', $('.mic-dev', r)).forEach(o => { o.disabled = o.value !== '' && taken.some((t, j) => j !== i && t === o.value); });
+    });
+  }
+  function renderMicStatus(list) {
+    if (list) micState = list;
+    $$('.mic-row').forEach(r => {
+      const st = (micState || []).find(x => x.slot === Number(r.dataset.slot)); const box = $('.mic-state', r);
+      const on = $('.mic-on', r).checked;
+      box.className = 'mic-state small';
+      if (!on) $('.meter-bar', r).style.width = '0';
+      if (!st || !on || st.state === 'off') { box.textContent = ''; return; }
+      if (st.state === 'ok') { box.textContent = 'Слушает'; box.classList.add('ok'); }
+      else { box.textContent = st.text; box.classList.add('bad'); }
+    });
+  }
+  function pickMic(slot) {
+    const r = $(`.mic-row[data-slot="${slot}"]`); if (!r) return;
+    r.classList.add('picked'); clearTimeout(r._t); r._t = setTimeout(() => r.classList.remove('picked'), 1400);
+  }
+  function readMics() {
+    return $$('.mic-row').map(r => { const v = $('.mic-dev', r).value; return { enabled: $('.mic-on', r).checked, device: v === '' ? null : Number(v) }; });
+  }
+  $('#micList').addEventListener('change', e => {
+    const row = e.target.closest('.mic-row'); if (!row) return;
+    if (e.target.classList.contains('mic-dev') && e.target.value !== '' && Number(row.dataset.slot) > 0) $('.mic-on', row).checked = true;
+    syncMics(); renderMicStatus(null);
+  });
+  $('#btnMicsRefresh').onclick = async () => {
+    const d = await call('audio_devices'); if (!d) return;
+    const slots = readMics(); micDevs = d.mics || []; outDevs = d.outs || []; buildMics(slots);
+    flash($('#micsMsg'), `Найдено микрофонов: ${micDevs.length}`);
+  };
+
+  // ---------- вкладка «Звук» (вывод) ----------
+  function fillOut(o) {
+    const sel = $('#outDev'); sel.textContent = '';
+    const o0 = el('option', '', 'Устройство Windows по умолчанию'); o0.value = ''; sel.append(o0);
+    outDevs.forEach(d => { const x = el('option', '', d.label || d.name); x.value = d.id; sel.append(x); });
+    if (o.device != null && !outDevs.some(d => d.id === o.device)) { const x = el('option', '', (o.name || 'Устройство №' + o.device) + ' (не найдено)'); x.value = o.device; sel.append(x); }
+    sel.value = o.device == null ? '' : String(o.device);
+    $('#outVol').value = o.volume; $('#outVolVal').textContent = o.volume + ' %';
+    const w = $('#outWarn'); const txt = !o.found ? 'Выбранное устройство не найдено — Карина говорит через устройство Windows по умолчанию. Подключите его или выберите другое.' : (o.warning || '');
+    w.hidden = !txt; w.textContent = txt;
+  }
+  async function loadOut(refresh) {
+    if (refresh) { const d = await call('audio_devices'); if (d) { outDevs = d.outs || []; micDevs = d.mics || micDevs; } }
+    const o = await call('audio_out_state'); if (o) fillOut(o);
+  }
+  async function saveOut() {
+    const v = $('#outDev').value; const o = await call('audio_out_set', v === '' ? null : Number(v), Number($('#outVol').value));
+    if (o) { fillOut(o); flash($('#outMsg'), 'Сохранено'); }
+  }
+  $('#outDev').addEventListener('change', saveOut);
+  $('#outVol').addEventListener('input', () => { $('#outVolVal').textContent = $('#outVol').value + ' %'; });
+  $('#outVol').addEventListener('change', saveOut);
+  $('#outTest').onclick = async () => { $('#outTest').disabled = true; if (!(await call('audio_out_test'))) $('#outTest').disabled = false; };
+  $('#outVoice').onclick = () => call('test_voice');
+  $('#outRefresh').onclick = async () => { await loadOut(true); flash($('#outMsg'), `Найдено устройств вывода: ${outDevs.length}`); };
+
   // ---------- настройки ----------
   const sf = () => $('#setForm');
   function fillSettings(c, mics) {
     cfg = c; const f = sf();
+    if (mics && mics.length) micDevs = mics;
     f.name.value = c.name; f.aliases.value = (c.name_aliases || []).join(', ');
     f.wake_required.checked = !!c.wake_required; f.followup_seconds.value = c.followup_seconds;
-    f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold;
+    f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold; f.assist.value = c.stt.assist || 'smart';
     f.tts_enabled.checked = !!c.tts.enabled; f.engine.value = c.tts.engine; f.voice.value = c.tts.voice || 'svetlana_cute'; f.offline.value = c.tts.offline || 'auto'; f.background.checked = (c.ui || {}).background !== false; loadVoiceOffline(); f.rate.value = c.tts.rate;
     f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
     f.search_mode.value = (c.search || {}).mode || 'auto'; f.search_depth.value = (c.search || {}).depth || 'normal'; showWeb();
     $('#apiKey').placeholder = c.llm.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : 'sk-ant-…';
-    const ms = $('#micSelect'); ms.textContent = '';
-    const o0 = el('option', '', 'По умолчанию (системный)'); o0.value = ''; ms.append(o0);
-    (mics || []).forEach(m => { const o = el('option', '', m.name); o.value = m.id; ms.append(o); });
-    ms.value = c.stt.mic_device == null ? '' : String(c.stt.mic_device);
+    buildMics(slotsFromCfg(c));
     sync(); applyTheme(f.theme.value);
     $$('.nm').forEach(n => n.textContent = c.name);
   }
@@ -563,12 +730,12 @@
   $('#setForm').addEventListener('change', e => { if (e.target.name === 'theme') applyTheme(e.target.value); });
   $('#setForm').addEventListener('submit', async e => {
     e.preventDefault(); const f = e.target;
-    const mic = f.mic_device.value;
+    const mics = readMics();
     const patch = {
       name: f.name.value.trim() || 'Карина',
       name_aliases: f.aliases.value.split(',').map(s => s.trim()).filter(Boolean),
       wake_required: f.wake_required.checked, followup_seconds: Number(f.followup_seconds.value),
-      stt: { model: f.model.value, mic_device: mic === '' ? null : Number(mic), vad_threshold: Number(f.vad_threshold.value) },
+      stt: { model: f.model.value, mics, assist: f.assist.value, vad_threshold: Number(f.vad_threshold.value) },
       tts: { enabled: f.tts_enabled.checked, engine: f.engine.value, voice: f.voice.value, offline: f.offline.value, rate: Number(f.rate.value) },
       search: { mode: f.search_mode.value, depth: f.search_depth.value },
       updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value, background: f.background.checked },
@@ -583,7 +750,7 @@
 
   async function refresh() {
     const s = await call('get_state'); if (!s) return;
-    if (s.mics && s.mics.length) fillSettings(s.config, s.mics); else { const keep = $('#micSelect').value; fillSettings(s.config, [...$('#micSelect').options].slice(1).map(o => ({ id: o.value, name: o.textContent }))); $('#micSelect').value = keep; }
+    outDevs = s.outs || outDevs; fillSettings(s.config, s.mics);
     setFrameless(s.frameless, s.maximized);
     version = s.version || version; $('#kvVer').textContent = version; renderStatus(s.status);
   }
