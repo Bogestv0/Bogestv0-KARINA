@@ -8,12 +8,11 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<header class="topbar">
+<header class="topbar" id="topbar">
   <div class="brand"><img src="logo.png" alt=""><span>Bogestv0 <b>KARINA</b></span></div>
   <nav class="tabs" id="tabs">
     <button data-tab="home" class="on">Главная</button>
     <button data-tab="chat">Чат</button>
-    <button data-tab="coder">Кодер</button>
     <button data-tab="commands">Команды</button>
     <button data-tab="models">Модели</button>
     <button data-tab="apps">Программы</button>
@@ -23,7 +22,19 @@
     <button class="chip btn-chip" id="btnUpdate" title="Проверить обновления"><span id="updLabel">Обновить</span></button>
     <span class="chip" id="chipNet"><i></i><span>…</span></span>
   </div>
+  <div class="winctl" id="winctl" hidden>
+    <button type="button" id="wcMin" title="Свернуть" aria-label="Свернуть"><svg viewBox="0 0 10 10"><path d="M1 5.5h8"/></svg></button>
+    <button type="button" id="wcMax" title="Развернуть" aria-label="Развернуть">
+      <svg class="i-max" viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" rx="1"/></svg>
+      <svg class="i-res" viewBox="0 0 10 10"><path d="M3 3V1.5h5.5V7H7"/><rect x="1.5" y="3" width="5.5" height="5.5" rx="1"/></svg>
+    </button>
+    <button type="button" id="wcClose" class="close" title="Закрыть" aria-label="Закрыть"><svg viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button>
+  </div>
 </header>
+<div class="rz" id="rz" hidden>
+  <i data-e="n"></i><i data-e="s"></i><i data-e="w"></i><i data-e="e"></i>
+  <i data-e="nw"></i><i data-e="ne"></i><i data-e="sw"></i><i data-e="se"></i>
+</div>
 
 <div class="updbar" id="updBar" hidden>
   <div class="upd-text"><b id="updTitle"></b><span id="updNotes"></span><div class="pbar" id="updPbar" hidden><i></i></div></div>
@@ -31,6 +42,11 @@
     <button class="btn primary" id="updInstall">Скачать и установить</button>
     <button class="btn" id="updLater">Позже</button>
   </div>
+</div>
+
+<div class="updbar admbar" id="admBar" hidden>
+  <div class="upd-text"><b>Выдать Карине права администратора?</b><span>Нужны, чтобы управлять программами, которые запущены от администратора, и для дальнейших действий. Windows спросит подтверждение один раз, потом Карина будет открываться с правами без вопросов. Отключить можно в «Настройки → Окно и оформление».</span></div>
+  <div class="upd-actions"><button class="btn primary" id="admYes">Выдать навсегда</button><button class="btn" id="admNo">Не сейчас</button></div>
 </div>
 
 <main>
@@ -75,42 +91,6 @@
   </div>
 </section>
 
-<!-- ============ КОДЕР ============ -->
-<section id="tab-coder" class="tab">
-  <div class="card">
-    <div class="eyebrow">Кодер</div>
-    <p class="muted small">Опишите задачу и приложите файлы (по желанию). Карина сама напишет код в отдельной папке проекта, запустит проверки, исправит ошибки и отдаст результат. Ваши файлы не меняются — она работает с копиями.</p>
-    <div class="form">
-      <label>Что нужно сделать <textarea id="cdTask" rows="5" placeholder="Например: «Напиши на Python программу, которая берёт таблицу из приложенного файла, считает сумму по каждому месяцу и сохраняет в report.csv. Добавь тесты.»"></textarea></label>
-      <div class="form-actions">
-        <button class="btn" type="button" id="cdFiles">📎 Добавить файлы…</button>
-        <button class="btn" type="button" id="cdFolder">📂 Добавить папку…</button>
-        <button class="btn" type="button" id="cdClear" hidden>Убрать все</button>
-      </div>
-      <div class="list" id="cdPicked"></div>
-      <label class="check"><input type="checkbox" id="cdRun"> Разрешить Карине запускать написанный код для проверки</label>
-      <div class="note" id="cdRunNote">Без этой галочки Карина только пишет код и не проверяет его. Запуск — не песочница: программа выполняется с вашими правами. Разрешены только python, pytest и node, без сети, подпроцессов и удаления файлов (Карина проверяет код перед запуском). Нужен установленный Python или Node.js.</div>
-      <div class="form-actions">
-        <button class="btn primary" type="button" id="cdStart">Начать</button>
-        <button class="btn danger" type="button" id="cdStop" hidden>Стоп</button>
-        <button class="btn" type="button" id="cdFolderOpen">📁 Папка «Проекты»</button>
-        <span class="msg" id="cdMsg"></span>
-      </div>
-    </div>
-  </div>
-  <div class="card" id="cdLogCard" hidden>
-    <div class="eyebrow">Ход работы</div>
-    <div class="list" id="cdLog"></div>
-    <div id="cdResult" hidden>
-      <div class="eyebrow" style="margin-top:16px">Результат</div>
-      <div class="note" id="cdVerdict"></div>
-      <div class="wrap" id="cdSummary" style="white-space:pre-wrap;margin:10px 0"></div>
-      <div class="list" id="cdFilesOut"></div>
-      <div class="form-actions"><button class="btn primary" type="button" id="cdOpenProject">Открыть папку проекта</button></div>
-    </div>
-  </div>
-</section>
-
 <!-- ============ ЧАТ ============ -->
 <section id="tab-chat" class="tab">
   <div class="chat-layout">
@@ -126,10 +106,17 @@
         <div class="chat-tools">
           <button class="btn" type="button" id="chBrain" title="Кто отвечает: локальная модель → Claude → авто (простое локально, сложное в Claude)">🧠 Мозг: локальный</button>
           <button class="btn" type="button" id="chWeb" title="Поиск в интернете: авто (когда просьба этого требует) → всегда → выключен">🌐 Поиск: авто</button>
+          <button class="btn" type="button" id="chCode" title="Что делать с кодом и приложенными файлами: авто (если просите написать или изменить — работает Кодер, иначе просто читаю и отвечаю) → всегда Кодер → только ответ в чате">💻 Код: авто</button>
+          <button class="btn" type="button" id="chRun" title="Разрешить Кодеру запускать написанный код для проверки. Запуск — не песочница: программа выполняется с вашими правами. Только python, pytest и node, без сети, подпроцессов и удаления файлов.">▶ Запуск кода: выкл</button>
         </div>
-        <textarea id="chText" rows="1" placeholder="Спросите что угодно… (Enter — отправить)"></textarea>
-        <button class="btn primary" type="submit" id="chSend">Отправить</button>
-        <button class="btn danger" type="button" id="chStop" hidden>Стоп</button>
+        <div class="chat-attach" id="chAttach" hidden></div>
+        <div class="chat-row">
+          <button class="btn" type="button" id="chPick" title="Приложить файлы к сообщению">📎</button>
+          <button class="btn" type="button" id="chPickDir" title="Приложить папку к сообщению">📂</button>
+          <textarea id="chText" rows="1" placeholder="Спросите что угодно или опишите задачу (Enter — отправить)"></textarea>
+          <button class="btn primary" type="submit" id="chSend">Отправить</button>
+          <button class="btn danger" type="button" id="chStop" hidden>Стоп</button>
+        </div>
       </form>
     </div>
   </div>
@@ -260,13 +247,30 @@
       <div class="eyebrow">Голос</div>
       <div class="form">
         <label class="switch"><input type="checkbox" name="tts_enabled"><span class="sw"></span><span>Отвечать голосом</span></label>
+        <label>Голос Карины
+          <select name="voice">
+            <option value="svetlana_cute">Светлана — милая (тонкий, живой)</option>
+            <option value="ava_calm">Ava — спокойная героиня (мягкий, ниже)</option>
+          </select>
+        </label>
         <label>Источник голоса
           <select name="engine">
             <option value="auto">Автоматически: онлайн-голос, а без интернета — системный</option>
-            <option value="online">Только онлайн-голос (Microsoft Svetlana)</option>
-            <option value="offline">Только системный голос Windows (офлайн)</option>
+            <option value="online">Только онлайн-голос (Microsoft)</option>
+            <option value="offline">Только офлайн-голос (без интернета)</option>
           </select>
         </label>
+        <label>Офлайн-голос (когда нет интернета)
+          <select name="offline">
+            <option value="auto">Нейросетевая «Ирина», если скачана, иначе системный голос</option>
+            <option value="system">Системный голос Windows</option>
+          </select>
+        </label>
+        <div class="note" id="offBox">
+          <span id="offStatus" class="muted small"></span>
+          <div class="row" style="margin-top:8px"><button type="button" class="btn" id="offDl">Скачать офлайн-голос (≈60 МБ)</button><button type="button" class="btn danger" id="offDel" hidden>Удалить</button></div>
+          <div class="pbar" id="offBar" hidden><i></i></div>
+        </div>
         <label>Скорость речи <output id="outRate"></output><input type="range" name="rate" min="-5" max="5" step="1"></label>
         <label>Поисковик
           <select name="search_engine"><option value="google">Google</option><option value="yandex">Яндекс</option></select>
@@ -313,8 +317,14 @@
       </div>
     </div>
     <div class="card">
-      <div class="eyebrow">Оформление</div>
+      <div class="eyebrow">Окно и оформление</div>
       <div class="form">
+        <label class="switch"><input type="checkbox" name="background"><span class="sw"></span><span>Работать в фоне: закрытие окна сворачивает Карину в трей (выход — через значок в трее)</span></label>
+        <div id="admRow" hidden>
+          <label class="switch"><input type="checkbox" id="admSwitch"><span class="sw"></span><span>Запускать от имени администратора (пока не выключите)</span></label>
+          <div class="note" id="admNote"></div>
+          <div class="form-actions" style="margin-top:8px"><button type="button" class="btn" id="admRestart" hidden>Перезапустить Карину сейчас</button><span class="msg" id="admMsg"></span></div>
+        </div>
         <label>Тема<select name="theme"><option value="auto">Как в Windows</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
       </div>
     </div>

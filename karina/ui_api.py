@@ -13,6 +13,8 @@ class Api:
         self._win = window_getter
         self.assistant = None
         self._downloads: dict = {}
+        self.frame = None               # FrameControl безрамочного окна (None — обычное окно с рамкой Windows)
+        self.quitting = False           # True — окну можно закрыться по-настоящему (выход из трея, обновление)
         self._events: queue.Queue = queue.Queue(maxsize=500)
         threading.Thread(target=self._emit_loop, daemon=True, name="karina-emit").start()
 
@@ -49,7 +51,8 @@ class Api:
 
     # ---- состояние ----
     def get_state(self):
-        return {"status": self.assistant.status(), "config": self._safe_cfg(), "mics": self._mics(), "version": __version__}
+        return {"status": self.assistant.status(), "config": self._safe_cfg(), "mics": self._mics(), "version": __version__,
+                "frameless": self.frame is not None, "maximized": bool(self.frame and self.frame.maximized)}
 
     def get_status(self):
         return self.assistant.status()
@@ -69,6 +72,64 @@ class Api:
     def get_commands(self):
         return [{"name": c.name, "desc": c.desc, "examples": c.examples} for c in actions.REGISTRY]
 
+    # ---- окно без рамки (кнопки заголовка, перетаскивание, края) ----
+    def win_minimize(self):
+        return bool(self.frame and self.frame.minimize())
+
+    def win_toggle_maximize(self):
+        return bool(self.frame and self.frame.toggle_maximize())
+
+    def win_close(self):
+        return bool(self.frame and self.frame.close())
+
+    def win_drag(self, edge: str = "move"):
+        if edge not in ("move", "n", "s", "e", "w", "ne", "nw", "se", "sw"):
+            return False
+        return bool(self.frame and self.frame.begin_drag(edge))
+
+    # ---- права администратора ----
+    def admin_state(self):
+        from . import elevate
+        ui = self.cfg["ui"]
+        return {"supported": sys.platform == "win32", "admin": elevate.is_admin(), "enabled": bool(ui.get("admin")),
+                "task": elevate.task_exists() if sys.platform == "win32" else False, "asked": bool(ui.get("admin_asked"))}
+
+    def admin_set(self, on: bool):
+        """Включить/выключить «Запускать от имени администратора». Включение показывает окно UAC один раз."""
+        from . import elevate
+        r = elevate.enable() if on else elevate.disable()
+        if r.get("ok"):
+            self.cfg.update({"ui": {"admin": bool(on), "admin_asked": True}})
+        r["state"] = self.admin_state()
+        return r
+
+    def admin_dismiss(self):
+        self.cfg.update({"ui": {"admin_asked": True}})
+        return True
+
+    def restart_app(self):
+        """Перезапуск Карины (например, чтобы права администратора вступили в силу)."""
+        from . import elevate
+        want = bool(self.cfg["ui"].get("admin"))
+        ok = False
+        if want and not elevate.is_admin():
+            ok = elevate.relaunch_as_admin(["--restart"], trace)
+        elif not want or elevate.is_admin():
+            exe, base = elevate._command()
+            try:
+                subprocess.Popen([exe] + base + ["--restart"] + (["--elevated"] if elevate.is_admin() and want else []), close_fds=True,
+                                 creationflags=0x08000000 if sys.platform == "win32" else 0)
+                ok = True
+            except Exception as e:
+                trace(f"Перезапуск не удался: {e}")
+        if not ok:
+            return {"ok": False, "error": "Не удалось перезапустить. Закройте и откройте Карину вручную."}
+        self.quitting = True
+        w = self._win()
+        if w:
+            threading.Timer(0.3, w.destroy).start()
+        return {"ok": True}
+
     # ---- действия ----
     def send_text(self, text: str):
         threading.Thread(target=self.assistant.handle, args=(text, True), daemon=True).start()
@@ -83,6 +144,42 @@ class Api:
         self.assistant.set_listening(True)
         return True
 
+    # ---- офлайн-голос (Piper «Ирина») ----
+    def voice_offline_status(self):
+        from . import offline_voice
+        base = self.cfg.path.parent
+        onnx, _ = offline_voice.paths(base)
+        size = onnx.stat().st_size if offline_voice.is_ready(base) else 0
+        return {"ready": offline_voice.is_ready(base), "size": size, "downloading": "voice" in self._downloads}
+
+    def voice_offline_download(self):
+        from . import offline_voice
+        if "voice" in self._downloads or offline_voice.is_ready(self.cfg.path.parent):
+            return False
+        cancel = threading.Event()
+        self._downloads["voice"] = {"cancel": cancel}
+
+        def run():
+            err = ""
+            try:
+                offline_voice.download(self.cfg.path.parent,
+                                       lambda d, t, st: self.emit({"type": "voice_dl", "done": d, "total": t, "stage": st}), cancel)
+            except offline_voice.Cancelled:
+                err = "cancelled"
+            except Exception as e:
+                err = str(e) or e.__class__.__name__
+            finally:
+                self._downloads.pop("voice", None)
+                self.emit({"type": "voice_dl_done", "error": err, "ready": offline_voice.is_ready(self.cfg.path.parent)})
+        threading.Thread(target=run, daemon=True, name="voice-download").start()
+        return True
+
+    def voice_offline_delete(self):
+        from . import offline_voice
+        if "voice" not in self._downloads:
+            offline_voice.delete(self.cfg.path.parent)
+        return self.voice_offline_status()
+
     def test_voice(self):
         threading.Thread(target=self.assistant.say, args=(f"Привет! Меня зовут {self.cfg['name']}. Я вас слышу.",), daemon=True).start()
         return True
@@ -90,6 +187,7 @@ class Api:
     def save_settings(self, patch: dict):
         old_model = self.cfg["stt"]["model"]
         old_mic = self.cfg["stt"].get("mic_device")
+        old_tts = dict(self.cfg["tts"])
         llm = patch.get("llm") or {}
         if "api_key" in llm and not llm["api_key"]:
             llm.pop("api_key")          # пустое поле = «оставить как было»
@@ -101,6 +199,8 @@ class Api:
             self.assistant.reload_model()
         if self.cfg["stt"].get("mic_device") != old_mic:
             self.assistant.reload_audio()
+        if self.cfg["tts"] != old_tts:
+            self.assistant.warm_voice()      # другой голос/скорость — заранее готовим записи под него
         return self._safe_cfg()
 
     def clear_api_key(self):
@@ -120,8 +220,10 @@ class Api:
     def chat_delete(self, cid: str):
         return self.assistant.chat.store.delete(cid)
 
-    def chat_send(self, cid: str, text: str, search=None):
-        r = self.assistant.chat.send(cid or None, text, search=None if search is None else bool(search))
+    def chat_send(self, cid: str, text: str, search=None, paths=None, mode: str = "auto"):
+        """paths — приложенные к сообщению файлы и папки; mode: auto | code | ask (см. ChatService.send)."""
+        r = self.assistant.chat.send(cid or None, text, search=None if search is None else bool(search),
+                                     paths=paths if isinstance(paths, list) else None, mode=mode if isinstance(mode, str) else "auto")
         return {"ok": r is not None, "chat": r, "error": "" if r else "Я ещё отвечаю. Нажмите «Стоп» или подождите."}
 
     def chat_stop(self):
@@ -235,6 +337,7 @@ class Api:
                 time.sleep(0.6)
                 updater.launch_installer(p)
                 time.sleep(0.5)
+                self.quitting = True            # окно не должно «сворачиваться в трей» вместо закрытия
                 w = self._win()
                 if w:
                     w.destroy()
@@ -376,13 +479,13 @@ class Api:
         res = w.create_file_dialog(webview.OPEN_DIALOG, file_types=("Программы (*.exe;*.lnk;*.bat;*.cmd)", "Все файлы (*.*)"))
         return res[0] if res else ""
 
-    # ---- Кодер: задача + файлы → код, проверки, результат ----
+    # ---- Кодер (работает внутри чата: см. ChatService) ----
     def coder_state(self):
         c = self.assistant.coder
         return {"busy": c.busy, "settings": c.settings(), "last": c.last}
 
     def coder_pick(self, folder: bool = False):
-        """Диалог выбора файлов (или папки) для задачи. → список путей."""
+        """Диалог выбора файлов (или папки), прикладываемых к сообщению в чате. → список путей."""
         import webview
         w = self._win()
         if not w:
@@ -392,9 +495,6 @@ class Api:
         else:
             res = w.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=True)
         return [str(x) for x in (res or [])]
-
-    def coder_start(self, task: str, paths: list):
-        return self.assistant.coder.start(task, paths if isinstance(paths, list) else [])
 
     def coder_stop(self):
         self.assistant.coder.stop()

@@ -150,12 +150,30 @@ def run_gui(cfg):
     from karina.assistant import Assistant
     holder = {}
     from karina.ui_api import Api
+    from karina import single, tray as traymod
     api = Api(cfg, lambda: holder.get("w"))
     assistant = Assistant(cfg, api.emit)
     api.bind(assistant)
-    holder["w"] = webview.create_window(
-        f"Bogestv0 KARINA", url=str(ROOT / "ui" / "index.html"), js_api=api,
-        width=1080, height=760, min_size=(760, 560), background_color="#131318")
+    # --background (автозапуск с Windows): стартуем сразу в трей, окно не показываем
+    start_hidden = "--background" in sys.argv and bool(cfg["ui"].get("background", True))
+    # размер окна — по рабочей области монитора и масштабу Windows; своя рамка (заголовок рисует интерфейс)
+    from karina import winframe
+    frameless = sys.platform == "win32" and bool(cfg["ui"].get("frameless", True))
+    ww, wh = winframe.initial_logical_size()
+    kw = dict(url=str(ROOT / "ui" / "index.html"), js_api=api, width=ww, height=wh,
+              min_size=winframe.min_logical_size(), background_color="#131318", hidden=start_hidden)
+    if frameless:
+        kw.update(frameless=True, easy_drag=False, shadow=True)
+    try:
+        holder["w"] = webview.create_window("Bogestv0 KARINA", **kw)
+    except TypeError as e:                      # старая pywebview без части параметров
+        trace(f"create_window: {e}; повтор без shadow")
+        kw.pop("shadow", None)
+        holder["w"] = webview.create_window("Bogestv0 KARINA", **kw)
+    if frameless:
+        api.frame = winframe.FrameControl(lambda: holder.get("w"), lambda m: api.emit({"type": "winstate", "max": m}), trace)
+        holder["w"].events.shown += lambda: api.frame.setup()
+        holder["w"].events.loaded += lambda: api.frame.fit() if not start_hidden else None
     try:
         holder["w"].events.loaded += lambda: trace("Окно: страница загружена")
         holder["w"].events.closed += lambda: trace("Окно: закрыто")
@@ -163,6 +181,59 @@ def run_gui(cfg):
         holder["w"].events.closing += lambda: trace("Окно: получена команда закрыть")
     except Exception as e:
         trace(f"Окно: не удалось подписаться на события ({e})")
+    # ---- фоновый режим: закрытие окна прячет его в трей, а не выключает Карину ----
+    state = {"tray": None, "hinted": False}
+
+    def show_window():
+        try:
+            holder["w"].show()
+            holder["w"].restore()
+            if api.frame:
+                api.frame.bring_to_front()
+        except Exception as e:
+            trace(f"Окно: не удалось показать ({e})")
+
+    def quit_app():
+        trace("Выход из трея")
+        api.quitting = True
+        if state["tray"]:
+            state["tray"].stop()
+        try:
+            holder["w"].destroy()
+        except Exception as e:
+            trace(f"Окно: destroy не удался ({e})")
+
+    def ensure_tray():
+        tr = state["tray"]
+        if tr is None or not tr.active:
+            tr = traymod.Tray("Bogestv0 KARINA", ROOT / "ui" / "logo.png", show_window, quit_app, trace)
+            state["tray"] = tr if tr.start() else None
+        return state["tray"]
+
+    def on_closing():
+        """False — отменить закрытие и спрятать окно в трей. Без трея или при «выходе» закрываем по-настоящему."""
+        if api.quitting or not cfg["ui"].get("background", True):
+            return None
+        tr = ensure_tray()
+        if tr is None:
+            return None
+        # прятать нужно уже после возврата из обработчика: окно ждёт его ответа, и hide() изнутри повесил бы его
+        threading.Timer(0.05, lambda: holder["w"].hide()).start()
+        trace("Окно спрятано в трей")
+        if not state["hinted"]:
+            state["hinted"] = True
+            tr.notify("Карина работает в фоне. Двойной щелчок по значку — открыть окно, «Выход» — выключить.")
+        return False
+
+    try:
+        holder["w"].events.closing += on_closing
+    except Exception as e:
+        trace(f"Окно: фоновый режим недоступен ({e})")
+    try:
+        from Microsoft.Win32 import SystemEvents       # выключение/выход из Windows не должны упираться в «спрятанное» окно
+        SystemEvents.SessionEnding += lambda s, e: setattr(api, "quitting", True)
+    except Exception as e:
+        trace(f"SessionEnding не подписан: {e}")
     try:
         faulthandler.dump_traceback_later(25, file=_log)      # если за 25 с запуск не завершён — в журнал стеки всех потоков
     except Exception:
@@ -178,8 +249,18 @@ def run_gui(cfg):
     # icon не передаём на Windows: окно принимает только .ico, а PNG даёт System.ArgumentException в Icon.Initialize
     # и роняет весь процесс (код 0xE0434352). Значок окна и так берётся из exe (build/karina.spec: icon=logo.ico).
     icon = None if sys.platform == "win32" else (str(ROOT / "ui" / "logo.png") if (ROOT / "ui" / "logo.png").exists() else None)
-    webview.start(lambda: (trace("Окно открыто, запускаю ассистента"), assistant.start(), trace("Ассистент запущен")), icon=icon)
+    def after_start():
+        trace("Окно открыто, запускаю ассистента")
+        assistant.start()
+        trace("Ассистент запущен")
+        single.listen_for_show(show_window)         # повторный запуск Карины просто открывает это окно (в т.ч. из трея и свёрнутое)
+        if start_hidden and ensure_tray() is None:
+            show_window()                           # трея нет — прятать окно некуда, показываем
+
+    webview.start(after_start, icon=icon)
     trace("Окно закрыто, завершение")
+    if state["tray"]:
+        state["tray"].stop()
     assistant.stop()
 
 
@@ -209,6 +290,13 @@ def selftest() -> int:
         except BaseException:
             bad.append(m + ": " + traceback.format_exc().strip().splitlines()[-1])
             logf.write("  ОШИБКА: " + bad[-1] + "\n")
+    for m in ("pystray", "piper"):          # необязательные: без них нет трея / офлайн-голоса, но Карина работает
+        step["now"] = "импорт (необязательный) " + m
+        logf.write(step["now"] + "\n")
+        try:
+            importlib.import_module(m)
+        except BaseException:
+            logf.write("  ПРЕДУПРЕЖДЕНИЕ: " + traceback.format_exc().strip().splitlines()[-1] + "\n")
     step["now"] = "проверка ресурсов"
     for rel in ("ui/index.html", "ui/app.js", "ui/app.css", "ui/fonts.css", "ui/logo.png"):
         if not (ROOT / rel).exists():
@@ -284,7 +372,27 @@ if __name__ == "__main__":
         if len(sys.argv) > 1 and sys.argv[1] == "--stt-probe":      # дочерний процесс: проверка загрузки модели распознавания
             from karina.stt import probe_main
             sys.exit(probe_main(sys.argv[2:]))
-        c = Config()
+        if "--install-admin-task" in sys.argv:              # служебный запуск с UAC из настроек
+            from karina import elevate
+            sys.exit(0 if elevate.install_task() else 1)
+        if "--remove-admin-task" in sys.argv:
+            from karina import elevate
+            sys.exit(0 if elevate.remove_task() else 1)
+        c = None
+        if "--console" not in sys.argv:
+            from karina import single, elevate
+            elevate.merge_saved_args(sys.argv)              # аргументы исходного запуска (--background), если нас открыла задача планировщика
+            c = Config()
+            if sys.platform == "win32" and c["ui"].get("admin") and not elevate.is_admin() and "--elevated" not in sys.argv:
+                # «Запускать от имени администратора» включено: открываем себя с правами и закрываемся
+                if elevate.relaunch_as_admin(sys.argv[1:], trace):
+                    sys.exit(0)
+                trace("Права администратора не получены — работаю с обычными")
+            if not single.acquire(wait=20 if "--restart" in sys.argv else 6):   # если Карина уже есть — acquire просит её показать окно; ждём: после обновления/перезапуска прежний процесс ещё доживает
+                trace("Карина уже запущена, вторую копию не открываю")
+                sys.exit(0)
+            single.prepare()
+        c = c or Config()
         run_console(c) if "--console" in sys.argv else run_gui(c)
     except SystemExit:
         raise

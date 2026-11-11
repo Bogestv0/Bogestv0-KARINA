@@ -17,7 +17,6 @@
     if (b.dataset.tab === 'commands') loadCommands();
     if (b.dataset.tab === 'models') { loadModels(); loadBrain(); }
     if (b.dataset.tab === 'chat') openChatTab();
-    if (b.dataset.tab === 'coder') loadCoder();
     try { localStorage.setItem('karina.tab', b.dataset.tab); } catch (_) {}
   });
 
@@ -55,7 +54,7 @@
     $('#kvNet').textContent = st.online ? 'есть' : 'нет — работаю автономно';
     const names = { tiny: 'минимальная', base: 'базовая', small: 'хорошая', medium: 'высокая' };
     $('#kvStt').textContent = (names[st.model] || st.model) + ' · офлайн';
-    $('#kvVoice').textContent = st.voice === 'online' ? 'онлайн (нейросеть)' : st.voice === 'offline' ? 'системный (офлайн)' : st.online ? 'онлайн' : 'системный';
+    $('#kvVoice').textContent = st.voice === 'online' ? 'онлайн (нейросеть)' : st.voice === 'piper' ? 'офлайн (нейросеть «Ирина»)' : st.voice === 'offline' ? 'системный (офлайн)' : st.online ? 'онлайн' : 'системный';
     const w = $('#ttsWarn'); w.hidden = !st.tts_warning; w.textContent = st.tts_warning || '';
     const p = $('#pluginWarn'); p.hidden = !(st.plugin_errors && st.plugin_errors.length); p.textContent = (st.plugin_errors || []).join('\n');
     renderState(st.state, '', st.sleeping, st.listening);
@@ -81,23 +80,79 @@
   $('#btnListen').onclick = async () => { await call('set_listening', status.listening === false); if (status.sleeping) await call('wake_up'); refresh(); };
   $('#btnVoice').onclick = () => call('test_voice');
 
+  // ---------- своё окно: заголовок, перетаскивание, края ----------
+  const root = document.documentElement;
+  function setMaxed(m) { root.classList.toggle('maxed', !!m); const b = $('#wcMax'); if (b) b.title = m ? 'Свернуть в окно' : 'Развернуть'; }
+  function setFrameless(on, maxed) {
+    root.classList.toggle('frameless', !!on);
+    $('#winctl').hidden = !on; $('#rz').hidden = !on;
+    setMaxed(maxed);
+  }
+  $('#wcMin').onclick = () => call('win_minimize');
+  $('#wcMax').onclick = async () => { const m = await call('win_toggle_maximize'); if (m !== null) setMaxed(m); };
+  $('#wcClose').onclick = () => call('win_close');
+  $('#topbar').addEventListener('mousedown', e => {
+    if (!root.classList.contains('frameless') || e.button !== 0) return;
+    if (e.target.closest('button,a,input,select,textarea,.tabs')) return;
+    call('win_drag', 'move');
+  });
+  $('#topbar').addEventListener('dblclick', e => {
+    if (!root.classList.contains('frameless') || e.target.closest('button,a,input,select,textarea,.tabs')) return;
+    $('#wcMax').click();
+  });
+  $('#rz').addEventListener('mousedown', e => {
+    const h = e.target.closest('i[data-e]'); if (!h || e.button !== 0) return;
+    e.preventDefault(); call('win_drag', h.dataset.e);
+  });
+
+  // ---------- права администратора ----------
+  let adm = null;
+  function renderAdmin() {
+    if (!adm || !adm.supported) return;
+    $('#admRow').hidden = false;
+    $('#admSwitch').checked = !!adm.enabled;
+    const n = $('#admNote');
+    n.className = 'note' + (adm.admin ? '' : ' warn');
+    n.textContent = adm.admin
+      ? 'Сейчас Карина работает с правами администратора.'
+      : adm.enabled ? 'Включено, но сейчас Карина открыта с обычными правами — перезапустите её.' : 'Сейчас Карина работает с обычными правами.';
+    $('#admRestart').hidden = !(adm.enabled !== adm.admin);
+    $('#admBar').hidden = !(!adm.admin && !adm.enabled && !adm.asked);
+  }
+  async function loadAdmin() { adm = await call('admin_state'); renderAdmin(); }
+  async function setAdmin(on) {
+    const m = $('#admMsg'); m.textContent = on ? 'Жду подтверждения Windows…' : 'Отключаю…'; m.classList.remove('err');
+    $('#admSwitch').disabled = true;
+    const r = await call('admin_set', on);
+    $('#admSwitch').disabled = false;
+    if (r && r.state) adm = r.state;
+    if (r && r.ok) flash(m, on ? 'Готово: права выданы, нужен перезапуск' : 'Права отключены, действует со следующего запуска');
+    else flash(m, (r && r.error) || 'Не получилось', true);
+    renderAdmin();
+  }
+  $('#admSwitch').addEventListener('change', e => setAdmin(e.target.checked));
+  $('#admYes').onclick = async () => { $('#admBar').hidden = true; await setAdmin(true); };
+  $('#admNo').onclick = async () => { $('#admBar').hidden = true; await call('admin_dismiss'); if (adm) adm.asked = true; };
+  $('#admRestart').onclick = async () => { const r = await call('restart_app'); if (r && !r.ok) flash($('#admMsg'), r.error, true); };
+
   // события из Python
   window.karina = {
     event(ev) {
       if (ev.type === 'level') {
         document.documentElement.style.setProperty('--lvl', ev.v.toFixed(2));
         $('#meter').style.width = Math.round(ev.v * 100) + '%';
-      } else if (ev.type === 'log') addLog(ev.kind, ev.text, ev.ts);
+      } else if (ev.type === 'winstate') setMaxed(ev.max);
+      else if (ev.type === 'log') addLog(ev.kind, ev.text, ev.ts);
       else if (ev.type === 'goto') { const b = $(`#tabs [data-tab="${ev.tab}"]`); if (b) b.click(); }
       else if (ev.type === 'chat_open') { chOpenId = ev.chat; const b = $('#tabs [data-tab="chat"]'); if (b) b.click(); }
-      else if (ev.type === 'coder') coderEvent(ev);
-      else if (ev.type === 'coder_done') coderDone(ev);
       else if (ev.type === 'chat_start') chatStart(ev);
       else if (ev.type === 'chat_step') { if (ev.chat === chCur) setStep(ev.text); }
       else if (ev.type === 'chat_delta') { if (ev.chat === chCur && chBubble) renderMd(chBubble, ev.text); scrollChat(); }
       else if (ev.type === 'chat_done') chatDone(ev);
       else if (ev.type === 'search_test') { const b = $('#searchTest'); b.hidden = false; b.textContent = ev.lines.join('\n'); flash($('#searchMsg'), ev.ok ? 'Поиск работает' : 'Поиск не работает', !ev.ok); }
       else if (ev.type === 'brain_test') { const o = $('#brainTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Claude отвечает: «${ev.text}» (${ev.sec} с)` : ev.text; $('#brainTest').disabled = false; }
+      else if (ev.type === 'voice_dl') voiceDlProgress(ev);
+      else if (ev.type === 'voice_dl_done') voiceDlDone(ev);
       else if (ev.type === 'model_progress') modelProgress(ev);
       else if (ev.type === 'model_done') { if (ev.error && ev.error !== 'cancelled') flash($('#mdMsg'), ev.error, true); loadModels(); }
       else if (ev.type === 'engine') renderEngine(ev);
@@ -204,22 +259,28 @@
     row.querySelector('.bubble').after(box);
   }
   function setWho(row, brain) { const w = row.querySelector('.who'); if (w) w.textContent = brain ? 'Ответила: ' + brain : ''; }
-  function addMsg(role, text, id, steps, files, brain) {
+  function attachProject(row, pr) {
+    if (!pr || !pr.name || row.querySelector('.pcard')) return;
+    const box = el('div', 'pcard'); const b = el('button', 'btn primary', '📁 Открыть папку проекта'); const msg = el('span', 'msg err');
+    b.onclick = async () => { const r = await call('coder_open', pr.name); msg.textContent = r && !r.ok ? r.error : ''; };
+    box.append(b, msg); row.querySelector('.bubble').after(box);
+  }
+  function addMsg(role, text, id, steps, files, brain, filesIn, project) {
     const m = $('#chMsgs'); const row = el('div', 'cmsg ' + role); if (id) row.dataset.id = id;
     const b = el('div', 'bubble');
-    if (role === 'assistant') renderMd(b, text); else b.textContent = text;
+    if (role === 'assistant') renderMd(b, text); else { b.textContent = text; if (filesIn && filesIn.length) b.append(el('div', 'attached', '📎 ' + filesIn.join(', '))); }
     row.append(b);
     if (role === 'assistant') {
       const meta = el('div', 'meta');
       const c = el('button', 'link copy', 'Копировать'); c.onclick = () => { try { navigator.clipboard.writeText(b.innerText); c.textContent = 'Скопировано'; setTimeout(() => c.textContent = 'Копировать', 1500); } catch (_) {} };
       meta.append(c, el('span', 'who')); row.append(meta);
-      attachFiles(row, files); attachSteps(row, steps); setWho(row, brain);
+      attachProject(row, project); attachFiles(row, files); attachSteps(row, steps); setWho(row, brain);
     }
     m.append(row); scrollChat(); return b;
   }
   function showWelcome() {
     const m = $('#chMsgs'); m.textContent = '';
-    const w = el('div', 'empty'); w.textContent = 'Задайте вопрос, и я отвечу. Голосом: «Карина, объясни…» или «Карина, найди и напиши отчёт про…» — коротко отвечу вслух, подробности будут здесь.';
+    const w = el('div', 'empty'); w.textContent = 'Задайте вопрос или опишите задачу. Нужно посмотреть или изменить код — приложите файлы кнопкой 📎 и напишите, что сделать: я отвечу здесь же (разберу код или напишу и проверю его в папке проекта, ваши файлы не меняются). Голосом: «Карина, объясни…» или «Карина, найди и напиши отчёт про…» — коротко отвечу вслух, подробности будут здесь.';
     m.append(w);
   }
   async function loadChatList() {
@@ -236,7 +297,7 @@
     const c = await call('chat_get', id); if (!c) return;
     chCur = id; chBubble = null; $('#chMsgs').textContent = '';
     if (!c.messages.length) showWelcome();
-    for (const m of c.messages) addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain);
+    for (const m of c.messages) addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain, m.files_in, m.project);
     loadChatList(); scrollChat();
   }
   async function openChatTab() {
@@ -244,16 +305,17 @@
     const id = chOpenId || chCur || (r && r.chats[0] && r.chats[0].id); chOpenId = null;
     if (id) openChat(id); else showWelcome();
     if (r) setBusy(!!r.busy);
+    loadCoderState();
     setTimeout(() => $('#chText').focus(), 50);
   }
   function chatStart(ev) {
     if (!chCur || ev.chat !== chCur) { chCur = ev.chat; $('#chMsgs').textContent = ''; }
     const w = $('#chMsgs .empty'); if (w) w.remove();
-    addMsg('user', ev.user.text, ev.user.id); chBubble = addMsg('assistant', '', ev.reply_id); chBubble.classList.add('typing');
+    addMsg('user', ev.user.text, ev.user.id, null, null, null, ev.user.files_in); chBubble = addMsg('assistant', '', ev.reply_id); chBubble.classList.add('typing');
     setBusy(true); setStep('Думаю…'); loadChatList();
   }
   function chatDone(ev) {
-    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); attachFiles(chBubble.parentElement, ev.files); attachSteps(chBubble.parentElement, ev.steps); setWho(chBubble.parentElement, ev.brain); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
+    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); attachProject(chBubble.parentElement, ev.project); attachFiles(chBubble.parentElement, ev.files); attachSteps(chBubble.parentElement, ev.steps); setWho(chBubble.parentElement, ev.brain); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
     if (ev.chat === chCur) setBusy(false);
     loadChatList(); scrollChat();
   }
@@ -261,12 +323,46 @@
   $('#chForm').addEventListener('submit', async e => {
     e.preventDefault(); const t = $('#chText'); const text = t.value.trim(); if (!text || chBusy) return;
     t.value = ''; t.style.height = '';
-    const wm = webMode(); const r = await call('chat_send', chCur || '', text, wm === 'always' ? true : wm === 'off' ? false : null);
-    if (r && !r.ok) { t.value = text; setStep(r.error); }
+    const wm = webMode(); const paths = chPaths.slice();
+    const r = await call('chat_send', chCur || '', text, wm === 'always' ? true : wm === 'off' ? false : null, paths, chCodeMode);
+    if (r && !r.ok) { t.value = text; setStep(r.error); } else if (r) { chPaths = []; renderAttach(); }
   });
   $('#chText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chForm').requestSubmit(); } });
   $('#chText').addEventListener('input', e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight) + 'px'; });
   $('#chStop').onclick = () => call('chat_stop');
+
+  // приложенные файлы, режим «Код» и разрешение запуска
+  let chPaths = [], chCodeMode = 'auto';
+  try { const v = localStorage.getItem('karina.codeMode'); if (['auto', 'code', 'ask'].includes(v)) chCodeMode = v; } catch (_) {}
+  const baseName = p => p.split(/[\\/]/).pop();
+  function renderAttach() {
+    const box = $('#chAttach'); box.textContent = ''; box.hidden = !chPaths.length;
+    chPaths.forEach((p, i) => {
+      const c = el('div', 'chip'); c.title = p; const x = el('button', '', '×'); x.type = 'button'; x.title = 'Убрать';
+      x.onclick = () => { chPaths.splice(i, 1); renderAttach(); }; c.append(el('span', '', baseName(p)), x); box.append(c);
+    });
+  }
+  async function pickAttach(folder) {
+    const r = await call('coder_pick', !!folder);
+    for (const p of (r || [])) if (!chPaths.includes(p)) chPaths.push(p);
+    renderAttach(); $('#chText').focus();
+  }
+  $('#chPick').onclick = () => pickAttach(false);
+  $('#chPickDir').onclick = () => pickAttach(true);
+  const CODE_LABEL = { auto: '💻 Код: авто', code: '💻 Код: всегда', ask: '💻 Код: только чат' };
+  function showCode() { const b = $('#chCode'); b.textContent = CODE_LABEL[chCodeMode]; b.classList.toggle('on', chCodeMode === 'code'); }
+  $('#chCode').onclick = () => {
+    const order = ['auto', 'code', 'ask']; chCodeMode = order[(order.indexOf(chCodeMode) + 1) % 3]; showCode();
+    try { localStorage.setItem('karina.codeMode', chCodeMode); } catch (_) {}
+  };
+  function showRun(on) { const b = $('#chRun'); b.textContent = on ? '▶ Запуск кода: вкл' : '▶ Запуск кода: выкл'; b.classList.toggle('on', !!on); b.dataset.on = on ? '1' : ''; }
+  $('#chRun').onclick = async () => {
+    const turnOn = !$('#chRun').dataset.on;
+    if (turnOn && !confirm('Разрешить Карине запускать написанный ею код для проверки?\n\nЭто не песочница: программа выполняется с вашими правами. Разрешены только python, pytest и node, без сети, подпроцессов и удаления файлов (Карина проверяет код перед запуском). Нужен установленный Python или Node.js.')) return;
+    const s = await call('coder_set', turnOn); if (s) showRun(s.run);
+  };
+  async function loadCoderState() { const s = await call('coder_state'); if (s) showRun(s.settings.run); }
+  showCode();
   $('#chFolder').onclick = async () => { const r = await call('files_open_folder'); if (r && !r.ok) setStep(r.error, 5000); };
   const WEB_LABEL = { auto: '🌐 Поиск: авто', always: '🌐 Поиск: вкл', off: '🌐 Поиск: выкл' };
   const webMode = () => ((cfg && cfg.search) || {}).mode || 'auto';
@@ -309,62 +405,6 @@
     if (r && r.opened) $('#updInstall').disabled = false;
     else if (!r || !r.ok) { $('#updInstall').disabled = false; $('#updNotes').textContent = (r && r.error) || 'Не удалось'; }
   };
-
-  // ---------- кодер ----------
-  let cdPaths = [], cdProject = '';
-  const cdBase = p => p.split(/[\\/]/).pop();
-  function cdRenderPicked() {
-    const box = $('#cdPicked'); box.textContent = '';
-    cdPaths.forEach((p, i) => {
-      const it = el('div', 'item'); const t = el('div', 't'); t.append(el('b', '', cdBase(p)), el('span', '', p)); it.append(t);
-      const x = el('button', 'btn', 'Убрать'); x.onclick = () => { cdPaths.splice(i, 1); cdRenderPicked(); }; it.append(x); box.append(it);
-    });
-    $('#cdClear').hidden = !cdPaths.length;
-  }
-  async function cdPick(folder) {
-    const r = await call('coder_pick', !!folder);
-    for (const p of (r || [])) if (!cdPaths.includes(p)) cdPaths.push(p);
-    cdRenderPicked();
-  }
-  async function loadCoder() {
-    const s = await call('coder_state'); if (!s) return;
-    $('#cdRun').checked = !!s.settings.run; cdBusy(s.busy);
-  }
-  function cdBusy(b) { $('#cdStart').disabled = b; $('#cdStop').hidden = !b; }
-  function cdLog(text, cls, detail) {
-    $('#cdLogCard').hidden = false;
-    const it = el('div', 'item ' + (cls || '')); const t = el('div', 't'); const b = el('b', '', text); t.append(b);
-    if (detail) { const d = el('span', 'wrap', detail); d.style.whiteSpace = 'pre-wrap'; t.append(d); }
-    it.append(t); const box = $('#cdLog'); box.append(it); it.scrollIntoView({ block: 'nearest' });
-  }
-  function coderEvent(ev) {
-    if (ev.kind === 'start') { cdProject = ev.project; $('#cdLog').textContent = ''; $('#cdResult').hidden = true; cdBusy(true); cdLog(ev.text); }
-    else if (ev.kind === 'result') cdLog((ev.ok ? '✔ ' : '✖ ') + ev.text, ev.ok ? 'ok' : 'miss', ev.output);
-    else if (ev.kind === 'warn') cdLog('⚠ ' + ev.text, 'miss');
-    else if (ev.kind === 'say') cdLog('Карина: ' + ev.text.slice(0, 600));
-    else cdLog(ev.text);
-  }
-  function coderDone(ev) {
-    cdBusy(false); cdProject = ev.project || cdProject; $('#cdLogCard').hidden = false; $('#cdResult').hidden = false;
-    const v = $('#cdVerdict'); v.className = 'note ' + (ev.ok ? '' : 'bad'); v.textContent = ev.error ? '⚠ ' + ev.error : ev.verdict;
-    $('#cdSummary').textContent = ev.summary || '';
-    const box = $('#cdFilesOut'); box.textContent = '';
-    for (const f of ev.files || []) { const it = el('div', 'item'); const t = el('div', 't'); t.append(el('b', '', f.path), el('span', '', f.size + ' байт')); it.append(t); box.append(it); }
-    if (ev.zip) { const it = el('div', 'item ok'); const t = el('div', 't'); t.append(el('b', '', '📦 ' + ev.zip), el('span', '', 'Весь результат одним архивом — рядом с папкой проекта')); it.append(t); box.append(it); }
-  }
-  $('#cdFiles').onclick = () => cdPick(false);
-  $('#cdFolder').onclick = () => cdPick(true);
-  $('#cdClear').onclick = () => { cdPaths = []; cdRenderPicked(); };
-  $('#cdRun').onchange = async e => { await call('coder_set', e.target.checked); };
-  $('#cdStart').onclick = async () => {
-    const r = await call('coder_start', $('#cdTask').value, cdPaths);
-    if (!r) return flash($('#cdMsg'), 'Не удалось начать', true);
-    if (!r.ok) return flash($('#cdMsg'), r.error, true);
-    cdBusy(true);
-  };
-  $('#cdStop').onclick = () => call('coder_stop');
-  $('#cdFolderOpen').onclick = () => call('coder_open', '');
-  $('#cdOpenProject').onclick = () => call('coder_open', cdProject);
 
   // ---------- мозг ----------
   const BRAIN = {
@@ -476,6 +516,25 @@
     if (r && r.ok) { f.reset(); flash($('#appMsg'), 'Добавлено'); loadApps(); } else flash($('#appMsg'), (r && r.error) || 'Ошибка', true);
   });
 
+  // ---------- офлайн-голос ----------
+  const fmtMb = b => Math.round(b / 2 ** 20) + ' МБ';
+  function voiceOfflineView(st) {
+    $('#offStatus').textContent = st.downloading ? 'Скачиваю…' : st.ready ? `Скачан (${fmtMb(st.size)}). Без интернета Карина говорит им.` : 'Не скачан: без интернета будет говорить системный голос Windows.';
+    $('#offDl').hidden = st.ready; $('#offDl').disabled = !!st.downloading; $('#offDel').hidden = !st.ready;
+    if (!st.downloading) $('#offBar').hidden = true;
+  }
+  async function loadVoiceOffline() { const st = await call('voice_offline_status'); if (st) voiceOfflineView(st); }
+  function voiceDlProgress(ev) {
+    const pb = $('#offBar'); pb.hidden = false; $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%';
+    $('#offStatus').textContent = ev.stage === 'verify' ? 'Проверяю файл…' : ev.total ? `Скачано ${fmtMb(ev.done)} из ${fmtMb(ev.total)}` : 'Ищу голос…';
+  }
+  function voiceDlDone(ev) {
+    if (ev.error && ev.error !== 'cancelled') flash($('#setMsg'), ev.error, true);
+    loadVoiceOffline();
+  }
+  $('#offDl').onclick = async () => { $('#offDl').disabled = true; $('#offStatus').textContent = 'Ищу голос…'; if (!(await call('voice_offline_download'))) loadVoiceOffline(); };
+  $('#offDel').onclick = async () => { const st = await call('voice_offline_delete'); if (st) voiceOfflineView(st); };
+
   // ---------- настройки ----------
   const sf = () => $('#setForm');
   function fillSettings(c, mics) {
@@ -483,7 +542,7 @@
     f.name.value = c.name; f.aliases.value = (c.name_aliases || []).join(', ');
     f.wake_required.checked = !!c.wake_required; f.followup_seconds.value = c.followup_seconds;
     f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold;
-    f.tts_enabled.checked = !!c.tts.enabled; f.engine.value = c.tts.engine; f.rate.value = c.tts.rate;
+    f.tts_enabled.checked = !!c.tts.enabled; f.engine.value = c.tts.engine; f.voice.value = c.tts.voice || 'svetlana_cute'; f.offline.value = c.tts.offline || 'auto'; f.background.checked = (c.ui || {}).background !== false; loadVoiceOffline(); f.rate.value = c.tts.rate;
     f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
     f.search_mode.value = (c.search || {}).mode || 'auto'; f.search_depth.value = (c.search || {}).depth || 'normal'; showWeb();
     $('#apiKey').placeholder = c.llm.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : 'sk-ant-…';
@@ -510,9 +569,9 @@
       name_aliases: f.aliases.value.split(',').map(s => s.trim()).filter(Boolean),
       wake_required: f.wake_required.checked, followup_seconds: Number(f.followup_seconds.value),
       stt: { model: f.model.value, mic_device: mic === '' ? null : Number(mic), vad_threshold: Number(f.vad_threshold.value) },
-      tts: { enabled: f.tts_enabled.checked, engine: f.engine.value, rate: Number(f.rate.value) },
+      tts: { enabled: f.tts_enabled.checked, engine: f.engine.value, voice: f.voice.value, offline: f.offline.value, rate: Number(f.rate.value) },
       search: { mode: f.search_mode.value, depth: f.search_depth.value },
-      updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value },
+      updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value, background: f.background.checked },
       llm: { enabled: f.llm_enabled.checked, api_key: $('#apiKey').value.trim() },
     };
     const c = await call('save_settings', patch);
@@ -525,12 +584,13 @@
   async function refresh() {
     const s = await call('get_state'); if (!s) return;
     if (s.mics && s.mics.length) fillSettings(s.config, s.mics); else { const keep = $('#micSelect').value; fillSettings(s.config, [...$('#micSelect').options].slice(1).map(o => ({ id: o.value, name: o.textContent }))); $('#micSelect').value = keep; }
+    setFrameless(s.frameless, s.maximized);
     version = s.version || version; $('#kvVer').textContent = version; renderStatus(s.status);
   }
 
   async function init() {
     api = window.pywebview.api;
-    await refresh(); loadBrain();
+    await refresh(); loadBrain(); loadAdmin();
     setTimeout(() => checkUpdate(false), 3000);
     setInterval(async () => { const s = await call('get_status'); if (s) renderStatus(s); loadBrain(); }, 5000);
     let t = null; try { t = localStorage.getItem('karina.tab'); } catch (_) {}

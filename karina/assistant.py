@@ -14,6 +14,24 @@ from .tts import Speaker
 from .textutil import norm
 from .wake import split_wake
 
+# Фиксированные ответы: озвучиваются заранее, чтобы без интернета звучали тем же голосом, что и онлайн.
+STATIC_PHRASES = [
+    "Готово.", "Хорошо.", "Пожалуйста!", "Слушаю.", "Я здесь!", "Хорошо, отменяю.", "Открываю чат.",
+    "Следующий трек.", "Предыдущий трек.", "Свернула.", "Развернула.", "Закрываю окно.", "Переключаю.",
+    "Блокирую.", "Выполняю.", "Напечатала.", "Звук выключен.", "Звук включён.", "Погромче.", "Потише.",
+    "Скриншот сохранён в папку Изображения, Карина.",
+    "Нет интернета, поиск сейчас недоступен.",
+    "Ухожу в режим сна. Скажите «проснись», когда понадоблюсь.",
+    "Не поняла команду. Скажите «что ты умеешь», чтобы услышать список.",
+    "Модель не выбрана. Откройте вкладку «Модели», скачайте и выберите одну.",
+    "Я ещё отвечаю на предыдущий вопрос.", "Хорошо, поищу в интернете.", "Хорошо, подумаю.",
+    "Открываю папку с файлами.", "Не получилось открыть папку с файлами.",
+    "Готово, файл сохранён в папке Карина в документах.", "Готово, файлы сохранены в папке Карина в документах.",
+    "Готово, смотрите в окне чата.",
+    "Доброе утро! Чем помочь?", "Добрый день! Чем помочь?", "Добрый вечер! Чем помочь?", "Привет! Чем помочь?",
+] + [f"Громкость {v}." for v in range(0, 101, 10)] + [f"Громкость {v} процентов." for v in range(0, 101, 10)]
+
+
 YES = {"да", "давай", "подтверждаю", "конечно", "ага", "выполняй", "точно", "да да"}
 NO = {"нет", "не надо", "отмена", "отменяю", "стоп", "не нужно"}
 
@@ -24,8 +42,8 @@ class Assistant:
         self.apps = AppIndex(cfg)
         self.engine = Engine(cfg, emit)
         self.brain = Brain(cfg, self.engine)
-        self.chat = chatmod.ChatService(cfg, self.engine, emit, speak=self.say, brain=self.brain)
         self.coder = CoderService(cfg, self.brain, emit)
+        self.chat = chatmod.ChatService(cfg, self.engine, emit, speak=self.say, brain=self.brain, coder=self.coder)
         self.stt, self.tts = STT(cfg), Speaker(cfg)
         self.listener = Listener(cfg, self._on_audio, lambda v: self.emit({"type": "level", "v": v}))
         self.q: queue.Queue = queue.Queue(maxsize=4)
@@ -43,6 +61,29 @@ class Assistant:
         self._threads = [threading.Thread(target=self._worker, daemon=True, name="karina-worker")]
         for t in self._threads:
             t.start()
+        self.warm_voice()
+
+    def phrases_to_cache(self) -> list[str]:
+        """Что стоит озвучить заранее: стандартные ответы, ответы своих команд, «Открываю/Запускаю/Закрываю <программа>»."""
+        out = list(STATIC_PHRASES) + [f"Привет! Меня зовут {self.cfg['name']}. Я вас слышу."]
+        out += [str(c.get("reply")) for c in self.cfg.get("commands", []) if c.get("reply")]
+        try:
+            from .apps import SITES
+            out += [f"Открываю {k}." for k in SITES]
+            for e in self.apps.entries():
+                n = e.get("name")
+                if n:
+                    out += [f"Открываю {n}.", f"Запускаю {n}.", f"Закрываю {n}."]
+        except Exception:
+            pass
+        return out
+
+    def warm_voice(self):
+        """Фоновая подготовка записей выбранного голоса (если есть интернет); вызывается при старте и смене голоса."""
+        try:
+            self.tts.prewarm(self.phrases_to_cache())
+        except Exception as e:
+            trace(f"кэш голоса: {e}")
 
     def stop(self):
         self._stop.set()

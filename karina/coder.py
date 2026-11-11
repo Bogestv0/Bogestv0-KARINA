@@ -250,6 +250,40 @@ def read_text(p: Path) -> str | None:
     return None
 
 
+def read_attachments(paths: list[str], limit: int) -> tuple[list[dict], list[str]]:
+    """Для ответа «только прочитать»: тексты приложенных файлов и папок (без копирования и без проекта).
+    → ([{'name', 'text'}], замечания). Всего не больше limit символов; что не поместилось или не текст — в замечаниях."""
+    out, notes, used, count = [], [], 0, 0
+
+    def add(src: Path, name: str):
+        nonlocal used, count
+        count += 1
+        if count > MAX_INPUT_FILES:
+            if count == MAX_INPUT_FILES + 1:
+                notes.append(f"Прочитано не больше {MAX_INPUT_FILES} файлов — остальные пропущены.")
+            return
+        text = read_text(src)
+        if text is None:
+            notes.append(f"«{name}» — не текстовый файл, содержимое не показано")
+        elif used + len(text) > limit:
+            notes.append(f"«{name}» не поместился в запрос ({len(text)} символов) — выберите нужные файлы или включите режим «Кодер»")
+        else:
+            used += len(text)
+            out.append({"name": name, "text": text})
+
+    for raw in paths or []:
+        src = Path(raw)
+        if src.is_file():
+            add(src, src.name)
+        elif src.is_dir():
+            for f in sorted(src.rglob("*")):
+                if f.is_file() and not (set(f.relative_to(src).parts) & SKIP_DIRS):
+                    add(f, (Path(src.name) / f.relative_to(src)).as_posix())
+        else:
+            notes.append(f"«{raw}» не найден")
+    return out, notes
+
+
 # ---------------------------------------------------------------- запуск проверок
 def find_interpreter(kind: str) -> str | None:
     names = {"python": ("python", "python3", "py"), "pytest": ("pytest",), "node": ("node",)}[kind]
@@ -385,8 +419,13 @@ def system_prompt(can_run: bool, run_note: str = "") -> str:
     )
 
 
-def first_message(task: str, ws: Workspace, copied: list[str]) -> str:
-    parts = [f"Задача:\n{task.strip()}", "", "Файлы проекта:\n" + ws.tree_text()]
+def first_message(task: str, ws: Workspace, copied: list[str], context: str = "", resumed: bool = False) -> str:
+    parts = []
+    if context:
+        parts += ["Предыдущая переписка с пользователем (для контекста):\n" + context, ""]
+    if resumed:
+        parts += ["Это ПРОДОЛЖЕНИЕ работы над уже существующим проектом: файлы лежат в папке проекта, прочитай нужные командой [[ЧИТАТЬ: путь]] и вноси правки в них.", ""]
+    parts += [f"Задача:\n{task.strip()}", "", "Файлы проекта:\n" + ws.tree_text()]
     used = 0
     for rel in copied:
         p = ws.root / rel
@@ -411,6 +450,7 @@ class CoderService:
         self.cfg, self.brain, self.emit = cfg, brain, emit
         self._dir = projects_dir
         self._runner_cls = runner_cls
+        self._sink = emit
         self._busy = threading.Lock()
         self._stop = threading.Event()
         self.last: dict = {}
@@ -430,7 +470,10 @@ class CoderService:
         c = self.cfg.get("coder", {}) or {}
         return {"run": bool(c.get("run", False)), "max_steps": max(1, min(30, int(c.get("max_steps") or MAX_STEPS)))}
 
-    def start(self, task: str, paths: list[str], wait: bool = False) -> dict:
+    def start(self, task: str, paths: list[str], wait: bool = False, sink=None, project: str = "", context: str = "") -> dict:
+        """Запускает задачу в фоне (wait=True — дождаться конца).
+        sink — куда слать события хода работы (по умолчанию в окно как «coder» / «coder_done»; чат подставляет свой приёмник).
+        project — имя существующей папки проекта: продолжаем работу в ней, а не создаём новую. context — краткая прежняя переписка."""
         task = (task or "").strip()
         if not task:
             return {"ok": False, "error": "Опишите, что нужно сделать."}
@@ -440,17 +483,21 @@ class CoderService:
             choice = self.brain.choose(task, want_files=True)
         except Exception as e:
             return {"ok": False, "error": str(e)}
-        ws = Workspace.create(self.base, task)
-        copied, warns = ws.import_paths([p for p in (paths or []) if isinstance(p, str)][:200])
-        t = threading.Thread(target=self._run, args=(task, ws, copied, warns, choice), daemon=True, name="karina-coder")
+        resumed = False
+        if project and project == Path(project).name and (self.base / project).is_dir():
+            ws, resumed = Workspace(self.base / project), True
+        else:
+            ws = Workspace.create(self.base, task)
+        copied, warns = ws.import_paths([p for p in (paths or []) if isinstance(p, str)][:200]) if paths else ([], [])
+        t = threading.Thread(target=self._run, args=(task, ws, copied, warns, choice, sink or self.emit, resumed, context), daemon=True, name="karina-coder")
         t.start()
         if wait:
             t.join()
-        return {"ok": True, "project": ws.root.name, "files": copied, "warnings": warns, "brain": choice.label}
+        return {"ok": True, "project": ws.root.name, "files": copied, "warnings": warns, "brain": choice.label, "resumed": resumed}
 
     # ---- шаги ----
     def _say(self, kind: str, text: str, **kw):
-        self.emit({"type": "coder", "kind": kind, "text": text, **kw})
+        self._sink({"type": "coder", "kind": kind, "text": text, **kw})
 
     def _trim(self, msgs: list[dict], budget: int) -> list[dict]:
         """Бюджет контекста: первое сообщение (задача и файлы) остаётся, из середины вычёркиваются самые старые обмены."""
@@ -470,9 +517,10 @@ class CoderService:
             ctx = int(m["ctx"]) if m else 8192
         return int(max(1000, ctx - max_tokens - 1200) * 2.0)
 
-    def _run(self, task: str, ws: Workspace, copied: list[str], warns: list[str], choice):
+    def _run(self, task: str, ws: Workspace, copied: list[str], warns: list[str], choice, sink=None, resumed: bool = False, context: str = ""):
         if not self._busy.acquire(blocking=False):
             return
+        self._sink = sink or self.emit
         self._stop.clear()
         st = self.settings()
         backend, is_claude = choice.backend, choice.name == "claude"
@@ -490,7 +538,7 @@ class CoderService:
         for w in warns:
             self._say("warn", w)
         try:
-            msgs = [{"role": "user", "content": first_message(task, ws, copied)}]
+            msgs = [{"role": "user", "content": first_message(task, ws, copied, context, resumed)}]
             sysmsg = {"role": "system", "content": system_prompt(can_run, run_note)}
             nudged = False
             if backend.state != "ready":
@@ -569,10 +617,12 @@ class CoderService:
                 zip_name = ws.zip().name
             except Exception:
                 pass
-        self.last = {"project": ws.root.name, "folder": str(ws.root)}
+        done = {"type": "coder_done", "project": ws.root.name, "summary": summary, "error": error, "verdict": verdict,
+                "files": files, "zip": zip_name, "ok": (not error) and stats["last_run"] == 0 and not stats["dirty"]}
+        self.last = {"project": ws.root.name, "folder": str(ws.root), "result": done}
+        sink_ = self._sink
         self._busy.release()
-        self.emit({"type": "coder_done", "project": ws.root.name, "summary": summary, "error": error, "verdict": verdict,
-                   "files": files, "zip": zip_name, "ok": (not error) and stats["last_run"] == 0 and not stats["dirty"]})
+        sink_(done)
 
     # ---- доступ из окна ----
     def open_folder(self, project: str = "") -> None:

@@ -43,7 +43,7 @@ Name: "{autoprograms}\Bogestv0 KARINA"; Filename: "{app}\Bogestv0-KARINA.exe"
 Name: "{autodesktop}\Bogestv0 KARINA"; Filename: "{app}\Bogestv0-KARINA.exe"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Bogestv0 KARINA"; ValueData: """{app}\Bogestv0-KARINA.exe"""; Tasks: autostart; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Bogestv0 KARINA"; ValueData: """{app}\Bogestv0-KARINA.exe"" --background"; Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\Bogestv0-KARINA.exe"; Description: "Запустить Bogestv0 KARINA"; Flags: nowait postinstall skipifsilent

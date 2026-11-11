@@ -18,9 +18,13 @@ DEFAULTS: dict = {
                       "карена", "каріна", "кариана", "карин", "каринна"],
     "wake_required": True,        # откликаться только на имя
     "followup_seconds": 8,        # после имени слушаем без повторного обращения
-    "ui": {"theme": "auto"},
+    "ui": {"theme": "auto", "background": True, "frameless": True,
+           "admin": False, "admin_asked": False},   # admin: запускать Карину с правами администратора (через задачу планировщика)   # frameless: свой заголовок вместо рамки Windows   # background: закрытие окна сворачивает Карину в трей, а не выключает
     "stt": {"model": "small", "mic_device": None, "vad_threshold": 0.012},
-    "tts": {"enabled": True, "engine": "auto", "voice_online": "ru-RU-SvetlanaNeural", "rate": 0},
+    # voice — svetlana_cute | ava_calm (см. tts.VOICES); pronounce — словарь «слово → как произнести»
+    # offline — auto (нейросетевой Piper, если скачан, иначе системный) | system
+    "tts": {"enabled": True, "engine": "auto", "voice": "svetlana_cute", "rate": 0, "offline": "auto",
+            "pronounce": {"discord": "дискорд", "youtube": "ютуб", "steam": "стим", "telegram": "телеграм", "chrome": "хром"}},
     "search_engine": "google",    # google | yandex
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-5-5"},
     # встроенные модели (llama.cpp): active — id выбранной модели; gpu: auto | cpu; ctx/threads: 0 = по умолчанию
