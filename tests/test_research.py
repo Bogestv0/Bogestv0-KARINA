@@ -12,6 +12,8 @@ PAGE = "Глубина озера Байкал достигает 1642 метр�
 class Engine:
     """Различает вызовы по системному сообщению: план, проверка «хватает ли», заметки, итоговый ответ."""
     state = "ready"
+    def available(self):
+        return True, ""
     def __init__(self, enough=True, answer="Байкал — самое глубокое озеро [1][2]. Подробнее https://evil.example/x и [ссылка](https://evil.example/y)."):
         self.enough, self.answer, self.log = enough, answer, []
     def chat(self, messages, max_tokens=0, on_delta=None, stop=None, json_mode=False, **kw):

@@ -2,21 +2,28 @@
 from __future__ import annotations
 import datetime, json, re, threading, time, uuid
 from pathlib import Path
-from . import net, research, websearch
+from . import files as filesmod, net, research, websearch
+from .brain import Brain, BrainUnavailable
 from .config import DATA
 from .engine import EngineError
 from .textutil import norm
 
 CHATS_DIR = DATA / "chats"
 MAX_TOKENS = 1500
+LIMITS = {"local": (1500, 3500), "claude": (3000, 8000)}     # (обычный ответ, ответ с файлом) в токенах
+CLAUDE_CTX = 32768                                          # сколько истории и найденного отдаём Claude (токенов)
 CHARS_PER_TOKEN = 2.0          # для русского с запасом: лучше обрезать историю раньше, чем переполнить контекст
 
 # Фразы, которые сразу идут в чат (раньше обычных команд: «найди и напиши…» иначе стало бы поиском в браузере).
 CHAT_PREFIX = re.compile(
     r"^(?:найди и (?:напиши|составь|подготовь|расскажи|собери)|найди информацию|напиши (?:мне )?(?:отчет|реферат|статью|эссе|пост|план|письмо|резюме|обзор|конспект|сочинение|доклад|инструкцию|краткое)|"
     r"составь|подготовь|расскажи|объясни|что такое|кто такой|кто такая|почему|зачем|как работает|в чем разница|сравни|посоветуй|придумай|переведи|"
-    r"помоги (?:мне )?(?:с|со|написать|разобраться)|давай обсудим|вопрос|чат\b)")
+    r"помоги (?:мне )?(?:с|со|написать|разобраться)|давай обсудим|вопрос|чат\b|"
+    r"создай (?:мне )?(?:файл|документ|таблиц\w*|схем\w*|диаграмм\w*|pdf|пдф|ворд|word|эксель|excel|отчет|иллюстраци\w*|рисунок|скрипт|программу|код)|"
+    r"сделай (?:мне )?(?:файл|документ|таблиц\w*|схем\w*|диаграмм\w*|pdf|пдф|ворд|word|эксель|excel|отчет)|нарисуй|"
+    r"сохрани (?:это|ответ|результат|в файл|в (?:word|ворд|эксель|excel|pdf|пдф)))")
 OPEN_CHAT = re.compile(r"^(?:открой|покажи|включи)\s+(?:окно\s+)?чат\b")
+OPEN_FILES = re.compile(r"^(?:открой|покажи)\s+(?:мои\s+)?(?:папку\s+(?:с\s+)?(?:карин\w*|файлами)|файлы\s+карин\w*)")
 
 
 def is_chat_request(text: str) -> bool:
@@ -28,15 +35,22 @@ def wants_open_chat(text: str) -> bool:
     return bool(OPEN_CHAT.search(text))
 
 
-def system_prompt(voice: bool = False, web: bool = False) -> str:
+def wants_open_files(text: str) -> bool:
+    return bool(OPEN_FILES.search(text))
+
+
+def system_prompt(voice: bool = False, web: bool = False, files: bool = False) -> str:
     today = datetime.date.today().strftime("%d.%m.%Y")
     access = ("Ты можешь пользоваться материалами из интернета, которые тебе дадут. " if web
-              else "Сейчас у тебя нет доступа к интернету и файлам: не утверждай, что что-то нашла или открыла. ")
+              else "Сейчас у тебя нет доступа к интернету: не утверждай, что что-то нашла в сети. ")
+    access += "Читать и открывать файлы на компьютере ты не можешь: не утверждай, что открыла или прочитала файл. "
     p = ("Ты — Карина, помощник на компьютере пользователя. Отвечай по-русски (если не просят иначе), по делу и без воды. "
          f"Сегодня {today}. {access}"
          "Не выдумывай факты, цифры, имена и ссылки; если не уверена или не знаешь — скажи об этом прямо. "
          "Знания могут быть устаревшими, для свежих событий предупреждай об этом. "
          "Оформление: короткие абзацы, списки и **жирный** можно, код — в блоках ```.")
+    if files:
+        p += filesmod.prompt_section()
     if voice:
         p += ("\nЭто голосовой запрос. Первой строкой напиши «ГОЛОС: » и 1–2 коротких предложения, которые Карина произнесёт вслух "
               "(без списков, символов и ссылок). Затем пустая строка и подробный ответ.")
@@ -117,9 +131,12 @@ def fit_history(messages: list[dict], budget_chars: int) -> list[dict]:
 
 
 class ChatService:
-    def __init__(self, cfg, engine, emit, speak=None, store: ChatStore | None = None):
+    def __init__(self, cfg, engine, emit, speak=None, store: ChatStore | None = None, brain: Brain | None = None,
+                 files: filesmod.FileService | None = None):
         self.cfg, self.engine, self.emit, self.speak = cfg, engine, emit, speak
         self.store = store or ChatStore()
+        self.brain = brain or Brain(cfg, engine)
+        self.files = files or filesmod.FileService()
         self._busy = threading.Lock()
         self._stop = threading.Event()
         self.current: str | None = None
@@ -155,13 +172,13 @@ class ChatService:
             t.join()
         return chat["id"]
 
-    def _history_budget(self) -> int:
-        ctx = int((self.cfg.get("models", {}) or {}).get("ctx") or 0)
+    def _history_budget(self, max_tokens: int = MAX_TOKENS, claude: bool = False) -> int:
+        ctx = CLAUDE_CTX if claude else int((self.cfg.get("models", {}) or {}).get("ctx") or 0)
         if not ctx:
             from . import models
             m = models.by_id((self.cfg.get("models", {}) or {}).get("active", ""))
             ctx = int(m["ctx"]) if m else 8192
-        return int(max(1000, ctx - MAX_TOKENS - 600) * CHARS_PER_TOKEN)
+        return int(max(1000, ctx - max_tokens - 600) * CHARS_PER_TOKEN)
 
     def _search_cfg(self) -> dict:
         c = self.cfg.get("search", {}) or {}
@@ -177,6 +194,21 @@ class ChatService:
 
     def will_search(self, text: str) -> bool:
         return self._use_search(text, None) and net.is_online()
+
+    def _choose(self, text: str, search: bool | None = None):
+        """Какой «мозг» ответит. → (выбор, нужны ли файлы, искать ли в интернете). Бросает BrainUnavailable, если никто не может."""
+        want_files = filesmod.wants_file(norm(text))
+        use_search = self._use_search(text, search)
+        deep = use_search and self._search_cfg()["depth"] in ("deep", "max")
+        return self.brain.choose(text, deep_search=deep, want_files=want_files), want_files, use_search
+
+    def preflight(self, text: str) -> str:
+        """Пусто, если ответить можно; иначе причина по-русски (чтобы сказать о ней сразу)."""
+        try:
+            self._choose(text)
+        except BrainUnavailable as e:
+            return str(e)
+        return ""
 
     def _run(self, chat: dict, text: str, voice: bool, search: bool | None = None):
         if not self._busy.acquire(blocking=False):
@@ -198,11 +230,19 @@ class ChatService:
                 steps.append(t)
             self.emit({"type": "chat_step", "chat": cid, "text": t})
 
+        made: list[dict] = []
+        ferrs: list[str] = []
         try:
-            if self.engine.state != "ready":
+            choice, want_files, use_search = self._choose(text, search)     # недоступный мозг — сразу понятная ошибка
+            backend, is_claude = choice.backend, choice.name == "claude"
+            reply["brain"] = choice.label
+            max_tokens = LIMITS[choice.name][1 if want_files else 0]
+            if backend.state != "ready":
                 step("Загружаю модель в память…")
-            api_msgs = [{"role": m["role"] if m["role"] == "user" else "assistant", "content": m["text"]} for m in chat["messages"] if m["text"]]
-            budget = self._history_budget()
+            api_msgs = [{"role": m["role"] if m["role"] == "user" else "assistant",
+                         "content": m["text"] + (f"\n[Создан файл: {', '.join(f['name'] for f in m['files'])}]" if m.get("files") else "")}
+                        for m in chat["messages"] if m["text"]]
+            budget = self._history_budget(max_tokens, is_claude)
             hist = fit_history(api_msgs, budget)
             last = [0.0]
 
@@ -212,36 +252,49 @@ class ChatService:
                     last[0] = 1e-9
                 if time.time() - last[0] > 0.12:
                     last[0] = time.time()
-                    self.emit({"type": "chat_delta", "chat": cid, "id": reply["id"], "text": t})
+                    self.emit({"type": "chat_delta", "chat": cid, "id": reply["id"], "text": filesmod.display_text(t) if want_files else t})
 
-            note, sources, out = "", [], ""
-            if self._use_search(text, search):
+            note, sources, out = ("ⓘ " + choice.note + "\n\n") if choice.note else "", [], ""
+            if choice.note:
+                step(choice.note)
+            if use_search:
                 if not net.is_online():
-                    note = "⚠ Нет интернета, поэтому поиск не выполнен. Отвечаю из собственных знаний — возможны неточности и устаревшие данные.\n\n"
+                    note += "⚠ Нет интернета, поэтому поиск не выполнен. Отвечаю из собственных знаний — возможны неточности и устаревшие данные.\n\n"
                     step("Нет интернета — отвечаю без поиска")
                 else:
                     sc = self._search_cfg()
-                    rs = research.Researcher(self.engine, step, self._stop, sc["depth"], budget, system=system_prompt(voice, web=True))
+                    rs = research.Researcher(backend, step, self._stop, sc["depth"], budget, system=system_prompt(voice, web=True, files=want_files))
                     try:
                         ctx_q = "; ".join(m["content"][:120] for m in api_msgs[:-1] if m["role"] == "user")[-400:]
                         rs.collect(text, ctx_q)
-                        out = rs.answer(text, fit_history(api_msgs, int(budget * 0.25)), on_delta, MAX_TOKENS)
+                        out = rs.answer(text, fit_history(api_msgs, int(budget * 0.25)), on_delta, max_tokens)
                         sources = rs.res.sources
                     except websearch.Cancelled:
                         self._stop.set()
                     except websearch.SearchError as e:
-                        note = f"⚠ Не удалось найти информацию в интернете ({e}). Отвечаю из собственных знаний — возможны неточности.\n\n"
+                        note += f"⚠ Не удалось найти информацию в интернете ({e}). Отвечаю из собственных знаний — возможны неточности.\n\n"
                         step("Поиск не удался — отвечаю без него")
             if not out and not self._stop.is_set():
-                messages = [{"role": "system", "content": system_prompt(voice)}] + hist
-                out = self.engine.chat(messages, max_tokens=MAX_TOKENS, on_delta=on_delta, stop=self._stop)
+                messages = [{"role": "system", "content": system_prompt(voice, files=want_files)}] + hist
+                out = backend.chat(messages, max_tokens=max_tokens, on_delta=on_delta, stop=self._stop)
+            if want_files and out:
+                out, reqs = filesmod.extract(out)                 # файл создаёт Карина, и только если ответ не остановлен
+                if reqs and not self._stop.is_set():
+                    step("Создаю файлы…")
+                    made, ferrs = self.files.create_all(reqs)
             if voice and out:
                 spoken, out = parse_voice(out)
             if sources and out:
                 out = research.format_sources(out, sources)
             if self._stop.is_set():
                 out = (out + "\n\n*(остановлено)*").strip()
+            if made and not out:
+                out = "Готово — файл сохранён в папке «Документы\\Карина»." if len(made) == 1 else f"Готово — файлов: {len(made)}, они в папке «Документы\\Карина»."
+            if ferrs:
+                out = (out + "\n\n" if out else "") + "\n".join("⚠ " + e for e in ferrs)
             reply["text"] = (note + out) if out else "Модель вернула пустой ответ. Попробуйте переформулировать."
+            if made:
+                reply["files"] = made
             if sources:
                 reply["sources"] = [{"n": x.n, "url": x.url, "title": x.title} for x in sources]
             if any(x.startswith(("Ищу", "Читаю")) for x in steps):
@@ -255,8 +308,16 @@ class ChatService:
         chat["messages"].append(reply)
         chat["updated"] = time.time()
         self.store.save(chat)
-        self.emit({"type": "chat_done", "chat": cid, "id": reply["id"], "text": reply["text"], "error": err, "title": chat["title"], "steps": reply.get("steps")})
+        self.emit({"type": "chat_done", "chat": cid, "id": reply["id"], "text": reply["text"], "error": err, "title": chat["title"],
+                   "steps": reply.get("steps"), "files": reply.get("files"), "brain": reply.get("brain")})
         self._busy.release()
         self.current = None
         if voice and self.speak:
-            self.speak("Не получилось: " + err[:160] if err else spoken or "Готово, смотрите в окне чата.")
+            if err:
+                self.speak("Не получилось: " + err[:160])
+            elif made:           # о файле говорим только то, что действительно создано
+                self.speak("Готово, файл сохранён в папке Карина в документах." if len(made) == 1 else "Готово, файлы сохранены в папке Карина в документах.")
+            elif ferrs:
+                self.speak("Не удалось создать файл. " + ferrs[0][:150])
+            else:
+                self.speak(spoken or "Готово, смотрите в окне чата.")

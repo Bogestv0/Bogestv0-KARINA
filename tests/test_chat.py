@@ -5,11 +5,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from karina import chat
 from karina.config import Config
 from karina.engine import EngineError
+from karina.files import FileService
 from karina.textutil import norm
 
 
 class FakeEngine:
     state = "ready"
+    def available(self):
+        return True, ""
     def __init__(self, reply="Ответ", err=None):
         self.reply, self.err, self.calls = reply, err, []
     def chat(self, messages, max_tokens=0, on_delta=None, stop=None, **kw):
@@ -24,7 +27,8 @@ class FakeEngine:
 def make(engine, spoken=None):
     tmp = Path(tempfile.mkdtemp())
     ev = []
-    svc = chat.ChatService(Config(tmp / "c.json"), engine, ev.append, speak=(spoken.append if spoken is not None else None), store=chat.ChatStore(tmp / "chats"))
+    svc = chat.ChatService(Config(tmp / "c.json"), engine, ev.append, speak=(spoken.append if spoken is not None else None), store=chat.ChatStore(tmp / "chats"),
+                           files=FileService(tmp / "Карина"))
     return svc, ev
 
 

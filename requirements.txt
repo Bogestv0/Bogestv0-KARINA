@@ -9,3 +9,6 @@ pycaw>=20240210
 comtypes>=1.4.2
 pillow>=10.0
 pywebview>=5.0
+python-docx>=1.1.0
+openpyxl>=3.1.2
+reportlab>=4.0.0

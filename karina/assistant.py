@@ -1,7 +1,9 @@
 """Ядро: микрофон → распознавание → имя → команда → голосовой ответ."""
 from __future__ import annotations
 import queue, threading, time, traceback
-from . import actions, chat as chatmod, llm, models, net
+from . import actions, chat as chatmod, llm, net
+from .brain import Brain
+from .coder import CoderService
 from .diag import trace
 from .engine import Engine
 from .actions import Ctx
@@ -21,7 +23,9 @@ class Assistant:
         self.cfg, self.emit = cfg, emit
         self.apps = AppIndex(cfg)
         self.engine = Engine(cfg, emit)
-        self.chat = chatmod.ChatService(cfg, self.engine, emit, speak=self.say)
+        self.brain = Brain(cfg, self.engine)
+        self.chat = chatmod.ChatService(cfg, self.engine, emit, speak=self.say, brain=self.brain)
+        self.coder = CoderService(cfg, self.brain, emit)
         self.stt, self.tts = STT(cfg), Speaker(cfg)
         self.listener = Listener(cfg, self._on_audio, lambda v: self.emit({"type": "level", "v": v}))
         self.q: queue.Queue = queue.Queue(maxsize=4)
@@ -59,7 +63,8 @@ class Assistant:
     def status(self) -> dict:
         return {"online": net.is_online(), "model": self.cfg["stt"]["model"], "voice": self.tts.engine_used or self.cfg["tts"]["engine"],
                 "tts_warning": self.tts.warning, "state": self.state, "sleeping": self.sleeping, "listening": self.listening,
-                "name": self.cfg["name"], "plugin_errors": self.plugin_errors, "llm": bool(self.cfg["llm"].get("enabled") and (self.cfg["llm"].get("api_key"))) }
+                "name": self.cfg["name"], "plugin_errors": self.plugin_errors, "llm": bool(self.cfg["llm"].get("enabled") and (self.cfg["llm"].get("api_key"))),
+                "brain": self.brain.mode}
 
     def _worker(self):
         # 1) модель
@@ -187,13 +192,24 @@ class Assistant:
             self.emit({"type": "goto", "tab": "chat"})
             self.say("Открываю чат.")
             return
+        if chatmod.wants_open_files(rest):
+            try:
+                self.chat.files.open_folder()
+                self.say("Открываю папку с файлами.")
+            except Exception as e:
+                self.log("error", f"Не удалось открыть папку: {e}")
+                self.say("Не получилось открыть папку с файлами.")
+            return
         if chatmod.is_chat_request(rest):
             self._to_chat(rest)
             return
         ctx = Ctx(self.cfg, self.apps, self, raw=text)
         handled, reply = actions.dispatch(ctx, rest)
-        if not handled and self._local_ready():
-            self._to_chat(rest)          # свободная фраза — отвечает встроенная модель
+        if not handled and self.brain.usable():
+            self._to_chat(rest)          # свободная фраза — отвечает выбранный «мозг»
+            return
+        if not handled and self.brain.mode == "claude":
+            self.say(self.brain.unavailable_reason())       # человек выбрал Claude — говорим сразу, почему он молчит
             return
         if not handled:
             handled, reply = self._try_llm(ctx, rest)
@@ -201,14 +217,11 @@ class Assistant:
             reply = "Не поняла команду. Скажите «что ты умеешь», чтобы услышать список."
         self.say(reply)
 
-    def _local_ready(self) -> bool:
-        mid = (self.cfg.get("models", {}) or {}).get("active", "")
-        return bool(mid and models.local_path(mid))
-
     def _to_chat(self, text: str):
         """Голосовой вопрос: коротко отвечаем голосом, подробности показываем в окне «Чат»."""
-        if not self._local_ready():
-            self.say("Модель не выбрана. Откройте вкладку «Модели», скачайте и выберите одну.")
+        why = self.chat.preflight(text)
+        if why:
+            self.say(why)                # выбранный мозг недоступен — говорим об этом сразу
             return
         if self.chat.busy:
             self.say("Я ещё отвечаю на предыдущий вопрос.")

@@ -15,8 +15,9 @@
     $$('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'apps') loadApps();
     if (b.dataset.tab === 'commands') loadCommands();
-    if (b.dataset.tab === 'models') loadModels();
+    if (b.dataset.tab === 'models') { loadModels(); loadBrain(); }
     if (b.dataset.tab === 'chat') openChatTab();
+    if (b.dataset.tab === 'coder') loadCoder();
     try { localStorage.setItem('karina.tab', b.dataset.tab); } catch (_) {}
   });
 
@@ -89,11 +90,14 @@
       } else if (ev.type === 'log') addLog(ev.kind, ev.text, ev.ts);
       else if (ev.type === 'goto') { const b = $(`#tabs [data-tab="${ev.tab}"]`); if (b) b.click(); }
       else if (ev.type === 'chat_open') { chOpenId = ev.chat; const b = $('#tabs [data-tab="chat"]'); if (b) b.click(); }
+      else if (ev.type === 'coder') coderEvent(ev);
+      else if (ev.type === 'coder_done') coderDone(ev);
       else if (ev.type === 'chat_start') chatStart(ev);
       else if (ev.type === 'chat_step') { if (ev.chat === chCur) setStep(ev.text); }
       else if (ev.type === 'chat_delta') { if (ev.chat === chCur && chBubble) renderMd(chBubble, ev.text); scrollChat(); }
       else if (ev.type === 'chat_done') chatDone(ev);
       else if (ev.type === 'search_test') { const b = $('#searchTest'); b.hidden = false; b.textContent = ev.lines.join('\n'); flash($('#searchMsg'), ev.ok ? 'Поиск работает' : 'Поиск не работает', !ev.ok); }
+      else if (ev.type === 'brain_test') { const o = $('#brainTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Claude отвечает: «${ev.text}» (${ev.sec} с)` : ev.text; $('#brainTest').disabled = false; }
       else if (ev.type === 'model_progress') modelProgress(ev);
       else if (ev.type === 'model_done') { if (ev.error && ev.error !== 'cancelled') flash($('#mdMsg'), ev.error, true); loadModels(); }
       else if (ev.type === 'engine') renderEngine(ev);
@@ -133,7 +137,7 @@
   // ---------- чат ----------
   let chCur = null, chOpenId = null, chBubble = null, chBusy = false;
   const scrollChat = () => { const m = $('#chMsgs'); m.scrollTop = m.scrollHeight; };
-  function setStep(t) { const s = $('#chStep'); s.hidden = !t; s.textContent = t || ''; }
+  function setStep(t, ms) { const s = $('#chStep'); s.hidden = !t; s.textContent = t || ''; clearTimeout(s._t); if (t && ms) s._t = setTimeout(() => { if (!chBusy) setStep(''); }, ms); }
   function setBusy(b) { chBusy = b; $('#chSend').hidden = b; $('#chStop').hidden = !b; if (!b) setStep(''); }
 
   // Разметка ответа строим узлами DOM (не innerHTML): текст модели не может внедрить разметку или скрипт.
@@ -178,15 +182,39 @@
     if (!steps || !steps.length || row.querySelector('.steps')) return;
     const d = el('details', 'steps'); d.append(el('summary', '', 'Ход работы'));
     const ol = el('ol'); steps.forEach(s => ol.append(el('li', '', s))); d.append(ol);
-    row.insertBefore(d, row.querySelector('.copy'));
+    row.insertBefore(d, row.querySelector('.meta'));
   }
-  function addMsg(role, text, id, steps) {
+  const fmtSize = n => n < 1024 ? n + ' Б' : n < 1048576 ? Math.round(n / 1024) + ' КБ' : (n / 1048576).toFixed(1) + ' МБ';
+  const KIND = { word: ['📄', 'Документ Word'], excel: ['📊', 'Таблица Excel'], pdf: ['📕', 'PDF'], svg: ['🖼', 'Схема SVG'], text: ['📝', 'Текстовый файл'], code: ['💻', 'Код'] };
+  function attachFiles(row, files) {
+    if (!files || !files.length || row.querySelector('.files')) return;
+    const box = el('div', 'files');
+    for (const f of files) {
+      const card = el('div', 'fcard'), k = KIND[f.kind] || KIND.text, msg = el('div', 'fmsg');
+      if (f.kind === 'svg') {
+        const img = el('img', 'fprev'); img.alt = f.name; card.append(img);
+        call('file_preview', f.name).then(r => { if (r && r.ok) img.src = r.result; else img.remove(); });
+      }
+      const line = el('div', 'fline'), t = el('div', 'ft');
+      t.append(el('b', '', f.name), el('span', '', `${k[1]} · ${fmtSize(f.size)}` + (f.warning ? ' · ⚠ ' + f.warning : '')));
+      const act = (name, label, primary) => { const b = el('button', 'btn' + (primary ? ' primary' : ''), label); b.onclick = async () => { const r = await call(name, f.name); msg.textContent = r && !r.ok ? r.error : ''; }; return b; };
+      line.append(el('span', 'ficon', k[0]), t, act('file_open', 'Открыть', true), act('file_reveal', 'В папке'));
+      card.append(line, msg); box.append(card);
+    }
+    row.querySelector('.bubble').after(box);
+  }
+  function setWho(row, brain) { const w = row.querySelector('.who'); if (w) w.textContent = brain ? 'Ответила: ' + brain : ''; }
+  function addMsg(role, text, id, steps, files, brain) {
     const m = $('#chMsgs'); const row = el('div', 'cmsg ' + role); if (id) row.dataset.id = id;
     const b = el('div', 'bubble');
     if (role === 'assistant') renderMd(b, text); else b.textContent = text;
     row.append(b);
-    if (role === 'assistant') { const c = el('button', 'link copy', 'Копировать'); c.onclick = () => { try { navigator.clipboard.writeText(b.innerText); c.textContent = 'Скопировано'; setTimeout(() => c.textContent = 'Копировать', 1500); } catch (_) {} }; row.append(c); }
-    if (role === 'assistant') attachSteps(row, steps);
+    if (role === 'assistant') {
+      const meta = el('div', 'meta');
+      const c = el('button', 'link copy', 'Копировать'); c.onclick = () => { try { navigator.clipboard.writeText(b.innerText); c.textContent = 'Скопировано'; setTimeout(() => c.textContent = 'Копировать', 1500); } catch (_) {} };
+      meta.append(c, el('span', 'who')); row.append(meta);
+      attachFiles(row, files); attachSteps(row, steps); setWho(row, brain);
+    }
     m.append(row); scrollChat(); return b;
   }
   function showWelcome() {
@@ -208,7 +236,7 @@
     const c = await call('chat_get', id); if (!c) return;
     chCur = id; chBubble = null; $('#chMsgs').textContent = '';
     if (!c.messages.length) showWelcome();
-    for (const m of c.messages) addMsg(m.role, m.text, m.id, m.steps);
+    for (const m of c.messages) addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain);
     loadChatList(); scrollChat();
   }
   async function openChatTab() {
@@ -225,7 +253,7 @@
     setBusy(true); setStep('Думаю…'); loadChatList();
   }
   function chatDone(ev) {
-    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); attachSteps(chBubble.parentElement, ev.steps); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
+    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); attachFiles(chBubble.parentElement, ev.files); attachSteps(chBubble.parentElement, ev.steps); setWho(chBubble.parentElement, ev.brain); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
     if (ev.chat === chCur) setBusy(false);
     loadChatList(); scrollChat();
   }
@@ -239,6 +267,7 @@
   $('#chText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chForm').requestSubmit(); } });
   $('#chText').addEventListener('input', e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight) + 'px'; });
   $('#chStop').onclick = () => call('chat_stop');
+  $('#chFolder').onclick = async () => { const r = await call('files_open_folder'); if (r && !r.ok) setStep(r.error, 5000); };
   const WEB_LABEL = { auto: '🌐 Поиск: авто', always: '🌐 Поиск: вкл', off: '🌐 Поиск: выкл' };
   const webMode = () => ((cfg && cfg.search) || {}).mode || 'auto';
   function showWeb() { $('#chWeb').textContent = WEB_LABEL[webMode()] || WEB_LABEL.auto; }
@@ -279,6 +308,104 @@
     const r = await call('install_update');
     if (r && r.opened) $('#updInstall').disabled = false;
     else if (!r || !r.ok) { $('#updInstall').disabled = false; $('#updNotes').textContent = (r && r.error) || 'Не удалось'; }
+  };
+
+  // ---------- кодер ----------
+  let cdPaths = [], cdProject = '';
+  const cdBase = p => p.split(/[\\/]/).pop();
+  function cdRenderPicked() {
+    const box = $('#cdPicked'); box.textContent = '';
+    cdPaths.forEach((p, i) => {
+      const it = el('div', 'item'); const t = el('div', 't'); t.append(el('b', '', cdBase(p)), el('span', '', p)); it.append(t);
+      const x = el('button', 'btn', 'Убрать'); x.onclick = () => { cdPaths.splice(i, 1); cdRenderPicked(); }; it.append(x); box.append(it);
+    });
+    $('#cdClear').hidden = !cdPaths.length;
+  }
+  async function cdPick(folder) {
+    const r = await call('coder_pick', !!folder);
+    for (const p of (r || [])) if (!cdPaths.includes(p)) cdPaths.push(p);
+    cdRenderPicked();
+  }
+  async function loadCoder() {
+    const s = await call('coder_state'); if (!s) return;
+    $('#cdRun').checked = !!s.settings.run; cdBusy(s.busy);
+  }
+  function cdBusy(b) { $('#cdStart').disabled = b; $('#cdStop').hidden = !b; }
+  function cdLog(text, cls, detail) {
+    $('#cdLogCard').hidden = false;
+    const it = el('div', 'item ' + (cls || '')); const t = el('div', 't'); const b = el('b', '', text); t.append(b);
+    if (detail) { const d = el('span', 'wrap', detail); d.style.whiteSpace = 'pre-wrap'; t.append(d); }
+    it.append(t); const box = $('#cdLog'); box.append(it); it.scrollIntoView({ block: 'nearest' });
+  }
+  function coderEvent(ev) {
+    if (ev.kind === 'start') { cdProject = ev.project; $('#cdLog').textContent = ''; $('#cdResult').hidden = true; cdBusy(true); cdLog(ev.text); }
+    else if (ev.kind === 'result') cdLog((ev.ok ? '✔ ' : '✖ ') + ev.text, ev.ok ? 'ok' : 'miss', ev.output);
+    else if (ev.kind === 'warn') cdLog('⚠ ' + ev.text, 'miss');
+    else if (ev.kind === 'say') cdLog('Карина: ' + ev.text.slice(0, 600));
+    else cdLog(ev.text);
+  }
+  function coderDone(ev) {
+    cdBusy(false); cdProject = ev.project || cdProject; $('#cdLogCard').hidden = false; $('#cdResult').hidden = false;
+    const v = $('#cdVerdict'); v.className = 'note ' + (ev.ok ? '' : 'bad'); v.textContent = ev.error ? '⚠ ' + ev.error : ev.verdict;
+    $('#cdSummary').textContent = ev.summary || '';
+    const box = $('#cdFilesOut'); box.textContent = '';
+    for (const f of ev.files || []) { const it = el('div', 'item'); const t = el('div', 't'); t.append(el('b', '', f.path), el('span', '', f.size + ' байт')); it.append(t); box.append(it); }
+    if (ev.zip) { const it = el('div', 'item ok'); const t = el('div', 't'); t.append(el('b', '', '📦 ' + ev.zip), el('span', '', 'Весь результат одним архивом — рядом с папкой проекта')); it.append(t); box.append(it); }
+  }
+  $('#cdFiles').onclick = () => cdPick(false);
+  $('#cdFolder').onclick = () => cdPick(true);
+  $('#cdClear').onclick = () => { cdPaths = []; cdRenderPicked(); };
+  $('#cdRun').onchange = async e => { await call('coder_set', e.target.checked); };
+  $('#cdStart').onclick = async () => {
+    const r = await call('coder_start', $('#cdTask').value, cdPaths);
+    if (!r) return flash($('#cdMsg'), 'Не удалось начать', true);
+    if (!r.ok) return flash($('#cdMsg'), r.error, true);
+    cdBusy(true);
+  };
+  $('#cdStop').onclick = () => call('coder_stop');
+  $('#cdFolderOpen').onclick = () => call('coder_open', '');
+  $('#cdOpenProject').onclick = () => call('coder_open', cdProject);
+
+  // ---------- мозг ----------
+  const BRAIN = {
+    local: ['Локальная модель', 'Встроенная модель на этом компьютере: бесплатно и без интернета. На слабом компьютере отвечает медленнее.'],
+    claude: ['Claude', 'Отвечает Claude по вашему ключу: быстрее и умнее, но нужен интернет, и запросы оплачиваются у Anthropic.'],
+    auto: ['Авто', 'Простые вопросы — локальная модель, сложные (отчёты, код, файлы, глубокий поиск) — Claude. Если одного нет, отвечает другой, и в ответе это видно.'],
+  };
+  const BRAIN_SHORT = { local: 'локальный', claude: 'Claude', auto: 'авто' };
+  let brain = null;
+  const brainWhy = (b, m) => m === 'local' ? (b.local.ok ? 'готова' : b.local.reason) : m === 'claude' ? (b.claude.ok ? 'готов' : b.claude.reason)
+    : `локальная: ${b.local.ok ? 'готова' : 'нет'} · Claude: ${b.claude.ok ? 'готов' : 'нет'}`;
+  function renderBrain(b) {
+    if (!b) return; brain = b;
+    const sig = JSON.stringify(b); if (renderBrain.sig === sig) return; renderBrain.sig = sig;     // не перерисовываем без изменений (иначе закрывается открытый список)
+    $('#chBrain').textContent = '🧠 Мозг: ' + BRAIN_SHORT[b.mode];
+    $('#kvBrain').textContent = b.mode === 'claude' ? b.claude.label : b.mode === 'auto' ? 'Авто (локально + Claude)' : 'Локальная модель';
+    const box = $('#brainList'); if (!box) return; box.textContent = '';
+    for (const m of ['local', 'claude', 'auto']) {
+      const ok = m === 'auto' ? (b.local.ok || b.claude.ok) : m === 'local' ? b.local.ok : b.claude.ok;
+      const it = el('div', 'item model ' + (b.mode === m ? 'ok' : ''));
+      const t = el('div', 't'); t.append(el('b', '', m === 'claude' ? b.claude.label : BRAIN[m][0]), el('span', 'wrap', BRAIN[m][1]));
+      const st = el('span', 'wrap', (ok ? '✔ ' : '✖ ') + brainWhy(b, m)); st.style.color = ok ? 'var(--ok)' : 'var(--warn)'; t.append(st);
+      it.append(t);
+      if (b.mode === m) it.append(el('span', 'tag', 'Выбран'));
+      else { const x = el('button', 'btn primary', 'Выбрать'); x.onclick = async () => { renderBrain(await call('brain_set', m)); }; it.append(x); }
+      box.append(it);
+    }
+    const sel = $('#brainModel'); sel.textContent = '';
+    for (const m of b.claude_models) { const o = el('option', '', m.title); o.value = m.id; sel.append(o); }
+    sel.value = b.claude_model;
+  }
+  async function loadBrain() { renderBrain(await call('brain_state')); }
+  $('#brainModel').onchange = async e => renderBrain(await call('brain_set', '', e.target.value));
+  $('#brainKey').onclick = () => { const b = $('#tabs [data-tab="settings"]'); if (b) b.click(); setTimeout(() => $('#apiKey').focus(), 60); };
+  $('#brainTest').onclick = async () => { $('#brainTest').disabled = true; const o = $('#brainTestOut'); o.hidden = false; o.className = 'note'; o.textContent = 'Проверяю…'; await call('brain_test_claude'); };
+  $('#chBrain').onclick = async () => {
+    if (!brain) await loadBrain(); if (!brain) return;
+    const order = ['local', 'claude', 'auto']; const next = order[(order.indexOf(brain.mode) + 1) % 3];
+    renderBrain(await call('brain_set', next));
+    const ok = next === 'auto' ? (brain.local.ok || brain.claude.ok) : next === 'local' ? brain.local.ok : brain.claude.ok;
+    if (!ok) setStep('⚠ ' + brainWhy(brain, next), 6000);
   };
 
   // ---------- модели ----------
@@ -390,9 +517,9 @@
     };
     const c = await call('save_settings', patch);
     $('#apiKey').value = '';
-    if (c) { fillSettings(c, null); flash($('#setMsg'), 'Сохранено'); refresh(); } else flash($('#setMsg'), 'Не удалось сохранить', true);
+    if (c) { fillSettings(c, null); flash($('#setMsg'), 'Сохранено'); refresh(); loadBrain(); } else flash($('#setMsg'), 'Не удалось сохранить', true);
   });
-  $('#btnClearKey').onclick = async () => { const c = await call('clear_api_key'); if (c) { fillSettings(c, null); flash($('#keyMsg'), 'Ключ удалён'); } };
+  $('#btnClearKey').onclick = async () => { const c = await call('clear_api_key'); if (c) { fillSettings(c, null); flash($('#keyMsg'), 'Ключ удалён'); loadBrain(); } };
   $('#btnData').onclick = () => call('open_data_folder');
 
   async function refresh() {
@@ -403,9 +530,9 @@
 
   async function init() {
     api = window.pywebview.api;
-    await refresh();
+    await refresh(); loadBrain();
     setTimeout(() => checkUpdate(false), 3000);
-    setInterval(async () => { const s = await call('get_status'); if (s) renderStatus(s); }, 5000);
+    setInterval(async () => { const s = await call('get_status'); if (s) renderStatus(s); loadBrain(); }, 5000);
     let t = null; try { t = localStorage.getItem('karina.tab'); } catch (_) {}
     if (t) { const b = $(`#tabs [data-tab="${t}"]`); if (b) b.click(); }
   }

@@ -26,6 +26,10 @@ DEFAULTS: dict = {
     # встроенные модели (llama.cpp): active — id выбранной модели; gpu: auto | cpu; ctx/threads: 0 = по умолчанию
     # поиск в интернете для чата: mode — auto (когда просьба этого требует) | always | off; depth — quick | normal | deep | max
     "search": {"mode": "auto", "depth": "normal"},
+    # «мозг» чата: mode — local (встроенная модель) | claude (по ключу API) | auto (простое локально, сложное в Claude)
+    "brain": {"mode": "local", "claude_model": "claude-sonnet-5-5"},
+    # «Кодер»: run — разрешить запускать написанный код для проверки (python / pytest / node в папке проекта); max_steps — шагов на задачу
+    "coder": {"run": False, "max_steps": 12},
     "updates": {"auto": True},   # проверять новую версию при запуске
     "models": {"active": "", "gpu": "auto", "ctx": 0, "threads": 0},
     "apps": [],       # свои программы: {"name","aliases":[],"path","args","proc":[]}

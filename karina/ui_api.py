@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, queue, subprocess, sys, threading, time
 from .diag import trace
-from . import actions, net, models, updater, __version__
+from . import actions, claude as claudemod, files as filesmod, net, models, updater, __version__
 from .audio import Listener
 from .config import DATA, DEFAULTS
 
@@ -95,6 +95,7 @@ class Api:
             llm.pop("api_key")          # пустое поле = «оставить как было»
         patch.pop("apps", None)
         patch.pop("commands", None)
+        patch.pop("brain", None)        # «мозг» меняется только через brain_set (с проверкой значений)
         self.cfg.update(patch)
         if self.cfg["stt"]["model"] != old_model:
             self.assistant.reload_model()
@@ -151,6 +152,50 @@ class Api:
                     ok = False
             self.emit({"type": "search_test", "ok": ok, "lines": lines})
         threading.Thread(target=run, daemon=True, name="search-test").start()
+        return True
+
+    # ---- файлы (только из папки «Документы\\Карина», по имени файла) ----
+    def _file_op(self, fn, *a):
+        try:
+            return {"ok": True, "result": fn(*a)}
+        except filesmod.FileError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": f"{e.__class__.__name__}: {e}"}
+
+    def file_open(self, name: str):
+        return self._file_op(self.assistant.chat.files.open, name)
+
+    def file_reveal(self, name: str):
+        return self._file_op(self.assistant.chat.files.reveal, name)
+
+    def file_preview(self, name: str):
+        return self._file_op(self.assistant.chat.files.preview_svg, name)
+
+    def files_open_folder(self):
+        return self._file_op(self.assistant.chat.files.open_folder)
+
+    # ---- «мозг» ----
+    def brain_state(self):
+        return self.assistant.brain.describe()
+
+    def brain_set(self, mode: str = "", claude_model: str = ""):
+        from .brain import MODES
+        patch = {}
+        if mode in MODES:
+            patch["mode"] = mode
+        if claude_model in claudemod.MODELS:
+            patch["claude_model"] = claude_model
+        if patch:
+            self.cfg.update({"brain": patch})
+        return self.assistant.brain.describe()
+
+    def brain_test_claude(self):
+        """Проверка ключа и выбранной модели Claude коротким запросом. Результат придёт событием brain_test."""
+        def run():
+            ok, text, sec = self.assistant.brain.claude.ping()
+            self.emit({"type": "brain_test", "ok": ok, "text": text, "sec": sec})
+        threading.Thread(target=run, daemon=True, name="claude-test").start()
         return True
 
     def open_url(self, url: str):
@@ -330,6 +375,44 @@ class Api:
         w = self._win()
         res = w.create_file_dialog(webview.OPEN_DIALOG, file_types=("Программы (*.exe;*.lnk;*.bat;*.cmd)", "Все файлы (*.*)"))
         return res[0] if res else ""
+
+    # ---- Кодер: задача + файлы → код, проверки, результат ----
+    def coder_state(self):
+        c = self.assistant.coder
+        return {"busy": c.busy, "settings": c.settings(), "last": c.last}
+
+    def coder_pick(self, folder: bool = False):
+        """Диалог выбора файлов (или папки) для задачи. → список путей."""
+        import webview
+        w = self._win()
+        if not w:
+            return []
+        if folder:
+            res = w.create_file_dialog(webview.FOLDER_DIALOG)
+        else:
+            res = w.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=True)
+        return [str(x) for x in (res or [])]
+
+    def coder_start(self, task: str, paths: list):
+        return self.assistant.coder.start(task, paths if isinstance(paths, list) else [])
+
+    def coder_stop(self):
+        self.assistant.coder.stop()
+        return True
+
+    def coder_set(self, run: bool = False, max_steps: int = 0):
+        patch = {"run": bool(run)}
+        if isinstance(max_steps, int) and 1 <= max_steps <= 30:
+            patch["max_steps"] = max_steps
+        self.cfg.update({"coder": patch})
+        return self.assistant.coder.settings()
+
+    def coder_open(self, project: str = ""):
+        try:
+            self.assistant.coder.open_folder(project)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     # ---- свои команды ----
     def list_custom(self):

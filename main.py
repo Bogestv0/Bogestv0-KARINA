@@ -201,7 +201,7 @@ def selftest() -> int:
     timer.start()
     bad = []
     for m in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "sounddevice", "numpy", "rapidfuzz", "edge_tts",
-              "pyautogui", "pyperclip", "PIL", "webview", "comtypes", "pycaw.pycaw"):
+              "pyautogui", "pyperclip", "PIL", "webview", "comtypes", "pycaw.pycaw", "docx", "openpyxl", "reportlab", "lxml"):
         step["now"] = "импорт " + m
         logf.write(step["now"] + "\n")
         try:
@@ -219,6 +219,26 @@ def selftest() -> int:
             bad.append("нет faster_whisper/assets")
     except Exception:
         pass
+    step["now"] = "файлы (Word, Excel, PDF, SVG)"
+    try:
+        import tempfile, zipfile
+        from karina.files import FileService
+        tmp = Path(tempfile.mkdtemp(prefix="karina-selftest-"))
+        svc = FileService(tmp / "Карина")
+        md = "# Проверка\n\nАбзац с **жирным** и `кодом`.\n\n- пункт\n\n| а | б |\n|---|---|\n| 1 | 2 |\n"
+        for name, body in (("t.docx", md), ("t.xlsx", "а;б\n1;2\n"), ("t.pdf", md), ("t.svg", '<svg viewBox="0 0 10 10"><rect width="5" height="5"/></svg>'), ("t.txt", "привет")):
+            r = svc.create(name, body)
+            logf.write(f"файл {r['name']}: {r['size']} байт\n")
+            if r["size"] < 100 and not name.endswith((".svg", ".txt")):
+                bad.append("файл слишком маленький: " + name)
+        for name in ("t.docx", "t.xlsx"):
+            with zipfile.ZipFile(tmp / "Карина" / name) as z:
+                if z.testzip() is not None:
+                    bad.append("повреждён " + name)
+        if not (tmp / "Карина" / "t.pdf").read_bytes().startswith(b"%PDF"):
+            bad.append("t.pdf не PDF")
+    except BaseException:
+        bad.append("файлы: " + traceback.format_exc().strip().splitlines()[-1])
     step["now"] = "движок моделей"
     try:
         import subprocess

@@ -131,6 +131,15 @@ class Engine:
         return {"state": self.state, "detail": self.detail, "model": self.model_id, "flavor": self.flavor,
                 "has_vulkan": bool(find_server("vulkan")), "has_cpu": bool(find_server("cpu"))}
 
+    def available(self) -> tuple[bool, str]:
+        """Можно ли отвечать локальной моделью: выбрана ли она и скачана ли. → (да/нет, причина по-русски)."""
+        mid = (self.cfg.get("models", {}) or {}).get("active", "")
+        if not mid:
+            return False, "Локальная модель не выбрана. Откройте «Модели», скачайте и выберите одну."
+        if not models.local_path(mid):
+            return False, "Выбранная локальная модель не скачана. Откройте «Модели» и скачайте её."
+        return True, ""
+
     # ---------- запуск / остановка ----------
     def _pidfile(self) -> Path:
         return DATA / "engine.pid"

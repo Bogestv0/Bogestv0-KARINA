@@ -13,6 +13,7 @@
   <nav class="tabs" id="tabs">
     <button data-tab="home" class="on">Главная</button>
     <button data-tab="chat">Чат</button>
+    <button data-tab="coder">Кодер</button>
     <button data-tab="commands">Команды</button>
     <button data-tab="models">Модели</button>
     <button data-tab="apps">Программы</button>
@@ -55,6 +56,7 @@
         <dt>Интернет</dt><dd id="kvNet">—</dd>
         <dt>Распознавание</dt><dd id="kvStt">—</dd>
         <dt>Голос</dt><dd id="kvVoice">—</dd>
+        <dt>Мозг</dt><dd id="kvBrain">—</dd>
         <dt>Режим</dt><dd id="kvMode">—</dd>
         <dt>Версия</dt><dd id="kvVer">—</dd>
       </dl>
@@ -73,18 +75,58 @@
   </div>
 </section>
 
+<!-- ============ КОДЕР ============ -->
+<section id="tab-coder" class="tab">
+  <div class="card">
+    <div class="eyebrow">Кодер</div>
+    <p class="muted small">Опишите задачу и приложите файлы (по желанию). Карина сама напишет код в отдельной папке проекта, запустит проверки, исправит ошибки и отдаст результат. Ваши файлы не меняются — она работает с копиями.</p>
+    <div class="form">
+      <label>Что нужно сделать <textarea id="cdTask" rows="5" placeholder="Например: «Напиши на Python программу, которая берёт таблицу из приложенного файла, считает сумму по каждому месяцу и сохраняет в report.csv. Добавь тесты.»"></textarea></label>
+      <div class="form-actions">
+        <button class="btn" type="button" id="cdFiles">📎 Добавить файлы…</button>
+        <button class="btn" type="button" id="cdFolder">📂 Добавить папку…</button>
+        <button class="btn" type="button" id="cdClear" hidden>Убрать все</button>
+      </div>
+      <div class="list" id="cdPicked"></div>
+      <label class="check"><input type="checkbox" id="cdRun"> Разрешить Карине запускать написанный код для проверки</label>
+      <div class="note" id="cdRunNote">Без этой галочки Карина только пишет код и не проверяет его. Запуск — не песочница: программа выполняется с вашими правами. Разрешены только python, pytest и node, без сети, подпроцессов и удаления файлов (Карина проверяет код перед запуском). Нужен установленный Python или Node.js.</div>
+      <div class="form-actions">
+        <button class="btn primary" type="button" id="cdStart">Начать</button>
+        <button class="btn danger" type="button" id="cdStop" hidden>Стоп</button>
+        <button class="btn" type="button" id="cdFolderOpen">📁 Папка «Проекты»</button>
+        <span class="msg" id="cdMsg"></span>
+      </div>
+    </div>
+  </div>
+  <div class="card" id="cdLogCard" hidden>
+    <div class="eyebrow">Ход работы</div>
+    <div class="list" id="cdLog"></div>
+    <div id="cdResult" hidden>
+      <div class="eyebrow" style="margin-top:16px">Результат</div>
+      <div class="note" id="cdVerdict"></div>
+      <div class="wrap" id="cdSummary" style="white-space:pre-wrap;margin:10px 0"></div>
+      <div class="list" id="cdFilesOut"></div>
+      <div class="form-actions"><button class="btn primary" type="button" id="cdOpenProject">Открыть папку проекта</button></div>
+    </div>
+  </div>
+</section>
+
 <!-- ============ ЧАТ ============ -->
 <section id="tab-chat" class="tab">
   <div class="chat-layout">
     <aside class="card chat-side">
       <button class="btn primary" id="chNew">+ Новый чат</button>
       <div class="chat-list" id="chList"></div>
+      <button class="btn" id="chFolder" title="Открыть папку «Документы\Карина», куда сохраняются созданные файлы">📁 Папка с файлами</button>
     </aside>
     <div class="card chat-main">
       <div class="chat-msgs" id="chMsgs"></div>
       <div class="chat-step" id="chStep" hidden></div>
       <form class="chat-input" id="chForm">
-        <button class="btn" type="button" id="chWeb" title="Поиск в интернете: авто (когда просьба этого требует) → всегда → выключен">🌐 Поиск: авто</button>
+        <div class="chat-tools">
+          <button class="btn" type="button" id="chBrain" title="Кто отвечает: локальная модель → Claude → авто (простое локально, сложное в Claude)">🧠 Мозг: локальный</button>
+          <button class="btn" type="button" id="chWeb" title="Поиск в интернете: авто (когда просьба этого требует) → всегда → выключен">🌐 Поиск: авто</button>
+        </div>
         <textarea id="chText" rows="1" placeholder="Спросите что угодно… (Enter — отправить)"></textarea>
         <button class="btn primary" type="submit" id="chSend">Отправить</button>
         <button class="btn danger" type="button" id="chStop" hidden>Стоп</button>
@@ -125,6 +167,21 @@
 
 <!-- ============ МОДЕЛИ ============ -->
 <section id="tab-models" class="tab">
+  <div class="card" id="brainCard">
+    <div class="eyebrow">Мозг Карины</div>
+    <p class="muted small">Кто отвечает в чате и на свободные вопросы голосом. Команды управления компьютером («открой блокнот», «громкость…») всегда выполняются на этом компьютере.</p>
+    <div class="list" id="brainList"></div>
+    <div class="form">
+      <label>Какой Claude использовать <select id="brainModel"></select></label>
+      <div class="form-actions">
+        <button class="btn" type="button" id="brainKey">Ввести ключ Claude…</button>
+        <button class="btn" type="button" id="brainTest">Проверить Claude</button>
+        <span class="msg" id="brainMsg"></span>
+      </div>
+      <div class="note" id="brainTestOut" hidden></div>
+    </div>
+    <p class="muted small">В режиме Claude текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы отправляются в Anthropic по вашему ключу и оплачиваются у вас. Файлы с компьютера не отправляются. Ключ хранится только на этом компьютере.</p>
+  </div>
   <div class="card">
     <div class="eyebrow">Встроенные модели</div>
     <p class="muted small">Работают прямо в Карине, бесплатно и без интернета. Модель скачивается один раз. Есть видеокарта — она ускорит ответы, нет — всё пойдёт на процессоре, но медленнее.</p>
@@ -240,10 +297,10 @@
       </div>
     </div>
     <div class="card">
-      <div class="eyebrow">Понимание свободных фраз (необязательно)</div>
-      <p class="muted small">Со включённым интернетом и ключом Claude API Карина поймёт и фразы, которых нет в списке команд. Без этого всё работает офлайн по списку команд.</p>
+      <div class="eyebrow">Claude (ключ API, необязательно)</div>
+      <p class="muted small">Один ключ нужен для двух вещей: чтобы Claude отвечал в чате («Модели» → «Мозг Карины») и чтобы Карина понимала фразы, которых нет в списке команд (галочка ниже). Без ключа всё работает офлайн на встроенной модели.</p>
       <div class="form">
-        <label class="switch"><input type="checkbox" name="llm_enabled"><span class="sw"></span><span>Использовать Claude, когда есть интернет</span></label>
+        <label class="switch"><input type="checkbox" name="llm_enabled"><span class="sw"></span><span>Понимать свободные фразы через Claude, когда есть интернет</span></label>
         <label>Ключ API <input type="password" name="api_key" id="apiKey" autocomplete="off" placeholder="sk-ant-…"></label>
         <div class="form-actions"><button class="btn" type="button" id="btnClearKey">Удалить сохранённый ключ</button><span class="msg" id="keyMsg"></span></div>
       </div>
