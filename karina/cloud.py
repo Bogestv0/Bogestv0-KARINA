@@ -1,4 +1,4 @@
-"""Бесплатные облачные модели: несколько провайдеров с OpenAI-совместимым API (Groq, Gemini, OpenRouter, Mistral…).
+"""Бесплатные облачные модели: Gemini и сервисы из списков на GitHub (без ключа и с бесплатным ключом) плюс «свой сервер». Groq, OpenRouter, Mistral, NVIDIA и SambaNova убраны: из России они недоступны или требуют карту/SMS.
 
 У каждого человека свои ключи и свои лимиты. Провайдеры идут по очереди; когда у одного кончился лимит (ошибка 429),
 Карина сразу переходит к следующему, а исчерпанный откладывает на время, которое назвал сервер. Интерфейс такой же, как у
@@ -21,43 +21,69 @@ class CloudError(EngineError):
 # Пресеты. url — базовый адрес OpenAI-совместимого API; max_in — сколько токенов запроса безопасно отправлять (у бесплатных
 # тарифов бывает жёсткий минутный лимит); max_out — потолок ответа; prefer — какую модель брать, если не выбрана вручную.
 PRESETS: dict[str, dict] = {
-    "groq": {
-        "name": "Groq", "url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-120b", "max_in": 5500, "max_out": 1500,
-        "signup": "https://console.groq.com/keys", "prefer": [r"gpt-oss-120b", r"qwen.*27b", r"gpt-oss-20b"],
-        "extra": {"reasoning_effort": "low"}, "extra_if": r"gpt-oss",
-        "note": "Очень быстрый. Бесплатно: около 1000 запросов и 200 тыс. токенов в сутки на модель, но всего 8000 токенов в минуту — подходит для коротких вопросов. Данные для обучения не используются.",
-    },
     "gemini": {
-        "name": "Google Gemini", "url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-2.5-flash", "max_in": 120000, "max_out": 4000,
-        "signup": "https://aistudio.google.com/apikey", "prefer": [r"gemini-[\d.]+-flash$", r"flash"],
+        "name": "Google Gemini", "url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "", "max_in": 120000, "max_out": 4000,
+        "signup": "https://aistudio.google.com/apikey", "prefer": [r"gemini-[\d.]+-flash$", r"flash"], "newest": True,   # модель не зашита: Google снимает старые («gemini-2.5-flash» → 404), берём самую новую flash из списка
         "note": "Длинный контекст: хорош для больших текстов и глубокого поиска. Лимиты видны в Google AI Studio. Вне ЕС, Великобритании и Швейцарии бесплатные запросы могут использоваться Google для обучения — личное не отправляйте.",
     },
-    "openrouter": {
-        "name": "OpenRouter", "url": "https://openrouter.ai/api/v1", "model": "", "max_in": 24000, "max_out": 3000,
-        "signup": "https://openrouter.ai/keys", "prefer": [r":free$"],
-        "note": "Много бесплатных моделей (id оканчивается на :free), около 50 запросов в день. Часть бесплатных моделей может использовать ваши данные для обучения.",
+    # --- без ключа и регистрации (для России проще всего: нечего блокировать при регистрации) ---
+    "ovh": {
+        "name": "OVHcloud AI Endpoints", "url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1", "model": "", "max_in": 12000, "max_out": 2500, "nokey": True,
+        "signup": "https://endpoints.ai.cloud.ovh.net", "prefer": [r"qwen.*coder", r"qwen3.*(27|32)b", r"qwen", r"mistral-small", r"gpt-oss"],
+        "note": "Европейский хостинг, без ключа и регистрации: около 2 запросов в минуту на модель. Подходит для кода (Qwen, Mistral).",
     },
-    "mistral": {
-        "name": "Mistral", "url": "https://api.mistral.ai/v1", "model": "mistral-small-latest", "max_in": 28000, "max_out": 3000,
-        "signup": "https://console.mistral.ai/api-keys", "prefer": [r"mistral-small", r"mistral"],
-        "note": "Бесплатный тариф с низкими лимитами. По умолчанию данные могут использоваться для обучения — это отключается в настройках аккаунта Mistral.",
+    "kilo": {
+        "name": "Kilo Gateway", "url": "https://api.kilo.ai/api/gateway", "model": "", "max_in": 24000, "max_out": 3000, "nokey": True,
+        "signup": "https://kilo.ai", "prefer": [r"code", r"free", r"nemotron"],
+        "note": "Без ключа, около 200 запросов в час с одного адреса. Есть модели, заточенные под код. Список бесплатных моделей меняется.",
     },
-    "nvidia": {
-        "name": "NVIDIA NIM", "url": "https://integrate.api.nvidia.com/v1", "model": "", "max_in": 24000, "max_out": 3000,
-        "signup": "https://build.nvidia.com/settings/api-keys", "prefer": [r"gpt-oss-120b", r"llama.*(70|90)b", r"instruct"],
-        "note": "Пробный доступ для разработчиков: хватает для экспериментов, жёсткие лимиты не публикуются.",
+    "llm7": {
+        "name": "LLM7.io", "url": "https://api.llm7.io/v1", "model": "", "max_in": 12000, "max_out": 2000, "nokey": True,
+        "signup": "https://token.llm7.io", "prefer": [r"codestral|coder", r"deepseek", r"gpt", r"llama"],
+        "note": "Без ключа (около 15 запросов в минуту; бесплатный токен на сайте поднимает лимит до 30). Модели разных авторов.",
     },
-    "sambanova": {
-        "name": "SambaNova", "url": "https://api.sambanova.ai/v1", "model": "", "max_in": 8000, "max_out": 1500,
-        "signup": "https://cloud.sambanova.ai/apis", "prefer": [r"llama.*70b", r"gpt-oss", r"instruct"],
-        "note": "Бесплатный уровень с минутными лимитами; условия меняются — проверьте в кабинете.",
+    "pollinations": {
+        "name": "Pollinations", "url": "https://gen.pollinations.ai/v1", "model": "", "max_in": 12000, "max_out": 2000, "nokey": True,
+        "signup": "https://pollinations.ai", "prefer": [r"coder|code", r"openai", r"mistral", r"llama"],
+        "note": "Без регистрации, лимит на адрес. Этот же сервис умеет рисовать картинки (в Карине пока только текст).",
+    },
+    # --- нужен бесплатный ключ ---
+    "github": {
+        "name": "GitHub Models", "url": "https://models.github.ai/inference", "model": "", "max_in": 7000, "max_out": 2000,
+        "signup": "https://github.com/settings/personal-access-tokens", "prefer": [r"gpt-4\.1$", r"gpt-4o$", r"deepseek", r"llama.*70b", r"gpt-4\.1-mini"],
+        "note": "Ключ — токен GitHub (Fine-grained, право «Models: read»). Сильные модели OpenAI и DeepSeek, около 50–150 запросов в сутки; на запрос не больше 8000 токенов на входе.",
+    },
+    "huggingface": {
+        "name": "Hugging Face", "url": "https://router.huggingface.co/v1", "model": "", "max_in": 16000, "max_out": 2500,
+        "signup": "https://huggingface.co/settings/tokens", "prefer": [r"qwen.*coder", r"gpt-oss-120b", r"llama-3\.3-70b", r"qwen3", r"instruct"],
+        "note": "Ключ — токен Hugging Face (право на Inference Providers). Бесплатные кредиты около $0.10 в месяц: на несколько десятков запросов. Много моделей для кода (Qwen Coder).",
+    },
+    "zai": {
+        "name": "Z.ai (GLM)", "url": "https://api.z.ai/api/paas/v4", "model": "", "max_in": 24000, "max_out": 3000, "newest": True,
+        "signup": "https://z.ai/manage-apikey/apikey-list", "prefer": [r"glm-[\d.]+-flash$", r"flash"],
+        "note": "Бесплатные модели GLM Flash (одновременно один запрос, в часы пик медленнее). Неплохо пишут код.",
+    },
+    "cohere": {
+        "name": "Cohere", "url": "https://api.cohere.ai/compatibility/v1", "model": "", "max_in": 24000, "max_out": 3000,
+        "signup": "https://dashboard.cohere.com/api-keys", "prefer": [r"command-a", r"command-r-plus", r"command"],
+        "note": "Пробный ключ: 20 запросов в минуту и 1000 в месяц. Только текст.",
+    },
+    "siliconflow": {
+        "name": "SiliconFlow", "url": "https://api.siliconflow.com/v1", "model": "Qwen/Qwen2.5-Coder-7B-Instruct", "max_in": 24000, "max_out": 3000,
+        "signup": "https://cloud.siliconflow.com/account/ak", "prefer": [r"qwen.*coder.*(7|8)b", r"qwen3-8b", r"glm-4-9b"],
+        "note": "Часть моделей бесплатна (Qwen Coder 7B, Qwen3 8B, GLM-4 9B); платные модель-ссылки дадут ошибку оплаты. Есть и генерация картинок (FLUX), в Карине пока не подключена.",
+    },
+    "ollama": {
+        "name": "Ollama Cloud", "url": "https://ollama.com/v1", "model": "", "max_in": 24000, "max_out": 3000,
+        "signup": "https://ollama.com/settings/keys", "prefer": [r"coder", r"gpt-oss", r"qwen", r"."],
+        "note": "Ключ с ollama.com. Бесплатный уровень с дневным лимитом; какие модели бесплатны, меняется.",
     },
     "custom": {
         "name": "Свой сервер", "url": "", "model": "", "max_in": 16000, "max_out": 2000, "signup": "", "prefer": [],
         "note": "Любой сервис с OpenAI-совместимым API (адрес вида https://…/v1): другие бесплатные облака из списков на GitHub, Ollama или LM Studio в вашей сети.",
     },
 }
-DEFAULT_ORDER = ["groq", "gemini", "openrouter", "mistral", "nvidia", "sambanova", "custom"]
+DEFAULT_ORDER = ["gemini", "ovh", "llm7", "kilo", "pollinations", "github", "huggingface", "zai", "siliconflow", "cohere", "ollama", "custom"]
 STRATEGIES = ("failover", "spread")
 _NOT_CHAT = re.compile(r"embed|whisper|tts|guard|moderat|image|rerank|speech|orpheus|safeguard|transcri|audio|dall|veo|imagen", re.I)
 
@@ -135,6 +161,7 @@ class CloudPool:
         self._lock = threading.RLock()
         self._st: dict[str, dict] = {}
         self._auto: dict[str, str] = {}      # провайдер → автоматически подобранная модель
+        self._dead: dict[str, set] = {}      # провайдер → модели, на которые сервер ответил 404 (сняты с обслуживания)
         self._rr = 0
         self.last_label = ""
 
@@ -162,11 +189,16 @@ class CloudPool:
             p["name"] = str(user.get("name") or "").strip() or base["name"]
         return p
 
+    @staticmethod
+    def usable(p: dict) -> bool:
+        """Есть всё нужное для запросов: адрес и ключ (у сервисов «без ключа» ключ не нужен)."""
+        return bool(p["url"]) and (bool(p["key"]) or bool(p.get("nokey")))
+
     def configured(self) -> list[dict]:
         out = []
         for pid in self.order():
             p = self.provider(pid)
-            if p["enabled"] and p["key"] and p["url"]:
+            if p["enabled"] and self.usable(p):
                 out.append(p)
         return out
 
@@ -224,11 +256,14 @@ class CloudPool:
         return p["model"] or self._auto.get(p["id"], "")
 
     def pick_model(self, p: dict) -> str:
-        ids = self.list_models(p["id"])
+        dead = self._dead.get(p["id"], set())
+        ids = [i for i in self.list_models(p["id"]) if i not in dead]
         for rx in p["prefer"]:
-            for i in ids:
-                if re.search(rx, i, re.I):
-                    return i
+            found = [i for i in ids if re.search(rx, i, re.I)]
+            if found:
+                if p.get("newest"):      # список отсортирован по алфавиту: «2.5» раньше «3.8», поэтому берём наибольший номер версии
+                    return max(found, key=lambda i: [int(x) for x in re.findall(r"\d+", i)])
+                return found[0]
         if ids:
             return ids[0]
         raise _Fail("не удалось подобрать модель: сервер не вернул список", 300)
@@ -236,7 +271,7 @@ class CloudPool:
     def list_models(self, pid: str) -> list[str]:
         """Список моделей сервера (для выбора). У OpenRouter бесплатные (:free) идут первыми."""
         p = self.provider(pid)
-        if not p["key"] or not p["url"]:
+        if not self.usable(p):
             raise CloudError("Сначала введите ключ" + (" и адрес" if pid == "custom" else "") + ".")
         req = urllib.request.Request(p["url"] + "/models", headers=self._headers(p, False))
         try:
@@ -254,8 +289,10 @@ class CloudPool:
     # ---------- запрос ----------
     @staticmethod
     def _headers(p: dict, stream: bool = True) -> dict:
-        h = {"Authorization": "Bearer " + p["key"], "Content-Type": "application/json", "User-Agent": UA,
+        h = {"Content-Type": "application/json", "User-Agent": UA,
              "HTTP-Referer": "https://github.com/Bogestv0/KARINA", "X-Title": "Bogestv0 KARINA"}
+        if p.get("key"):
+            h["Authorization"] = "Bearer " + p["key"]
         if stream:
             h["Accept"] = "text/event-stream"
         return h
@@ -275,12 +312,15 @@ class CloudPool:
             msg = str(e.get("message") if isinstance(e, dict) else e or "")
         except (ValueError, AttributeError, IndexError):
             pass
-        base = {401: "ключ не принят (401)", 403: "доступ запрещён (403) — проверьте ключ и доступность сервиса в вашей стране",
+        base = {401: "ключ не принят (401)",
+                403: "доступ запрещён (403) — чаще всего сервис не пускает из вашей страны (нужен VPN/прокси) или ключ без прав",
                 402: "нужна оплата или закончились кредиты (402)", 404: "модель или адрес не найдены (404)",
                 429: "лимит исчерпан (429)"}.get(code, f"ошибка {code}")
         return base + (f": {msg[:160]}" if msg and code not in (401,) else "")
 
-    def _call(self, p: dict, msgs: list[dict], max_tokens: int, temperature: float, on_delta, stop, json_mode: bool, plain: bool = False) -> str:
+    def _call(self, p: dict, msgs: list[dict], max_tokens: int, temperature: float, on_delta, stop, json_mode: bool, plain: bool = False, _again: bool = True) -> str:
+        if p["model"] and p["model"] in self._dead.get(p["id"], set()):
+            p = dict(p, model="")             # выбранную модель сервер снял — подбираем актуальную сами
         if not p["model"] and p["id"] not in self._auto:
             self._auto[p["id"]] = self.pick_model(p)
         model = self._model_name(p)
@@ -328,7 +368,7 @@ class CloudPool:
             text = e.read().decode("utf-8", "replace")
             low = text.lower()
             if e.code == 400 and not plain:
-                return self._call(p, msgs, max_tokens, temperature, on_delta, stop, False, plain=True)   # часть серверов не знает лишних параметров
+                return self._call(p, msgs, max_tokens, temperature, on_delta, stop, False, plain=True, _again=_again)   # часть серверов не знает лишних параметров
             if e.code == 429:
                 wait = _retry_seconds(e.headers, text)
                 daily = bool(re.search(r"per day|daily|\brpd\b|\btpd\b|quota", low))
@@ -337,6 +377,13 @@ class CloudPool:
                 raise _Fail(self._scrub(p, self._explain(e.code, text)), 3600, "auth")
             if e.code == 404:
                 self._auto.pop(p["id"], None)
+                if model and p["id"] != "custom":
+                    self._dead.setdefault(p["id"], set()).add(model)
+                    if _again:                # модель снята с обслуживания: один раз сразу пробуем подобрать другую
+                        try:
+                            return self._call(dict(p, model=""), msgs, max_tokens, temperature, on_delta, stop, json_mode, plain, _again=False)
+                        except _Fail:
+                            pass
                 raise _Fail(self._explain(404, text) + f" (модель «{model}»)", 300, "model")
             if e.code == 413 or (e.code == 400 and re.search(r"context|too (long|large)|maximum", low)):
                 raise _Fail("запрос слишком большой для этого сервера", 0, "big")
@@ -386,7 +433,7 @@ class CloudPool:
         """Проверка ключа и модели одного провайдера коротким запросом (даже если он сейчас «на отдыхе»)."""
         t0 = time.time()
         p = self.provider(pid)
-        if not p["key"] or not p["url"]:
+        if not self.usable(p):
             return False, "Введите ключ" + (" и адрес сервера." if pid == "custom" else "."), 0.0
         try:
             text = self._call(p, [{"role": "user", "content": "Ответь одним словом: работаю."}], 40, 0.2, None, None, False)
@@ -404,7 +451,7 @@ class CloudPool:
             p = self.provider(pid)
             s = self._s(pid)
             wait = self._cooling(pid)
-            if not p["key"] or (pid == "custom" and not p["url"]):
+            if not self.usable(p):
                 state, text = "nokey", "Нет ключа"
             elif not p["enabled"]:
                 state, text = "off", "Выключен"
@@ -413,7 +460,7 @@ class CloudPool:
                 text = (f"Лимит исчерпан, вернусь через {fmt_wait(wait)}" if s["kind"] == "limit" else f"{s['err']} (повтор через {fmt_wait(wait)})")
             else:
                 state, text = "ok", "Готов"
-            out.append({"id": pid, "name": p["name"], "enabled": p["enabled"], "has_key": bool(p["key"]), "model": p["model"],
+            out.append({"id": pid, "name": p["name"], "enabled": p["enabled"], "has_key": bool(p["key"]), "nokey": bool(p.get("nokey")), "model": p["model"],
                         "model_auto": self._auto.get(pid, ""), "url": p["url"] if pid == "custom" else "", "state": state, "text": text,
                         "used_today": s["ok"], "signup": p["signup"], "note": p["note"], "wait": int(wait)})
         return out

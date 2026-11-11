@@ -15,6 +15,13 @@ from test_brain import Local, FakeClaude
 K1, K2, K3 = "gsk_SECRET_KEY_111111", "AIza_SECRET_KEY_222222", "sk-or-SECRET_KEY_333333"
 
 
+TEST_PRESETS = {
+    "groq": {"name": "Groq", "url": "", "model": "openai/gpt-oss-120b", "max_in": 5500, "max_out": 1500, "signup": "", "prefer": [r"gpt-oss-120b"],
+             "extra": {"reasoning_effort": "low"}, "extra_if": r"gpt-oss", "note": ""},
+    "openrouter": {"name": "OpenRouter", "url": "", "model": "", "max_in": 24000, "max_out": 3000, "signup": "", "prefer": [r":free$"], "note": ""},
+}
+
+
 class Fake:
     """Что отвечает «провайдер»: по ключу — список сценариев (каждый запрос берёт следующий; последний повторяется)."""
     def __init__(self):
@@ -69,15 +76,21 @@ class Handler(BaseHTTPRequestHandler):
 class Base(unittest.TestCase):
     def setUp(self):
         self.fake = Fake()
+        self.fake.models["gemini"] = ["models/gemini-2.5-flash", "models/gemini-3.8-flash", "models/gemini-3.8-flash-lite", "models/gemini-embedding-001"]
         Handler.fake = self.fake
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.srv.serve_forever, args=(0.02,), daemon=True).start()
         self.addCleanup(self.srv.shutdown)
         port = self.srv.server_address[1]
         self.saved = {k: dict(v) for k, v in cloud.PRESETS.items()}
+        self.saved_order = list(cloud.DEFAULT_ORDER)
+        cloud.PRESETS.update(TEST_PRESETS)                       # в программе их нет; нужны, чтобы проверять очередь из нескольких провайдеров
+        cloud.DEFAULT_ORDER[:] = ["groq", "gemini", "openrouter", "custom"]
         for pid in ("groq", "gemini", "openrouter"):
             cloud.PRESETS[pid]["url"] = f"http://127.0.0.1:{port}/{pid}"
-        self.addCleanup(lambda: [cloud.PRESETS.__setitem__(k, v) for k, v in self.saved.items()])
+        def restore():
+            cloud.PRESETS.clear(); cloud.PRESETS.update(self.saved); cloud.DEFAULT_ORDER[:] = self.saved_order
+        self.addCleanup(restore)
         self.cfg = Config(Path(tempfile.mkdtemp()) / "c.json")
         self.pool = cloud.CloudPool(self.cfg)
 
@@ -300,6 +313,41 @@ class TestRetriesAndModels(Base):
         self.assertEqual(self.fake.bodies["openrouter"][0]["model"], "b/other:free")
         self.assertEqual(self.pool.describe()[2]["model_auto"], "b/other:free")
         self.assertIn("openrouter · b/other:free".replace("openrouter", "OpenRouter"), self.pool.last_label)
+
+    def test_keyless_provider_works_without_key_and_sends_no_auth(self):
+        """OVH, LLM7, Kilo, Pollinations: ключ не нужен — достаточно включить; заголовка Authorization нет."""
+        cloud.PRESETS["ovh"] = dict(self.saved["ovh"], url=self.pool.provider("gemini")["url"].rsplit("/", 1)[0] + "/groq")
+        cloud.DEFAULT_ORDER.append("ovh")
+        self.cfg.update({"cloud": {"providers": {"ovh": {"enabled": True}}}})
+        self.assertEqual([p["id"] for p in self.pool.configured()], ["ovh"])
+        self.fake.models["groq"] = ["x/mistral-small", "x/qwen2.5-coder"]
+        self.fake.script["groq"] = [("ok", ["без ключа"])]
+        self.assertEqual(self.ask(), "без ключа")
+        self.assertEqual(self.pool.describe()[[d["id"] for d in self.pool.describe()].index("ovh")]["nokey"], True)
+
+    def test_all_presets_are_consistent(self):
+        for pid, p in self.saved.items():
+            if pid in ("groq", "openrouter"):
+                continue
+            self.assertTrue(p["name"] and p["note"] and p["prefer"] is not None, pid)
+            if pid != "custom":
+                self.assertTrue(p["url"].startswith("https://"), pid)
+                self.assertTrue(p.get("nokey") or p["signup"], pid)
+        self.assertEqual(set(cloud.DEFAULT_ORDER) - set(self.saved) - {"groq", "openrouter"}, set())
+
+    def test_gemini_takes_newest_flash_not_oldest(self):
+        self.enable(gemini=K2)
+        self.ask()
+        self.assertEqual(self.fake.bodies["gemini"][0]["model"], "gemini-3.8-flash")
+
+    def test_retired_model_is_replaced_at_once(self):
+        """Google снял «gemini-2.5-flash»: 404 → сразу подбираем актуальную модель, а не сдаёмся."""
+        self.cfg.update({"cloud": {"providers": {"gemini": {"enabled": True, "key": K2, "model": "gemini-2.5-flash"}}}})
+        self.fake.script["gemini"] = [("http", (404, json.dumps({"error": {"message": "no longer available"}}), {})), ("ok", ["жива"])]
+        self.assertEqual(self.ask(), "жива")
+        self.assertEqual(self.fake.bodies["gemini"][-1]["model"], "gemini-3.8-flash")
+        self.assertEqual(self.ask(), "жива")                        # и старую больше не пробуем
+        self.assertEqual(self.fake.bodies["gemini"][-1]["model"], "gemini-3.8-flash")
 
     def test_wrong_model_forgets_pick_and_rests_briefly(self):
         self.enable(groq=K1, gemini=K2)

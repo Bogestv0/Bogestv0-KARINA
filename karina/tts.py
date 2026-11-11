@@ -8,7 +8,9 @@ IS_WIN = sys.platform == "win32"
 
 # Голоса на выбор: id -> (подпись, голос Microsoft, темп %, тон Гц). Темп складывается с ползунком «Скорость речи».
 VOICES = {
-    "svetlana_cute": {"label": "Светлана — милая", "voice": "ru-RU-SvetlanaNeural", "rate": 4, "pitch": 24},
+    # Тон +24 Гц и ускорение «съедали» гласные: «Карина» звучало как «Керена». Теперь почти естественный тон и обычный темп.
+    "svetlana_cute": {"label": "Светлана — милая", "voice": "ru-RU-SvetlanaNeural", "rate": -4, "pitch": 4},
+    "dariya_soft": {"label": "Дария — мягкая", "voice": "ru-RU-DariyaNeural", "rate": -4, "pitch": 0},
     "ava_calm": {"label": "Ava — спокойная героиня", "voice": "en-US-AvaMultilingualNeural", "rate": -4, "pitch": 10},
 }
 DEFAULT_VOICE = "svetlana_cute"

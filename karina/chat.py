@@ -6,7 +6,7 @@ from . import coder as codermod, files as filesmod, net, research, websearch
 from .brain import Brain, BrainUnavailable
 from .config import DATA
 from .engine import EngineError
-from .textutil import norm
+from .textutil import FEMALE, norm
 
 CHATS_DIR = DATA / "chats"
 MAX_TOKENS = 1500
@@ -77,6 +77,7 @@ def system_prompt(voice: bool = False, web: bool = False, files: bool = False, a
                if attached else
                "Читать и открывать файлы на компьютере ты не можешь: не утверждай, что открыла или прочитала файл. ")
     p = ("Ты — Карина, помощник на компьютере пользователя. Отвечай по-русски (если не просят иначе), по делу и без воды. "
+         + FEMALE + " "
          f"Сегодня {today}. {access}"
          "Не выдумывай факты, цифры, имена и ссылки; если не уверена или не знаешь — скажи об этом прямо. "
          "Знания могут быть устаревшими, для свежих событий предупреждай об этом. "
@@ -85,7 +86,7 @@ def system_prompt(voice: bool = False, web: bool = False, files: bool = False, a
         p += filesmod.prompt_section()
     if voice:
         p += ("\nЭто голосовой запрос. Первой строкой напиши «ГОЛОС: » и 1–2 коротких предложения, которые Карина произнесёт вслух "
-              "(без списков, символов и ссылок). Затем пустая строка и подробный ответ.")
+              "(без списков, символов, ссылок и сокращений, числа словами, о себе — в женском роде). Затем пустая строка и подробный ответ.")
     return p
 
 

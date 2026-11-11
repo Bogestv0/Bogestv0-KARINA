@@ -16,7 +16,7 @@ def speaker(**t):
 
 class TestVoices(unittest.TestCase):
     def test_params_both_voices(self):
-        self.assertEqual(tts.voice_params({"voice": "svetlana_cute"}), ("ru-RU-SvetlanaNeural", "+4%", "+24Hz"))
+        self.assertEqual(tts.voice_params({"voice": "svetlana_cute"}), ("ru-RU-SvetlanaNeural", "-4%", "+4Hz"))
         self.assertEqual(tts.voice_params({"voice": "ava_calm"}), ("en-US-AvaMultilingualNeural", "-4%", "+10Hz"))
 
     def test_slider_adds_and_clamps(self):

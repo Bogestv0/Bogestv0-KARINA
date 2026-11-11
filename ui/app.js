@@ -419,7 +419,7 @@
     const row = el('div', 'cloud-row ' + p.state); row.dataset.pid = p.id;
     const head = el('div', 'cloud-head');
     const title = el('div', 'cloud-title'); title.append(el('b', '', p.name), el('span', 'tag' + (p.state === 'ok' ? '' : ' warn'), CLOUD_STATE_LABEL[p.state] || p.state));
-    const sw = el('label', 'switch'), cb = el('input'); cb.type = 'checkbox'; cb.checked = p.enabled; cb.disabled = !p.has_key; cb.title = p.has_key ? '' : 'Сначала введите ключ';
+    const sw = el('label', 'switch'), cb = el('input'); cb.type = 'checkbox'; cb.checked = p.enabled; cb.disabled = !(p.has_key || p.nokey); cb.title = (p.has_key || p.nokey) ? '' : 'Сначала введите ключ';
     sw.append(cb, el('span', 'sw'), el('span', '', 'Использовать'));
     cb.onchange = async () => { renderCloud(await call('cloud_save', p.id, { enabled: cb.checked })); loadBrain(); };
     const mv = el('div', 'cloud-move');
@@ -438,7 +438,7 @@
       urlI = el('input'); urlI.placeholder = 'Адрес API, например https://api.example.com/v1'; urlI.value = p.url || '';
       f.append(nameI, urlI);
     }
-    const keyI = el('input'); keyI.type = 'password'; keyI.autocomplete = 'off'; keyI.placeholder = p.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : 'Вставьте ключ API';
+    const keyI = el('input'); keyI.type = 'password'; keyI.autocomplete = 'off'; keyI.placeholder = p.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : p.nokey ? 'Ключ не нужен (если есть — можно вставить, лимиты выше)' : 'Вставьте ключ API';
     const modI = el('input'); modI.placeholder = p.model_auto ? `Модель: ${p.model_auto} (подобрана сама)` : 'Модель (можно оставить пустой — подберётся сама)'; modI.value = p.model || '';
     const dl = el('datalist'); dl.id = 'cm-' + p.id; modI.setAttribute('list', dl.id);
     f.append(keyI, modI, dl);
@@ -485,7 +485,7 @@
   const BRAIN = {
     local: ['Локальная модель', 'Встроенная модель на этом компьютере: бесплатно и без интернета. На слабом компьютере отвечает медленнее.'],
     claude: ['Claude', 'Отвечает Claude по вашему ключу: быстрее и умнее, но нужен интернет, и запросы оплачиваются у Anthropic.'],
-    cloud: ['Бесплатные облака', 'Отвечают бесплатные облачные модели (Groq, Gemini и др.) по вашим ключам — быстро даже на слабом компьютере. Когда у одной кончается лимит, подхватывает следующая. Нужен интернет.'],
+    cloud: ['Бесплатные облака', 'Отвечают бесплатные облачные модели (Gemini или свой сервер) по вашим ключам — быстро даже на слабом компьютере. Когда у одной кончается лимит, подхватывает следующая. Нужен интернет.'],
     auto: ['Авто', 'Простые вопросы — локальная модель, сложные (отчёты, код, файлы, глубокий поиск) — Claude или бесплатное облако. Если одного нет, отвечает другой, и в ответе это видно.'],
   };
   const BRAIN_SHORT = { local: 'локальный', claude: 'Claude', cloud: 'облако', auto: 'авто' };

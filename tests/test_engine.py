@@ -51,6 +51,8 @@ class T(unittest.TestCase):
         self.assertEqual(models.recommended_id(8), "qwen35-4b")
         self.assertEqual(models.recommended_id(32), "gemma4-26b")
         self.assertEqual(models.recommended_id(16), "qwen35-9b")
+        self.assertEqual(models.recommended_id(64), "gemma4-26b")        # модели для кода в общую рекомендацию не попадают
+        self.assertEqual([m["id"] for m in models.CATALOG if m.get("coder")], ["qwen25-coder-7b", "qwen3-coder-30b", "qwen38-27b"])
 
     def _hf(self, files):
         FakeHF.files = files

@@ -28,7 +28,8 @@ DEFAULTS: dict = {
     # voice — svetlana_cute | ava_calm (см. tts.VOICES); pronounce — словарь «слово → как произнести»
     # offline — auto (нейросетевой Piper, если скачан, иначе системный) | system
     "tts": {"enabled": True, "engine": "auto", "voice": "svetlana_cute", "rate": 0, "offline": "auto",
-            "pronounce": {"discord": "дискорд", "youtube": "ютуб", "steam": "стим", "telegram": "телеграм", "chrome": "хром"}},
+            "pronounce": {"discord": "дискорд", "youtube": "ютуб", "steam": "стим", "telegram": "телеграм", "chrome": "хром",
+                          "карина": "Кари́на", "карины": "Кари́ны", "карине": "Кари́не", "карину": "Кари́ну", "кариной": "Кари́ной"}},
     "search_engine": "google",    # google | yandex
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-5-5"},
     # встроенные модели (llama.cpp): active — id выбранной модели; gpu: auto | cpu; ctx/threads: 0 = по умолчанию
