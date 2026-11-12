@@ -5,8 +5,8 @@ from karina import localimg
 
 
 class LowVram(unittest.TestCase):
-    def run_gen(self, mid, low=True, fail_first=False):
-        calls, orig = [], (localimg._run, localimg.pick_installed, localimg.engine_ready, localimg.engine_supports, localimg.model_paths, localimg.find_exe, localimg.LOW_VRAM)
+    def run_gen(self, mid, low="low", fail_first=False):
+        calls, orig = [], (localimg._run, localimg.pick_installed, localimg.engine_ready, localimg.engine_supports, localimg.model_paths, localimg.find_exe)
         def fake_run(cmd, out, stop):
             calls.append(cmd)
             if fail_first and len(calls) == 1:
@@ -19,11 +19,10 @@ class LowVram(unittest.TestCase):
         localimg.engine_supports = lambda m: True
         localimg.model_paths = lambda mid: {"model": Path("m.safetensors"), "vae": Path("v"), "llm": Path("l")}
         localimg.find_exe = lambda fl: Path("sd-cli") if fl == "vulkan" else None
-        localimg.LOW_VRAM = low
         try:
-            return localimg.generate("1girl", (768, 768), 1, mid, "bad"), calls
+            return localimg.generate("1girl", (768, 768), 1, mid, "bad", None, low), calls
         finally:
-            (localimg._run, localimg.pick_installed, localimg.engine_ready, localimg.engine_supports, localimg.model_paths, localimg.find_exe, localimg.LOW_VRAM) = orig
+            (localimg._run, localimg.pick_installed, localimg.engine_ready, localimg.engine_supports, localimg.model_paths, localimg.find_exe) = orig
 
     def test_sdxl_low_vram_flags(self):
         for mid in ("noobai", "ponyxl"):
@@ -35,13 +34,17 @@ class LowVram(unittest.TestCase):
             self.assertEqual(c[c.index("--type") + 1], "q8_0")
             self.assertEqual(c[-2], "-o")                       # путь вывода по-прежнему в конце
 
+    def test_balanced_has_no_quantization(self):
+        _, calls = self.run_gen("noobai", low="balanced")
+        self.assertIn("--offload-to-cpu", calls[0]); self.assertNotIn("--type", calls[0])
+
     def test_falls_back_to_plain_mode(self):
         (data, ext), calls = self.run_gen("noobai", fail_first=True)
         self.assertEqual(len(calls), 2)
         self.assertNotIn("--offload-to-cpu", calls[1])
 
     def test_can_be_disabled_and_flux_unchanged(self):
-        _, calls = self.run_gen("noobai", low=False)
+        _, calls = self.run_gen("noobai", low="fast")
         self.assertNotIn("--offload-to-cpu", calls[0])
         _, calls = self.run_gen("flux2klein")
         self.assertEqual(len(calls), 1)

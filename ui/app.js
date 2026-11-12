@@ -691,7 +691,7 @@
     if (!st) return;
     $('#imgProvider').value = st.provider; $('#imgUrl').value = st.url || ''; $('#imgModel').value = st.model || ''; $('#imgKey').value = '';
     $('#imgKeyClear').hidden = !st.has_key;
-    $('#imgDirector').checked = st.director !== false; $('#imgAsk').checked = st.ask_count !== false; $('#imgVariants').value = String(st.variants || 4);
+    $('#imgDirector').checked = st.director !== false; $('#imgAsk').checked = st.ask_count !== false; $('#imgVram').value = st.vram || 'balanced'; $('#imgVariants').value = String(st.variants || 4);
     renderLimg(st);
   }
   function renderLimg(st) {
@@ -722,7 +722,7 @@
     lab.textContent = (ev.stage === 'engine' ? 'Движок: ' : 'Модель: ') + (ev.total ? `${fmtGb(ev.done)} из ${fmtGb(ev.total)} · ${pct.toFixed(0)}%` : fmtGb(ev.done));
   }
   async function loadImg() { renderImg(await call('images_state')); }
-  $('#imgSave').onclick = async () => { const st = await call('images_set', $('#imgProvider').value, $('#imgUrl').value, $('#imgModel').value, $('#imgKey').value, $('#imgDirector').checked, +$('#imgVariants').value, $('#imgAsk').checked); renderImg(st); flash($('#imgMsg'), 'Сохранено'); };
+  $('#imgSave').onclick = async () => { const st = await call('images_set', $('#imgProvider').value, $('#imgUrl').value, $('#imgModel').value, $('#imgKey').value, $('#imgDirector').checked, +$('#imgVariants').value, $('#imgAsk').checked, $('#imgVram').value); renderImg(st); flash($('#imgMsg'), 'Сохранено'); };
   $('#imgKeyClear').onclick = async () => { renderImg(await call('images_clear_key')); flash($('#imgMsg'), 'Ключ удалён'); };
   $('#imgTest').onclick = async () => { await $('#imgSave').onclick(); $('#imgTest').disabled = true; $('#imgMsg').classList.remove('err'); $('#imgMsg').textContent = 'Рисую пробную картинку…'; call('images_test'); };
 

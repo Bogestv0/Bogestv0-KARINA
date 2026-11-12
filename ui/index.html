@@ -220,6 +220,13 @@
       <label>Сколько вариантов рисовать (если не спрашивать)
         <select id="imgVariants"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option></select>
       </label>
+      <label>Нагрузка на видеокарту (NoobAI, Pony)
+        <select id="imgVram">
+          <option value="fast">Быстро — всё на видеокарте (около 8 ГБ видеопамяти)</option>
+          <option value="balanced">Сбалансированно — часть в оперативной памяти (около 5–6 ГБ)</option>
+          <option value="low">Экономно — минимум видеопамяти (около 3–4 ГБ), но дольше</option>
+        </select>
+      </label>
       <label>Адрес своего сервера<input id="imgUrl" placeholder="http://127.0.0.1:7860" autocomplete="off"></label>
       <label>Модель (для OpenAI-совместимого)<input id="imgModel" placeholder="необязательно" autocomplete="off"></label>
       <label>Ключ (если нужен)<input id="imgKey" type="password" placeholder="оставьте пустым, чтобы не менять" autocomplete="off"></label>

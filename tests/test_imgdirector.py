@@ -115,7 +115,7 @@ class Studio(unittest.TestCase):
         localimg.engine_ready = lambda: True
         localimg.engine_supports = lambda m: True
 
-        def fake(prompt, size, seed, model_id="", negative="", stop=None):
+        def fake(prompt, size, seed, model_id="", negative="", stop=None, vram=""):
             self.calls.append({"prompt": prompt, "size": size, "seed": seed, "model": model_id, "neg": negative})
             if model_id in self.broken:
                 raise localimg.LocalImgError("видеокарте не хватило памяти")
