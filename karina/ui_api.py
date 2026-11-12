@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, queue, subprocess, sys, threading, time
 from .diag import trace
-from . import actions, claude as claudemod, files as filesmod, images as imagesmod, localimg, net, models, updater, __version__
+from . import actions, claude as claudemod, files as filesmod, images as imagesmod, imgdirector, localimg, net, models, updater, __version__
 from .uploads import Uploads
 from . import audio as audiomod
 from .audio import Listener
@@ -833,6 +833,7 @@ class Api:
                   "selected": m["id"] == (s["local_model"] or localimg.DEFAULT_ID)} for m in localimg.CATALOG]
         return {"provider": s["provider"], "url": s["url"], "model": s["model"], "has_key": bool(s["key"]), "active": imagesmod.provider_name(self.cfg, "аниме"),
                 "local": local, "local_ready": localimg.ready(), "local_model": s["local_model"] or localimg.DEFAULT_ID,
+                "director": imgdirector.settings(self.cfg)["director"], "variants": imgdirector.settings(self.cfg)["variants"], "ask_count": imgdirector.settings(self.cfg)["ask_count"],
                 "dl": dl and {"done": dl["done"], "total": dl["total"], "stage": dl["stage"], "id": dl["id"]}}
 
     def localimg_download(self, mid: str):
@@ -873,8 +874,13 @@ class Api:
             self.cfg.update({"images": {"local_model": mid}})
         return self.images_state()
 
-    def images_set(self, provider: str = "auto", url: str = "", model: str = "", key: str = ""):
-        patch = {"provider": provider if provider in imagesmod.PROVIDERS else "auto", "url": (url or "").strip()[:300], "model": (model or "").strip()[:120]}
+    def images_set(self, provider: str = "auto", url: str = "", model: str = "", key: str = "", director: bool = True, variants: int = 4, ask_count: bool = True):
+        try:
+            n = max(1, min(imgdirector.MAX_VARIANTS, int(variants)))
+        except (TypeError, ValueError):
+            n = imgdirector.DEFAULT_VARIANTS
+        patch = {"provider": provider if provider in imagesmod.PROVIDERS else "auto", "url": (url or "").strip()[:300], "model": (model or "").strip()[:120],
+                 "director": bool(director), "variants": n, "ask_count": bool(ask_count)}
         if key:
             patch["key"] = key.strip()[:300]          # пустое поле = «оставить ключ как был»
         self.cfg.update({"images": patch})

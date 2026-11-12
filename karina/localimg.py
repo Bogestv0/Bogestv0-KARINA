@@ -66,6 +66,7 @@ CATALOG.extend([
 ])
 DEFAULT_ID = "flux2klein"
 ENGINE_MIN_FLUX2 = "2026-01-20"   # сборки stable-diffusion.cpp старше этой даты FLUX.2 не знают
+LOW_VRAM = True             # SDXL-модели (NoobAI, Pony…) по умолчанию берут от видеокарты ~3–4 ГБ, остальное — ОЗУ и процессор
 SAFE_NEG = "nsfw"            # обычные просьбы не должны случайно давать лишнего
 
 
@@ -359,36 +360,57 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
             if not exe:
                 continue
             if flux:      # FLUX.2 Klein: три файла, дистиллированная модель (4 шага, cfg 1.0), негативного промпта нет
-                cmd = [str(exe), "--diffusion-model", str(paths["model"]), "--vae", str(paths["vae"]), "--llm", str(paths["llm"]),
-                       "-p", full, "-W", str(w), "-H", str(h), "--steps", str(m["steps"]), "--cfg-scale", str(m["cfg"]),
-                       "-s", str(seed), "--diffusion-fa", "--offload-to-cpu", "--vae-tiling", "-o", str(out)]
+                cmds = [[str(exe), "--diffusion-model", str(paths["model"]), "--vae", str(paths["vae"]), "--llm", str(paths["llm"]),
+                         "-p", full, "-W", str(w), "-H", str(h), "--steps", str(m["steps"]), "--cfg-scale", str(m["cfg"]),
+                         "-s", str(seed), "--diffusion-fa", "--offload-to-cpu", "--vae-tiling", "-o", str(out)]]
             else:
                 cmd = [str(exe), "-m", str(paths["model"]), "-p", full, "-n", neg, "-W", str(w), "-H", str(h), "--steps", str(m["steps"]),
                        "--cfg-scale", str(m["cfg"]), "-s", str(seed), "--sampling-method", "euler_a", "--vae-tiling", "-o", str(out)]
                 if m.get("clip_skip"):
                     cmd[1:1] = ["--clip-skip", str(m["clip_skip"])]
-            flags = 0x08000000 if IS_WIN else 0                       # CREATE_NO_WINDOW
-            try:
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags)
-            except OSError as e:
-                errors.append(f"{flavor}: {e}")
-                continue
-            box: dict = {}
-            t = threading.Thread(target=lambda: box.update(out=p.communicate()[0]), daemon=True)
-            t.start()
-            t0 = time.time()
-            while t.is_alive():
-                t.join(0.3)
-                if stop is not None and stop.is_set():
-                    p.kill()
-                    raise LocalImgError("остановлено")
-                if time.time() - t0 > 1800:
-                    p.kill()
-                    raise LocalImgError("генератор рисует слишком долго (больше 30 минут).")
-            if p.returncode == 0 and out.exists() and out.stat().st_size > 1000:
-                return out.read_bytes(), "png"
-            tail = (box.get("out") or b"").decode("utf-8", "replace").strip().splitlines()[-1:] or [f"код {p.returncode}"]
-            errors.append(f"{flavor}: {tail[0][:160]}")              # видеокарта не потянула — пробуем процессор
+                cmds = [cmd]
+                if LOW_VRAM and flavor == "vulkan":
+                    # Экономный режим: вес модели лежит в ОЗУ и подгружается на видеокарту по частям (--offload-to-cpu),
+                    # текстовый энкодер считается на процессоре (--clip-on-cpu), веса сжаты до 8 бит (--type q8_0, потери качества почти нет),
+                    # внимание считается экономно (--diffusion-fa). Пик видеопамяти — порядка 3–4 ГБ вместо 8. Не вышло — обычный режим.
+                    cmds.insert(0, cmd[:-2] + ["--offload-to-cpu", "--clip-on-cpu", "--diffusion-fa", "--type", "q8_0"] + cmd[-2:])
+            for cmd in cmds:
+                res = _run(cmd, out, stop)
+                if res is not None:
+                    return res, "png"
+                errors.append(f"{flavor}: {_LAST_TAIL[0]}")
         raise LocalImgError("встроенный генератор не смог нарисовать (" + "; ".join(errors or ["нет движка"]) + ").")
     finally:
         shutil.rmtree(out.parent, ignore_errors=True)
+
+
+_LAST_TAIL = [""]
+
+
+def _run(cmd: list[str], out: Path, stop) -> bytes | None:
+    """Запускает движок. Готовая картинка — байты; ошибка — None (последняя строка вывода в _LAST_TAIL)."""
+    flags = 0x08000000 if IS_WIN else 0                       # CREATE_NO_WINDOW
+    if out.exists():
+        out.unlink()
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags)
+    except OSError as e:
+        _LAST_TAIL[0] = str(e)
+        return None
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.update(out=p.communicate()[0]), daemon=True)
+    t.start()
+    t0 = time.time()
+    while t.is_alive():
+        t.join(0.3)
+        if stop is not None and stop.is_set():
+            p.kill()
+            raise LocalImgError("остановлено")
+        if time.time() - t0 > 1800:
+            p.kill()
+            raise LocalImgError("генератор рисует слишком долго (больше 30 минут).")
+    if p.returncode == 0 and out.exists() and out.stat().st_size > 1000:
+        return out.read_bytes()
+    tail = (box.get("out") or b"").decode("utf-8", "replace").strip().splitlines()[-1:] or [f"код {p.returncode}"]
+    _LAST_TAIL[0] = tail[0][:160]                            # видеокарта не потянула — следующая попытка
+    return None

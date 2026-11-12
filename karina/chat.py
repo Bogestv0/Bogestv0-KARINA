@@ -1,12 +1,12 @@
 """Чат: диалоги с историей на диске, потоковый ответ модели, голосовой вызов («Карина, найди и напиши отчёт про…»)."""
 from __future__ import annotations
-import datetime, json, re, threading, time, uuid
+import datetime, json, random, re, threading, time, uuid
 from pathlib import Path
-from . import coder as codermod, files as filesmod, images as imagesmod, net, research, websearch
+from . import coder as codermod, files as filesmod, images as imagesmod, imgdirector, localimg, net, research, websearch
 from .brain import Brain, BrainUnavailable
 from .config import DATA
 from .engine import EngineError
-from .textutil import FEMALE, norm
+from .textutil import FEMALE, norm, plural
 
 CHATS_DIR = DATA / "chats"
 MAX_TOKENS = 1500
@@ -52,6 +52,9 @@ def light_attachments(paths: list[str]) -> bool:
 
 # короткое продолжение вроде «сделай файлы», «напиши это» — смысл берётся из предыдущих реплик
 CODE_FILES = re.compile(r"(?:\bфайл\w*|\bэто\b|\bвсе\b|\bготов\w*|\bпроект\w*|\bкод\b|\bбота?\b|\bтак\b)")
+
+
+QUESTION_COUNT = "Сколько вариантов нарисовать? Выберите от 1 до 4 — или напишите число."
 
 
 def route(text: str, has_paths: bool, has_project: bool, mode: str = "auto", voice: bool = False, light: bool = False,
@@ -214,6 +217,20 @@ def codermod_light(paths: list[str]) -> bool:
     return light_attachments(paths)
 
 
+class _NoLocalCfg:
+    """Настройки без встроенного генератора: запасной путь рисует свой сервер или Pollinations, а не те же модели ещё раз."""
+
+    def __init__(self, cfg):
+        self._cfg = cfg
+
+    def get(self, key, default=None):
+        v = self._cfg.get(key, default)
+        if key == "images":
+            v = dict(v or {})
+            v["provider"] = "sd" if v.get("url") else "pollinations"
+        return v
+
+
 class ChatService:
     def __init__(self, cfg, engine, emit, speak=None, store: ChatStore | None = None, brain: Brain | None = None,
                  files: filesmod.FileService | None = None, coder=None):
@@ -364,9 +381,154 @@ class ChatService:
         return "\n\n".join(x for x in parts if x), err, log
 
     # ---------- картинки ----------
-    def _image_turn(self, chat: dict, reply: dict, text: str, step) -> tuple[str, str, list[dict]]:
-        """Рисует картинку: модель пишет описание для генератора, генератор рисует, файл ложится в «Документы\\Карина».
+    def _image_turn(self, chat: dict, reply: dict, text: str, step, count: int | None = None) -> tuple[str, str, list[dict]]:
+        """Рисует картинку. Если скачаны встроенные картиночные модели (NoobAI, Pony, FLUX.2 Klein …) — работает «режиссёр» (_image_set_turn):
+        текстовая модель пишет описание под каждую из них и несколько вариантов рисуются в стилях разных моделей.
+        Иначе (или если выбран внешний сервис) — прежний путь: одна картинка. → (текст ответа, ошибка, созданные файлы)."""
+        ids = imgdirector.available(self.cfg)
+        if ids:
+            return self._image_set_turn(chat, reply, text, step, ids, count)
+        return self._image_single_turn(chat, reply, text, step)
+
+    def _image_set_turn(self, chat: dict, reply: dict, text: str, step, ids: list[str], count: int | None = None) -> tuple[str, str, list[dict]]:
+        """Режиссёр картинок. Текстовая модель (например, Qwen 3.5 9B) пишет описание — тегами и предложениями — и называет лучшего художника;
+        дальше несколько вариантов рисуют разные модели (по одному варианту на каждую, лучшие первыми), каждый появляется в чате, как только готов.
+        Правка («поверни её», «на втором варианте …», «во всех моделях …») идёт к подходящей модели или ко всем сразу.
         → (текст ответа, ошибка, созданные файлы)."""
+        cid, rid = chat["id"], reply["id"]
+        prev = next((m["image_set"] for m in reversed(chat["messages"][:-1]) if m.get("image_set")), None)
+        intent = imgdirector.parse_intent(text, ids, prev is not None, imgdirector.settings(self.cfg)["variants"])
+        edit = prev is not None and intent.kind in ("edit", "more")
+        if not edit:
+            intent.kind = "new"
+        if count and not edit:                                   # число выбрано в ответ на вопрос «сколько вариантов?»
+            intent.count, intent.explicit_count = max(1, min(imgdirector.MAX_VARIANTS, count)), True
+        style_text = imgdirector.style_text_for(prev, text, edit)
+        notes: list[str] = []
+        if intent.refs and edit and not any(v.get("n") in intent.refs for v in prev.get("variants", [])):
+            notes.append(f"ⓘ Варианта {intent.refs[0]} в последнем наборе нет — правлю общее описание.")
+            intent.refs = []
+
+        # 1. описание от текстовой модели («ещё вариант» берёт прежнее описание, модель не нужна)
+        prev_brief = (prev or {}).get("brief") if edit else None
+        if intent.kind == "more" and prev_brief:
+            brief = dict(prev_brief, best="", why="")
+        else:
+            step("Продумываю картинку и выбираю, какая модель будет рисовать…")
+            try:
+                choice = self.brain.choose(text)
+                reply["brain"] = choice.label
+                raw = choice.backend.chat(imgdirector.brief_request(text, ids, prev_brief, edit), max_tokens=imgdirector.BRIEF_TOKENS, temperature=0.6, stop=self._stop)
+                brief = imgdirector.parse_brief(raw, text, ids)
+            except (BrainUnavailable, EngineError) as e:
+                brief = dict(prev_brief, best="", why="") if prev_brief else imgdirector.fallback_brief(text)
+                notes.append(f"ⓘ Модель сейчас не отвечает ({e}) — " + ("рисую с прежним описанием, правку применить не смогла." if prev_brief else "рисую по вашему тексту как есть, результат может быть хуже."))
+            if imagesmod.has_cyrillic(brief["tags"]) and imagesmod.ANIME.search(norm(style_text)):
+                fb = imgdirector.fallback_brief(text if not edit else style_text)       # слабая модель не справилась — собираем теги сами
+                brief["tags"] = fb["tags"]
+        if self._stop.is_set():
+            return "*(остановлено)*", "", []
+
+        # 2. кто рисует: подходящие модели по порядку (первой — та, что назвала текстовая модель), варианты раздаются по кругу
+        pool, pool_note = imgdirector.pool_for(style_text, ids)
+        order = imgdirector.rank(text, pool, style_text)
+        llm_first = brief.get("best") in pool
+        if llm_first:
+            order = [brief["best"]] + [m for m in order if m != brief["best"]]
+        rng = random.Random()
+        reason = ""
+        if intent.kind == "edit":
+            variants, reason = imgdirector.plan_edit(intent, order, prev, rng)
+            if not reason:
+                reason = brief.get("why") if llm_first and brief.get("why") else imgdirector.artist(variants[0].model)["why"]
+        elif intent.kind == "more":
+            old = [v["model"] for v in prev.get("variants", []) if v.get("model") in ids] or order
+            n = intent.count if intent.explicit_count else len(old)
+            variants = [imgdirector.Variant(i + 1, old[i % len(old)], rng.randint(1, 2**31 - 1)) for i in range(n)]
+        else:
+            variants = imgdirector.plan_new(intent, order, rng)
+            if pool_note:
+                notes.append("ⓘ " + pool_note)
+        miss = imgdirector.missing_models(text, ids) if intent.kind != "more" else []
+        if miss:
+            notes.append("ⓘ Модель " + ", ".join(imgdirector.title(m) for m in miss) + " не скачана («Настройки → Модели → Картинки») — рисуют скачанные.")
+        size = tuple(prev["size"]) if edit and prev.get("size") else imagesmod.pick_size(style_text)
+        for v in variants:
+            v.prompt = imgdirector.prompt_for(v.model, brief, style_text)
+            v.negative = imgdirector.negative_for(v.model, style_text)
+        total = len(variants)
+        self.emit({"type": "chat_image_plan", "chat": cid, "id": rid, "items": [{"n": v.n, "label": imgdirector.title(v.model)} for v in variants]})
+
+        # 3. рисуем по очереди (одна видеокарта): каждый готовый вариант сразу уходит в окно
+        stem = (prev or {}).get("stem") if edit else imagesmod.file_stem(text)
+        stem = stem or imagesmod.file_stem(text)
+        made: list[dict] = []
+        done: list[dict] = []
+        errors: list[str] = []
+        for v in variants:
+            if self._stop.is_set():
+                break
+            label = imgdirector.title(v.model)
+            step(f"Рисую вариант {v.n} из {total}: {label}… (обычно до минуты)")
+            self.emit({"type": "chat_image", "chat": cid, "id": rid, "n": v.n, "status": "start", "label": label})
+            try:
+                data, ext = localimg.generate(v.prompt, size, v.seed, v.model, v.negative, self._stop)
+                f = self.files.create_bytes(f"{stem} - {v.n} {v.model}.{ext}", data)
+            except Exception as e:           # не вышло у одной модели — остальные всё равно рисуем
+                if self._stop.is_set() or str(e) == "остановлено":
+                    break
+                msg = str(e) or e.__class__.__name__
+                errors.append(f"вариант {v.n} ({label}): {msg}")
+                self.emit({"type": "chat_image", "chat": cid, "id": rid, "n": v.n, "status": "fail", "label": label, "error": msg})
+                continue
+            f.update(variant=v.n, model=v.model, label=label)
+            made.append(f)
+            done.append({"n": v.n, "model": v.model, "title": label, "seed": v.seed, "prompt": v.prompt, "file": f["name"]})
+            self.emit({"type": "chat_image", "chat": cid, "id": rid, "n": v.n, "status": "done", "label": label, "file": f})
+
+        # 4. ни одна встроенная модель не нарисовала: запасной путь (свой сервер / Pollinations), как раньше
+        if not made and not self._stop.is_set() and imagesmod.settings(self.cfg)["provider"] == "auto" and variants:
+            step("Встроенные модели не справились — пробую запасной генератор…")
+            try:
+                data, ext, who = imagesmod.generate(_NoLocalCfg(self.cfg), variants[0].prompt, size, stop=self._stop, request=style_text)
+                f = self.files.create_bytes(f"{stem} - 1.{ext}", data)
+                f.update(variant=1, model="", label=who)
+                made.append(f)
+                done.append({"n": 1, "model": "", "title": who, "seed": 0, "prompt": variants[0].prompt, "file": f["name"]})
+                notes.append("ⓘ Встроенные модели не смогли нарисовать (" + "; ".join(errors)[:300] + f") — картинку нарисовал запасной генератор: {who}.")
+                errors = []
+                self.emit({"type": "chat_image", "chat": cid, "id": rid, "n": 1, "status": "done", "label": who, "file": f})
+            except imagesmod.ImageError:
+                pass
+        if self._stop.is_set() and not made:
+            return "*(остановлено)*", "", []
+        if not made:
+            why = "; ".join(errors) or "нет ответа от генератора"
+            return ("".join(n + "\n\n" for n in notes) + f"⚠ Не получилось нарисовать: {why}"), why, []
+
+        reply["image_set"] = {"request": style_text, "stem": stem, "size": list(size), "variants": done,
+                              "brief": {"tags": brief["tags"], "scene": brief["scene"]}}
+        reply["image_prompt"] = done[0]["prompt"]
+        who = ", ".join(f"{d['n']} — {d['title']}" for d in done)
+        if intent.kind == "edit" and len(done) == 1:
+            lead = f"**Готово — поправила.** Рисовала **{done[0]['title']}**" + (f": {reason}." if reason else ".")
+        elif intent.kind == "edit":
+            lead = f"**Готово — поправила в {len(done)} моделях:** {who}." + (f" Почему так: {reason}." if reason else "")
+        else:
+            lead = f"**Готово — {len(done)} {plural(len(done), ('вариант', 'варианта', 'вариантов'))}** (каждый в стиле своей модели): {who}." if len(done) > 1 else f"**Готово — нарисовала.** Рисовала **{done[0]['title']}**."
+        reply["brain"] = ((reply.get("brain") or "") + " · " if reply.get("brain") else "") + "рисуют: " + ", ".join(dict.fromkeys(d["title"] for d in done))
+        out = ["".join(n + "\n\n" for n in notes) + lead,
+               f"**Описание тегами:** {brief['tags'][:420]}\n**Описание текстом:** {brief['scene'][:420]}"]
+        if errors:
+            out.append("⚠ Не получились: " + "; ".join(errors))
+        if self._stop.is_set():
+            out.append("*(остановлено)*")
+        out.append("Картинки сохранены в папке «Документы\\Карина». Можно попросить: «поверни её вполоборота», «на втором варианте сделай волосы длиннее», "
+                   "«пусть она машет рукой» (выберу подходящую модель), «во всех моделях — ночью» или «ещё варианты».")
+        return "\n\n".join(out), "", made
+
+    def _image_single_turn(self, chat: dict, reply: dict, text: str, step) -> tuple[str, str, list[dict]]:
+        """Прежний путь: модель пишет описание, один генератор (встроенный, свой сервер или Pollinations) рисует одну картинку."""
         prev = next((m.get("image_prompt", "") for m in reversed(chat["messages"][:-1]) if m.get("image_prompt")), "")
         prompt, note = text.strip(), ""
         step("Придумываю описание картинки…")
@@ -450,6 +612,16 @@ class ChatService:
         way = route(text, bool(paths), bool(chat.get("project")) and self.coder is not None, mode, voice, codermod_light(paths), last_img, recent)
         if way == "code" and self.coder is None:
             way = "chat"
+        # «Сколько вариантов?»: просьба нарисовать ждёт ответа; ответ-число возвращает её в работу, любое другое сообщение отменяет ожидание
+        img_text, img_count, ask_count = text, None, False
+        pend = chat.pop("pending_image", None)
+        if pend and not paths:
+            n = imgdirector.parse_answer(text)
+            if n:
+                img_text, img_count, way = str(pend.get("request") or text), n, "image"
+        elif way == "image" and not paths:
+            prev_set = any(m.get("image_set") for m in chat["messages"][:-1])
+            ask_count = imgdirector.needs_count_question(self.cfg, text, prev_set)
         if chat["title"] == "Новый чат":
             chat["title"] = (text[:48] + "…") if len(text) > 48 else text
         reply = {"id": uuid.uuid4().hex[:8], "role": "assistant", "text": "", "ts": now}
@@ -465,15 +637,21 @@ class ChatService:
         made: list[dict] = []
         ferrs: list[str] = []
         try:
-            if way == "image":
-                out_text, err_img, made_img = self._image_turn(chat, reply, text, step)
+            if way == "image" and ask_count:
+                chat["pending_image"] = {"request": text}
+                reply["text"] = QUESTION_COUNT
+                reply["choices"] = [str(i) for i in range(1, imgdirector.ASK_MAX + 1)]
+                spoken = QUESTION_COUNT
+            elif way == "image":
+                out_text, err_img, made_img = self._image_turn(chat, reply, img_text, step, img_count)
                 reply["text"] = out_text
                 if made_img:
                     made = made_img
                     reply["files"] = made_img
                 if err_img:
                     err = err_img
-                spoken = "Готово, картинка сохранена в папке Карина в документах." if made_img else ""
+                spoken = ("Готово, нарисовала несколько вариантов, смотрите в окне чата." if len(made_img) > 1
+                          else "Готово, картинка сохранена в папке Карина в документах.") if made_img else ""
             elif way == "code":
                 out_text, err_code, activity = self._code_turn(chat, reply, text, paths, step)
                 reply["text"] = out_text
@@ -571,7 +749,7 @@ class ChatService:
         self.store.save(chat)
         self.emit({"type": "chat_done", "chat": cid, "id": reply["id"], "text": reply["text"], "error": err, "title": chat["title"],
                    "steps": reply.get("steps"), "files": reply.get("files"), "brain": reply.get("brain"), "project": reply.get("project"),
-                   "activity": reply.get("activity")})
+                   "activity": reply.get("activity"), "choices": reply.get("choices")})
         self._busy.release()
         self.current = None
         if voice and self.speak:
