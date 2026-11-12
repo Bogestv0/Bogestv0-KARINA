@@ -833,7 +833,7 @@ class Api:
                   "selected": m["id"] == (s["local_model"] or localimg.DEFAULT_ID)} for m in localimg.CATALOG]
         return {"provider": s["provider"], "url": s["url"], "model": s["model"], "has_key": bool(s["key"]), "active": imagesmod.provider_name(self.cfg, "аниме"),
                 "local": local, "local_ready": localimg.ready(), "local_model": s["local_model"] or localimg.DEFAULT_ID,
-                "director": imgdirector.settings(self.cfg)["director"], "variants": imgdirector.settings(self.cfg)["variants"], "ask_count": imgdirector.settings(self.cfg)["ask_count"],
+                "director": imgdirector.settings(self.cfg)["director"], "variants": imgdirector.settings(self.cfg)["variants"], "ask_count": imgdirector.settings(self.cfg)["ask_count"], "vram": imagesmod.imgdirector_vram(self.cfg),
                 "dl": dl and {"done": dl["done"], "total": dl["total"], "stage": dl["stage"], "id": dl["id"]}}
 
     def localimg_download(self, mid: str):
@@ -874,13 +874,14 @@ class Api:
             self.cfg.update({"images": {"local_model": mid}})
         return self.images_state()
 
-    def images_set(self, provider: str = "auto", url: str = "", model: str = "", key: str = "", director: bool = True, variants: int = 4, ask_count: bool = True):
+    def images_set(self, provider: str = "auto", url: str = "", model: str = "", key: str = "", director: bool = True, variants: int = 4, ask_count: bool = True, vram: str = "balanced"):
         try:
             n = max(1, min(imgdirector.MAX_VARIANTS, int(variants)))
         except (TypeError, ValueError):
             n = imgdirector.DEFAULT_VARIANTS
         patch = {"provider": provider if provider in imagesmod.PROVIDERS else "auto", "url": (url or "").strip()[:300], "model": (model or "").strip()[:120],
-                 "director": bool(director), "variants": n, "ask_count": bool(ask_count)}
+                 "director": bool(director), "variants": n, "ask_count": bool(ask_count),
+                 "vram": vram if vram in localimg.VRAM_MODES else localimg.DEFAULT_VRAM}
         if key:
             patch["key"] = key.strip()[:300]          # пустое поле = «оставить ключ как был»
         self.cfg.update({"images": patch})

@@ -14,7 +14,7 @@
 from __future__ import annotations
 import random, re
 from dataclasses import dataclass, field
-from . import images as imagesmod, localimg
+from . import images as imagesmod, localimg, prompts
 from .textutil import norm
 
 DEFAULT_VARIANTS = 4
@@ -24,22 +24,22 @@ MAX_VARIANTS = 6
 # dialect: "tags" — теги danbooru; "text" — обычные предложения.  hint — подсказка текстовой модели.
 ARTISTS: dict[str, dict] = {
     "noobai": {"dialect": "tags", "anime": True, "real": False, "pose": 0.5, "why": "лучше всего рисует персонажей, лица, причёски и одежду в аниме-стиле",
-               "hint": "anime model with danbooru tags: clean lineart, beautiful faces, hair, outfits, known characters and art styles. Best for character looks."},
+               "hint": prompts.ARTIST_HINTS["noobai"]},
     "ponyxl": {"dialect": "tags", "anime": True, "real": False, "pose": 2.0, "why": "лучше всего слушается просьб про позы, действия и сложные сцены",
-               "hint": "very flexible model: poses, actions, interactions between objects and people, busy scenes. Understands danbooru-like tags. Best for pose and action changes."},
+               "hint": prompts.ARTIST_HINTS["ponyxl"]},
     "flux2klein": {"dialect": "text", "anime": False, "real": True, "pose": 0.0, "why": "лучше всего понимает обычные предложения, фон, свет, предметы и надписи",
-                   "hint": "understands plain English sentences; best for photos and realism, backgrounds, lighting, objects, text on images and precise instructions; it also draws anime."},
+                   "hint": prompts.ARTIST_HINTS["flux2klein"]},
     "animagine4": {"dialect": "tags", "anime": True, "real": False, "pose": 0.3, "why": "рисует чистое аниме «как в кадрах сериала»",
-                   "hint": "anime model with danbooru tags: clean look of TV anime screenshots, good faces and hands."},
+                   "hint": prompts.ARTIST_HINTS["animagine4"]},
     "illustrious1": {"dialect": "tags", "anime": True, "real": False, "pose": 0.3, "why": "знает много стилей и персонажей аниме",
-                     "hint": "anime model with danbooru tags: many art styles and characters."},
+                     "hint": prompts.ARTIST_HINTS["illustrious1"]},
 }
-GENERIC = {"dialect": "text", "anime": False, "real": False, "pose": 0.0, "why": "универсальная модель", "hint": "general image model."}
+GENERIC = {"dialect": "text", "anime": False, "real": False, "pose": 0.0, "why": "универсальная модель", "hint": prompts.ARTIST_HINT_GENERIC}
 # при равных баллах: для аниме первым идёт NoobAI, для остального — FLUX.2 Klein
 ORDER_ANIME = ("noobai", "ponyxl", "animagine4", "illustrious1", "flux2klein")
 ORDER_OTHER = ("flux2klein", "ponyxl", "noobai", "animagine4", "illustrious1")
 
-ANIME_EXTRA_NEG = "3d, realistic, photo, photorealistic, semi-realistic, render, doll, plastic skin"
+ANIME_EXTRA_NEG = prompts.ANIME_EXTRA_NEG      # см. prompts.py, раздел 7.3
 
 
 def artist(mid: str) -> dict:
@@ -278,32 +278,17 @@ BRIEF_TOKENS = 420
 def brief_request(user_text: str, ids: list[str], prev_brief: dict | None = None, edit: bool = False) -> list[dict]:
     """Сообщения текстовой модели: написать описание картинки — тегами и предложениями — и назвать лучшего художника."""
     lines = "\n".join(f"- {mid}: {artist(mid)['hint']}" for mid in ids)
-    best_rule = "Choose BEST for the kind of change: " if edit else "Choose BEST for this exact request: "
+    best_rule = prompts.DIRECTOR_BEST_EDIT if edit else prompts.DIRECTOR_BEST_NEW
     best_rule += " ".join(x for x in (
-        "poses, actions and interactions → ponyxl." if "ponyxl" in ids else "",
-        "how the character looks (face, hair, outfit) in anime style → noobai." if "noobai" in ids else "",
-        "photos, realism, background, lighting, objects, text → flux2klein." if "flux2klein" in ids else "") if x)
-    sysmsg = (
-        "You are the art director of an image studio. You never draw: you write prompts for the studio's image models, and the best-suited model then paints.\n"
-        f"Available models:\n{lines}\n"
-        "Reply with EXACTLY these four lines and nothing else (no markdown, no quotes, no explanations):\n"
-        "TAGS: comma-separated English danbooru-style tags: 1girl/1boy, hair colour and style, eye colour, expression, clothing, pose, camera angle, setting, lighting, art style. At most 60 tags.\n"
-        "SCENE: the same picture in 1-3 plain English sentences (subject, appearance, clothing, pose, setting, lighting, style).\n"
-        f"BEST: one of {', '.join(ids)}. {best_rule}\n"
-        "WHY: one short sentence in Russian saying why that model fits.\n"
-        "Rules: the user may write in Russian. Keep EVERY concrete detail the user named (colours, clothing, weapon, setting, mood) and add nothing that contradicts it. "
-        "If the user asks for anime, begin TAGS with 'anime illustration, 2D, cel shading, flat colors, lineart' and never use the words realistic, photo, 3D, render. "
-        "Hands cause artifacts: unless the user asks for a pose with hands or an object in hands, frame the character as 'portrait, upper body' and keep hands out of frame; "
-        "do not invent held objects. "
-        "Turning the character: 'turn around' → 'from behind, looking back'; 'turn to the side' → 'profile, from side'; 'half-turn' → 'three-quarter view'; "
-        "'look away' → 'facing away'; camera angle → 'from above' / 'from below'. At most 70 words in SCENE.")
+        prompts.DIRECTOR_BEST_PONY if "ponyxl" in ids else "",
+        prompts.DIRECTOR_BEST_NOOBAI if "noobai" in ids else "",
+        prompts.DIRECTOR_BEST_FLUX if "flux2klein" in ids else "") if x)
+    sysmsg = prompts.fill(prompts.DIRECTOR_SYSTEM, models=lines, ids=", ".join(ids), best_rule=best_rule) + prompts.forbidden_inline(prompts.FORBIDDEN_IMAGE_WRITER)
     user = user_text.strip()[:1500]
     if prev_brief:
-        user = (f"The current picture was described as:\nTAGS: {prev_brief.get('tags', '')[:700]}\nSCENE: {prev_brief.get('scene', '')[:500]}\n"
-                "The user now asks for a CHANGE. Rewrite TAGS and SCENE so the picture matches the change: keep the same character (hair, eyes, clothing, setting, style) and "
-                f"everything the user did not ask to change.\nChange requested: {user}")
+        user = prompts.fill(prompts.DIRECTOR_USER_EDIT, tags=prev_brief.get("tags", "")[:700], scene=prev_brief.get("scene", "")[:500], request=user)
     else:
-        user = "Request: " + user
+        user = prompts.fill(prompts.DIRECTOR_USER_NEW, request=user)
     return [{"role": "system", "content": sysmsg}, {"role": "user", "content": user}]
 
 

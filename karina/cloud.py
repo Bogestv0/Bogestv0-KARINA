@@ -7,6 +7,7 @@
 Ключ уходит только в заголовок запроса к выбранному провайдеру и не попадает в журнал и тексты ошибок (см. _scrub)."""
 from __future__ import annotations
 import json, re, threading, time, urllib.error, urllib.request
+from . import prompts
 from .engine import EngineError
 
 CHARS_PER_TOKEN = 2.6          # русский текст: оценка токенов по числу символов (с запасом)
@@ -326,7 +327,7 @@ class CloudPool:
         model = self._model_name(p)
         if json_mode:
             msgs = [dict(m) for m in msgs]
-            add = "\n\nОтвечай только корректным JSON без пояснений и без обрамляющих знаков."
+            add = prompts.JSON_ONLY
             for m in msgs:
                 if m["role"] == "system":
                     m["content"] += add

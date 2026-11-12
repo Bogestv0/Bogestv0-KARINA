@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, re, urllib.request
 from .actions import REGISTRY
-from . import profile
+from . import profile, prompts
 
 
 def ask(cfg, text: str, app_names: list[str]) -> dict | None:
@@ -11,13 +11,9 @@ def ask(cfg, text: str, app_names: list[str]) -> dict | None:
     if not (c.get("enabled") and key):
         return None
     cmds = "\n".join(f'- {x.name}: {x.desc}' + (f' (аргументы: {x.llm_args})' if x.llm_args else '') for x in REGISTRY)
-    system = (
-        "Ты — модуль понимания команд голосового ассистента Карина для Windows. Фраза пришла из распознавания речи и может содержать ошибки. "
-        "Выбери ОДНО действие из списка либо коротко ответь по-русски (1–2 предложения); о себе говори в женском роде («я открыла», «я не поняла»). Верни ТОЛЬКО JSON без пояснений: "
-        '{"action":"имя","args":{...}} или {"say":"ответ"}. Если действие не подходит — отвечай через say.\n'
-        f"Действия:\n{cmds}\nИзвестные программы: {', '.join(app_names[:60])}"
-        + profile.prompt_section(cfg)
-    )
+    system = (prompts.fill(prompts.COMMANDS_SYSTEM, commands=cmds, apps=", ".join(app_names[:60]))
+              + profile.prompt_section(cfg)
+              + prompts.forbidden_block(prompts.FORBIDDEN_ALL, prompts.FORBIDDEN_COMMANDS))
     body = json.dumps({"model": c.get("model", "claude-haiku-5-5"), "max_tokens": 300, "system": system,
                        "messages": [{"role": "user", "content": text}]}).encode("utf-8")
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={

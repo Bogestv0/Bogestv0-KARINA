@@ -9,6 +9,7 @@
 from __future__ import annotations
 import json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request, zipfile
 from pathlib import Path
+from . import prompts
 from .config import DATA
 
 IS_WIN = sys.platform == "win32"
@@ -25,13 +26,13 @@ FLAVORS = {"vulkan": (r"bin-win-vulkan-x64\.zip$",),
 CATALOG: list[dict] = [
     {"id": "animagine4", "title": "Animagine XL 4.0", "repo": "cagliostrolab/animagine-xl-4.0", "file": r"^animagine-xl-4\.0\.safetensors$",
      "size_gb": 6.9, "vram": 8, "steps": 28, "cfg": 5.0,
-     "quality": "masterpiece, high score, great score, absurdres",
-     "negative": "lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, fewer digits, cropped, worst quality, low quality, low score, bad score, average score, signature, watermark, username, blurry",
+     "quality": prompts.MODEL_QUALITY["animagine4"],
+     "negative": prompts.MODEL_NEGATIVE["animagine4"],
      "desc": "Лучший выбор по умолчанию: чистый аниме-стиль как в кадрах сериалов, хорошие лица и руки. Нужна видеокарта от 6–8 ГБ (на процессоре картинка рисуется несколько минут)."},
     {"id": "illustrious1", "title": "Illustrious XL 1.0", "repo": "OnomaAIResearch/Illustrious-XL-v1.0", "file": r"^Illustrious-XL-v1\.0\.safetensors$",
      "size_gb": 6.9, "vram": 8, "steps": 28, "cfg": 5.5,
-     "quality": "masterpiece, best quality, amazing quality, very aesthetic, absurdres",
-     "negative": "lowres, worst quality, low quality, bad anatomy, bad hands, extra digits, fewer digits, jpeg artifacts, signature, watermark, username, blurry, artist name",
+     "quality": prompts.MODEL_QUALITY["illustrious1"],
+     "negative": prompts.MODEL_NEGATIVE["illustrious1"],
      "desc": "Альтернатива: больше разных стилей и персонажей. Если на Hugging Face потребуется принять условия, Карина скажет об этом при скачивании."},
 ]
 # FLUX.2 Klein 4B (Apache-2.0): быстрая универсальная модель (4 шага), рисует и фото, и иллюстрации, и аниме, понимает русские/английские описания.
@@ -39,7 +40,7 @@ CATALOG: list[dict] = [
 KLEIN_REPOS = ("leejet/FLUX.2-klein-4B-GGUF", "unsloth/FLUX.2-klein-4B-GGUF", "MXKA/FLUX.2-klein-4B-GGUF", "w3ss/FLUX.2-klein-4B-GGUF")
 CATALOG.insert(0, {
     "id": "flux2klein", "title": "FLUX.2 Klein 4B", "kind": "flux2", "general": True,
-    "size_gb": 5.4, "vram": 6, "steps": 4, "cfg": 1.0, "quality": "", "negative": "",
+    "size_gb": 5.4, "vram": 6, "steps": 4, "cfg": 1.0, "quality": prompts.MODEL_QUALITY["flux2klein"], "negative": prompts.MODEL_NEGATIVE["flux2klein"],
     "parts": [
         {"role": "model", "repos": KLEIN_REPOS, "file": r"(?i)^flux[-_.]?2[-_.]klein[-_.]4b[-_.](Q4_K_M|Q4_0)\.gguf$"},
         {"role": "vae", "repos": ("unsloth/FLUX.2-VAE", "Comfy-Org/flux2-dev"), "dir": "split_files/vae", "file": r"(?i)^flux2[-_.]vae\.safetensors$"},
@@ -53,21 +54,22 @@ CATALOG.extend([
      "repos": ("LyliaEngine/Pony_Diffusion_V6_XL", "gnicartweet/Pony_Diffusion_V6_XL", "misri/ponyDiffusionV6XL"),
      "file": r"(?i)^ponyDiffusionV6XL.*\.safetensors$",
      "size_gb": 6.5, "vram": 8, "steps": 25, "cfg": 7.0,
-     "quality": "score_9, score_8_up, score_7_up, score_6_up, source_anime",
-     "negative": "score_6, score_5, score_4, source_pony, source_furry, source_cartoon, bad anatomy, bad hands, extra fingers, missing fingers, text, watermark, signature, blurry, lowres",
+     "quality": prompts.MODEL_QUALITY["ponyxl"],
+     "negative": prompts.MODEL_NEGATIVE["ponyxl"],
      "desc": "Pony XL: очень гибкая модель, хорошо понимает сложные просьбы (позы, сцены, персонажи), качественная рисовка. Теги score_9… Карина добавляет сама. "
              "Лицензия Fair AI Public License: личное использование разрешено, монетизация нет."},
     {"id": "noobai", "title": "NoobAI XL 1.1", "general": True, "repos": ("Laxhar/noobai-XL-1.1",),
      "file": r"(?i)^noobai-?xl[-_]?v?1\.1\.safetensors$",
      "size_gb": 6.9, "vram": 8, "steps": 28, "cfg": 5.0,
-     "quality": "masterpiece, best quality, newest, absurdres, highres, very aesthetic",
-     "negative": "worst quality, old, early, low quality, lowres, bad anatomy, bad hands, extra digits, fewer digits, jpeg artifacts, signature, watermark, username, blurry, artist name, text",
+     "quality": prompts.MODEL_QUALITY["noobai"],
+     "negative": prompts.MODEL_NEGATIVE["noobai"],
      "desc": "NoobAI XL: сильная danbooru-модель (на базе Illustrious), знает тысячи персонажей и стилей, чистые линии и цвета. Версия 1.1 (обычная, не v-pred)."},
 ])
 DEFAULT_ID = "flux2klein"
 ENGINE_MIN_FLUX2 = "2026-01-20"   # сборки stable-diffusion.cpp старше этой даты FLUX.2 не знают
-LOW_VRAM = True             # SDXL-модели (NoobAI, Pony…) по умолчанию берут от видеокарты ~3–4 ГБ, остальное — ОЗУ и процессор
-SAFE_NEG = "nsfw"            # обычные просьбы не должны случайно давать лишнего
+VRAM_MODES = ("fast", "balanced", "low")
+DEFAULT_VRAM = "balanced"    # fast — всё на видеокарте (быстрее всего, ~8 ГБ); balanced — веса в ОЗУ, пик ~5–6 ГБ; low — ещё и 8-бит сжатие, пик ~3–4 ГБ, но заметно дольше
+SAFE_NEG = prompts.SAFE_NEG   # обычные просьбы не должны случайно давать лишнего (prompts.py)
 
 
 class Cancelled(Exception):
@@ -335,7 +337,7 @@ def sdxl_size(size: tuple[int, int]) -> tuple[int, int]:
     return (832, 1216) if h > w else (1216, 704)
 
 
-def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", negative: str = "", stop: threading.Event | None = None) -> tuple[bytes, str]:
+def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", negative: str = "", stop: threading.Event | None = None, vram: str = DEFAULT_VRAM) -> tuple[bytes, str]:
     m = pick_installed(model_id)
     if not m or not engine_ready():
         raise LocalImgError("встроенный генератор не установлен (Настройки → Модели → Картинки → «Скачать»).")
@@ -350,7 +352,7 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
         full = f"{m['quality']}, {base}"
     else:
         full = f"{base}, {m['quality']}"
-    neg = ", ".join(x for x in (SAFE_NEG, negative or m["negative"]) if x)
+    neg = prompts.unique_tags(prompts.join_tags(SAFE_NEG, negative or m["negative"], prompts.extra_negative(m["id"])))   # + ваши негативы из prompts.py
     paths = model_paths(m["id"]) or {}
     out = Path(tempfile.mkdtemp(prefix="karina-sd-")) / "out.png"
     errors = []
@@ -369,11 +371,12 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
                 if m.get("clip_skip"):
                     cmd[1:1] = ["--clip-skip", str(m["clip_skip"])]
                 cmds = [cmd]
-                if LOW_VRAM and flavor == "vulkan":
-                    # Экономный режим: вес модели лежит в ОЗУ и подгружается на видеокарту по частям (--offload-to-cpu),
-                    # текстовый энкодер считается на процессоре (--clip-on-cpu), веса сжаты до 8 бит (--type q8_0, потери качества почти нет),
-                    # внимание считается экономно (--diffusion-fa). Пик видеопамяти — порядка 3–4 ГБ вместо 8. Не вышло — обычный режим.
-                    cmds.insert(0, cmd[:-2] + ["--offload-to-cpu", "--clip-on-cpu", "--diffusion-fa", "--type", "q8_0"] + cmd[-2:])
+                if vram in ("balanced", "low") and flavor == "vulkan":
+                    # balanced: веса лежат в ОЗУ и подгружаются на видеокарту по частям (--offload-to-cpu), текстовый энкодер на процессоре (--clip-on-cpu),
+                    # внимание экономное (--diffusion-fa): пик видеопамяти ~5–6 ГБ. low: ещё и сжатие весов до 8 бит при каждой загрузке (--type q8_0):
+                    # пик ~3–4 ГБ, но каждая картинка заметно дольше. Не вышло — обычный режим.
+                    extra = ["--offload-to-cpu", "--clip-on-cpu", "--diffusion-fa"] + (["--type", "q8_0"] if vram == "low" else [])
+                    cmds.insert(0, cmd[:-2] + extra + cmd[-2:])
             for cmd in cmds:
                 res = _run(cmd, out, stop)
                 if res is not None:

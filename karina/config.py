@@ -42,7 +42,7 @@ DEFAULTS: dict = {
     "coder": {"run": True, "max_steps": 16},
     # картинки по запросу: provider — auto (свой сервер, если указан адрес, иначе Pollinations) | pollinations | sd (AUTOMATIC1111 / Forge) | openai (свой сервер с OpenAI API);
     # url — адрес своего сервера (например http://127.0.0.1:7860), key — ключ (если нужен), model — имя модели (для openai)
-    "images": {"provider": "auto", "url": "", "key": "", "model": "", "local_model": "", "director": True, "variants": 4, "ask_count": True},
+    "images": {"provider": "auto", "url": "", "key": "", "model": "", "local_model": "", "director": True, "variants": 4, "ask_count": True, "vram": "balanced"},
     # бесплатные облачные модели (свои ключи): strategy — failover (по порядку, при исчерпании лимита — следующий) | spread (по кругу);
     # order — порядок провайдеров; providers — {id: {"enabled","key","model","url","name"}} (см. cloud.PRESETS)
     "cloud": {"strategy": "failover", "order": [], "providers": {}},

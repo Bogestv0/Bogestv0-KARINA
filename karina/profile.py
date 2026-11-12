@@ -2,6 +2,7 @@
 знает кличку питомца, а нейросеть получает короткую справку о вас (если не отключено в профиле)."""
 from __future__ import annotations
 import datetime, re
+from . import prompts
 from .textutil import plural
 
 PET_KINDS = {"dog": "собака", "cat": "кошка", "parrot": "попугай", "hamster": "хомяк", "rabbit": "кролик", "fish": "рыбки", "other": "питомец"}
@@ -138,15 +139,15 @@ def prompt_section(cfg) -> str:
         return ""
     bits = []
     if p["name"]:
-        bits.append(f"Пользователя зовут {p['name']}: обращайся по имени, но не в каждой фразе.")
+        bits.append(prompts.fill(prompts.PROFILE_NAME, name=p["name"]))
     a = age(p)
     if a is not None:
-        bits.append(f"Ему {years_word(a)}.")
+        bits.append(prompts.fill(prompts.PROFILE_AGE, age=years_word(a)))
     if p["city"]:
-        bits.append(f"Он живёт в городе {p['city']} (для погоды, времени и местных вопросов используй его, если не назван другой).")
+        bits.append(prompts.fill(prompts.PROFILE_CITY, city=p["city"]))
     if p["pets"]:
-        bits.append("Домашние животные: " + pets_text(p) + ". Можно к месту упомянуть их по кличке, но без навязчивости.")
-    return ("\nО пользователе: " + " ".join(bits)) if bits else ""
+        bits.append(prompts.fill(prompts.PROFILE_PETS, pets=pets_text(p)))
+    return (prompts.PROFILE_HEADER + " ".join(bits)) if bits else ""
 
 
 def match_pet(p: dict, text: str):

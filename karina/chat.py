@@ -2,7 +2,7 @@
 from __future__ import annotations
 import datetime, json, random, re, threading, time, uuid
 from pathlib import Path
-from . import coder as codermod, files as filesmod, images as imagesmod, imgdirector, localimg, net, research, websearch
+from . import coder as codermod, files as filesmod, images as imagesmod, imgdirector, localimg, net, prompts, research, websearch
 from .brain import Brain, BrainUnavailable
 from .config import DATA
 from .engine import EngineError
@@ -118,25 +118,15 @@ PROFILE_PROVIDER = lambda: ""      # noqa: E731  Ассистент подста
 
 def system_prompt(voice: bool = False, web: bool = False, files: bool = False, attached: bool = False) -> str:
     today = datetime.date.today().strftime("%d.%m.%Y")
-    access = ("Ты можешь пользоваться материалами из интернета, которые тебе дадут. " if web
-              else "Сейчас у тебя нет доступа к интернету: не утверждай, что что-то нашла в сети. ")
-    access += ("Пользователь приложил файлы: их содержимое дано в сообщении (раздел «Приложенные файлы»). Других файлов на компьютере ты не видишь и не меняешь; "
-               "ты можешь только прочитать приложенное и ответить в чате (разобрать код, найти ошибки, объяснить, предложить правки текстом). "
-               "Если нужно изменить файлы или написать проект — скажи, что для этого нужно включить переключатель «💻 Код» (он включён по умолчанию; когда он включён, файлы читает и правит Кодер). "
-               if attached else
-               "Читать и открывать файлы на компьютере ты не можешь: не утверждай, что открыла или прочитала файл. ")
-    p = ("Ты — Карина, помощник на компьютере пользователя. Отвечай по-русски (если не просят иначе), по делу и без воды. "
-         + FEMALE + " "
-         f"Сегодня {today}. {access}"
-         "Не выдумывай факты, цифры, имена и ссылки; если не уверена или не знаешь — скажи об этом прямо. "
-         "Знания могут быть устаревшими, для свежих событий предупреждай об этом. "
-         "Оформление: короткие абзацы, списки и **жирный** можно, код — в блоках ```.")
+    access = prompts.CHAT_ACCESS_WEB if web else prompts.CHAT_ACCESS_NO_WEB
+    access += prompts.CHAT_FILES_ATTACHED if attached else prompts.CHAT_FILES_NONE
+    p = prompts.fill(prompts.CHAT_SYSTEM, female=FEMALE, today=today, access=access)
     p += PROFILE_PROVIDER()
     if files:
         p += filesmod.prompt_section()
     if voice:
-        p += ("\nЭто голосовой запрос. Первой строкой напиши «ГОЛОС: » и 1–2 коротких предложения, которые Карина произнесёт вслух "
-              "(без списков, символов, ссылок и сокращений, числа словами, о себе — в женском роде). Затем пустая строка и подробный ответ.")
+        p += prompts.CHAT_VOICE
+    p += prompts.forbidden_block(prompts.FORBIDDEN_ALL, prompts.FORBIDDEN_CHAT)
     return p
 
 
@@ -472,7 +462,7 @@ class ChatService:
             step(f"Рисую вариант {v.n} из {total}: {label}… (обычно до минуты)")
             self.emit({"type": "chat_image", "chat": cid, "id": rid, "n": v.n, "status": "start", "label": label})
             try:
-                data, ext = localimg.generate(v.prompt, size, v.seed, v.model, v.negative, self._stop)
+                data, ext = localimg.generate(v.prompt, size, v.seed, v.model, v.negative, self._stop, imagesmod.imgdirector_vram(self.cfg))
                 f = self.files.create_bytes(f"{stem} - {v.n} {v.model}.{ext}", data)
             except Exception as e:           # не вышло у одной модели — остальные всё равно рисуем
                 if self._stop.is_set() or str(e) == "остановлено":

@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 import base64, json, random, re, threading, urllib.error, urllib.parse, urllib.request
+from . import prompts
 from .textutil import norm
 
 MAX_BYTES = 20 * 1024 * 1024
@@ -93,24 +94,18 @@ def pick_size(text: str, default: int = 768) -> tuple[int, int]:
 def prompt_request(user_text: str, previous: str = "") -> list[dict]:
     """Сообщения модели: переписать просьбу в английское описание для генератора картинок.
     previous — описание прошлой картинки: если пользователь просит её изменить, берём его за основу."""
-    sysmsg = (
-        "You write prompts for text-to-image models (Stable Diffusion / Flux). The user's request may be in Russian. "
-        "Reply with ONE line only: a detailed English prompt of comma-separated phrases (subject, appearance, clothing, pose, expression, setting, lighting, "
-        "art style, quality words like 'masterpiece, high detail'). Start with the art style and the main subject, then every concrete detail the user named "
-        "(weapon, colors, wounds, clothing, setting) — never drop or soften them. Keep everything the user asked for and add nothing that contradicts it. "
-        "If they ask for anime, begin with 'anime illustration, 2D, cel shading, flat colors, detailed anime eyes, lineart' and write the prompt as danbooru-style tags "
-        "(1girl / 1boy, hair color + hairstyle, eye color, expression, clothing, background). Anime means a flat 2D drawing: never use words like realistic, photo, 3D, render, skin pores. "
-        "Hands are the most common source of artifacts: unless the user explicitly asks for a pose with hands or an object in hands, frame the character as 'portrait, upper body' or "
-        "'bust shot' and keep hands out of frame or hidden (hands behind back, in pockets, in sleeves); do not invent held objects (books, phones, weapons) that the user did not name. "
-        "No explanations, no quotes, no markdown, no negative prompt, at most 70 words.")
+    sysmsg = prompts.IMAGE_WRITER_SYSTEM + prompts.forbidden_inline(prompts.FORBIDDEN_IMAGE_WRITER)
     user = user_text.strip()[:1500]
     if previous:
-        user = f"Previous prompt: {previous[:700]}\nThe user now asks (change the previous prompt accordingly, keep what they did not ask to change): {user}"
+        user = prompts.fill(prompts.IMAGE_WRITER_EDIT, previous=previous[:700], request=user)
     return [{"role": "system", "content": sysmsg}, {"role": "user", "content": user}]
 
 
 ANIME = re.compile(r"аниме|anime|манга|manga")
-ANIME_TAGS = "anime illustration, 2D, cel shading, flat colors, lineart, detailed anime eyes"
+# Теги стилей, «хвост» качества и негативные промпты лежат в prompts.py (раздел 7.2–7.3)
+ANIME_TAGS, ANIME_TAIL = prompts.ANIME_TAGS, prompts.ANIME_TAIL
+NEGATIVE, NEGATIVE_ANIME = prompts.NEGATIVE, prompts.NEGATIVE_ANIME
+STYLES, PRESETS = prompts.STYLES, prompts.PRESETS
 
 
 def style_prompt(prompt: str, user_text: str) -> str:
@@ -120,29 +115,6 @@ def style_prompt(prompt: str, user_text: str) -> str:
     if ANIME.search(norm(user_text)) and "2d" not in prompt.lower():
         return ANIME_TAGS + ", " + prompt
     return prompt
-
-
-ANIME_TAIL = "anime screencap, official art, clean sharp lineart, vibrant colors, soft cel shadows, best quality, very aesthetic"
-NEGATIVE = ("lowres, bad anatomy, bad hands, extra fingers, missing fingers, fused fingers, elongated fingers, long fingers, extra limbs, deformed, mutated, "
-            "blurry, worst quality, jpeg artifacts, text, watermark, signature")
-NEGATIVE_ANIME = NEGATIVE + ", 3d, realistic, photo, photorealistic, semi-realistic, render, doll, plastic skin, western cartoon"
-
-
-# Стили и пресеты: (признак в просьбе, теги, убрать из описания ли «плоский» аниме-стиль)
-STYLES = [
-    (r"акварел", "watercolor, soft pastel colors, paper texture, delicate brush strokes, light wash", True),
-    (r"чиби|chibi", "chibi, super deformed, big head, small body, cute, simple shapes, 2D", False),
-    (r"пиксел|пиксель|pixel", "pixel art, 16-bit, limited palette, sprite, crisp pixels", True),
-    (r"манг\w* |черно-бел|чёрно-бел|манга|monochrome", "manga style, monochrome, black and white, screentone, ink lineart, high contrast", True),
-    (r"неон|киберпанк|cyberpunk", "cyberpunk, neon lights, glowing, night city, vibrant magenta and cyan, cinematic lighting", False),
-    (r"ретро|90-х|90х|vhs", "retro anime, 1990s anime style, cel animation, slightly grainy, muted colors", False),
-    (r"в полный рост", "full body, standing, detailed outfit, simple background", False),
-]
-PRESETS = [
-    (r"аватар|юзерпик|userpic", "avatar, face focus, close-up portrait, centered, simple clean background, looking at viewer"),
-    (r"обои|обоев|wallpaper", "wallpaper, wide shot, scenic composition, detailed background, depth, beautiful lighting"),
-    (r"постер|poster", "poster, key visual, dynamic composition, dramatic lighting, strong focal point"),
-]
 
 
 def finish_prompt(prompt: str, user_text: str) -> str:
@@ -355,6 +327,12 @@ def via_openai(prompt: str, size: tuple[int, int], url: str, key: str, model: st
     raise ImageError("сервер картинок не прислал изображение.")
 
 
+def imgdirector_vram(cfg) -> str:
+    from . import localimg
+    v = ((cfg.get("images", {}) or {}) if cfg is not None else {}).get("vram")
+    return v if v in localimg.VRAM_MODES else localimg.DEFAULT_VRAM
+
+
 def settings(cfg) -> dict:
     c = (cfg.get("images", {}) or {}) if cfg is not None else {}
     prov = c.get("provider") if c.get("provider") in PROVIDERS else "auto"
@@ -402,7 +380,7 @@ def generate(cfg, prompt: str, size: tuple[int, int] = (768, 768), seed: int | N
             if p == "local":
                 from . import localimg
                 try:
-                    data, ext = localimg.generate(prompt, size, seed, s["local_model"], "", stop)
+                    data, ext = localimg.generate(prompt, size, seed, s["local_model"], "", stop, imgdirector_vram(cfg))
                 except localimg.LocalImgError as e:
                     raise ImageError(str(e))
             elif p == "pollinations":
