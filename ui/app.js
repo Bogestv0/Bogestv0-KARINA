@@ -15,7 +15,7 @@
     $$('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'apps') loadApps();
     if (b.dataset.tab === 'commands') loadCommands();
-    if (b.dataset.tab === 'models') { loadModels(); loadBrain(); loadCloud(); }
+    if (b.dataset.tab === 'models') { loadModels(); loadBrain(); loadCloud(); loadImg(); }
     if (b.dataset.tab === 'chat') openChatTab();
     if (b.dataset.tab === 'sound') loadOut(false);
     try { localStorage.setItem('karina.tab', b.dataset.tab); } catch (_) {}
@@ -153,7 +153,9 @@
       else if (ev.type === 'chat_start') chatStart(ev);
       else if (ev.type === 'chat_step') { if (ev.chat === chCur) setStep(ev.text); }
       else if (ev.type === 'chat_delta') { if (ev.chat === chCur && chBubble) renderMd(chBubble, ev.text); scrollChat(); }
+      else if (ev.type === 'chat_activity') actEvent(ev);
       else if (ev.type === 'chat_done') chatDone(ev);
+      else if (ev.type === 'images_test') { flash($('#imgMsg'), ev.text, !ev.ok); $('#imgTest').disabled = false; }
       else if (ev.type === 'search_test') { const b = $('#searchTest'); b.hidden = false; b.textContent = ev.lines.join('\n'); flash($('#searchMsg'), ev.ok ? 'Поиск работает' : 'Поиск не работает', !ev.ok); }
       else if (ev.type === 'cloud_test') { const r = $(`.cloud-row[data-pid="${ev.pid}"]`); if (r) { const o = $('.note', r); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Работает (${ev.sec} с): ${ev.text}` : ev.text; $$('button', r).forEach(b => b.disabled = false); } loadCloud(); loadBrain(); }
       else if (ev.type === 'brain_test') { const o = $('#brainTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Claude отвечает: «${ev.text}» (${ev.sec} с)` : ev.text; $('#brainTest').disabled = false; }
@@ -246,32 +248,119 @@
     row.insertBefore(d, row.querySelector('.meta'));
   }
   const fmtSize = n => n < 1024 ? n + ' Б' : n < 1048576 ? Math.round(n / 1024) + ' КБ' : (n / 1048576).toFixed(1) + ' МБ';
-  const KIND = { word: ['📄', 'Документ Word'], excel: ['📊', 'Таблица Excel'], pdf: ['📕', 'PDF'], svg: ['🖼', 'Схема SVG'], text: ['📝', 'Текстовый файл'], code: ['💻', 'Код'] };
+  const KIND = { word: ['📄', 'Документ Word'], excel: ['📊', 'Таблица Excel'], pdf: ['📕', 'PDF'], svg: ['🖼', 'Схема SVG'], text: ['📝', 'Текстовый файл'], code: ['💻', 'Код'], image: ['🎨', 'Изображение'] };
+  const PREVIEWABLE = /\.(html?|svg|png|jpe?g|webp|gif|md|txt|csv|json|py|js|mjs|ts|css|sql|xml|ya?ml|ini|toml)$/i;
+
+  // Предпросмотр: картинка / HTML-шаблон / текст. HTML — в изолированной рамке: без доступа к сети и к самой программе.
+  const CSP = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; font-src data:; script-src \'unsafe-inline\'">';
+  function previewBox(r) {
+    const box = el('div', 'pview');
+    if (r.type === 'image') { const i = el('img', 'pimg'); i.src = r.src; i.alt = ''; box.append(i); }
+    else if (r.type === 'html') {
+      const f = document.createElement('iframe'); f.className = 'pframe'; f.setAttribute('sandbox', 'allow-scripts'); f.referrerPolicy = 'no-referrer';
+      let h = String(r.html);
+      if (/<head[^>]*>/i.test(h)) h = h.replace(/<head[^>]*>/i, m => m + CSP);
+      else if (/<html[^>]*>/i.test(h)) h = h.replace(/<html[^>]*>/i, m => m + '<head>' + CSP + '</head>');
+      else h = CSP + h;
+      f.srcdoc = h; box.append(f);
+    } else { const pre = el('pre', 'ptext'); pre.append(el('code', '', String(r.text).slice(0, 60000))); box.append(pre); }
+    return box;
+  }
+  // кнопка «Просмотр» — раскрывает/скрывает предпросмотр под строкой; fetch() — функция, возвращающая {ok,result|error}
+  function previewToggle(host, msg, fetch) {
+    const b = el('button', 'btn', '👁 Просмотр'); let box = null;
+    b.onclick = async () => {
+      if (box) { box.remove(); box = null; b.textContent = '👁 Просмотр'; return; }
+      const r = await fetch();
+      if (!r || !r.ok) { msg.textContent = r ? r.error : 'Не получилось показать'; return; }
+      msg.textContent = ''; box = previewBox(r.result); host.append(box); b.textContent = '🙈 Скрыть';
+    };
+    return b;
+  }
   function attachFiles(row, files) {
     if (!files || !files.length || row.querySelector('.files')) return;
     const box = el('div', 'files');
     for (const f of files) {
       const card = el('div', 'fcard'), k = KIND[f.kind] || KIND.text, msg = el('div', 'fmsg');
-      if (f.kind === 'svg') {
-        const img = el('img', 'fprev'); img.alt = f.name; card.append(img);
-        call('file_preview', f.name).then(r => { if (r && r.ok) img.src = r.result; else img.remove(); });
-      }
       const line = el('div', 'fline'), t = el('div', 'ft');
       t.append(el('b', '', f.name), el('span', '', `${k[1]} · ${fmtSize(f.size)}` + (f.warning ? ' · ⚠ ' + f.warning : '')));
       const act = (name, label, primary) => { const b = el('button', 'btn' + (primary ? ' primary' : ''), label); b.onclick = async () => { const r = await call(name, f.name); msg.textContent = r && !r.ok ? r.error : ''; }; return b; };
-      line.append(el('span', 'ficon', k[0]), t, act('file_open', 'Открыть', true), act('file_reveal', 'В папке'));
-      card.append(line, msg); box.append(card);
+      line.append(el('span', 'ficon', k[0]), t);
+      if (PREVIEWABLE.test(f.name) && f.kind !== 'image' && f.kind !== 'svg') line.append(previewToggle(card, msg, () => call('file_preview_full', f.name)));
+      line.append(act('file_open', 'Открыть', true), act('file_reveal', 'В папке'));
+      card.append(line, msg);
+      if (f.kind === 'image' || f.kind === 'svg') {          // картинки показываем сразу
+        call('file_preview_full', f.name).then(r => { if (r && r.ok) card.insertBefore(previewBox(r.result), line); });
+      }
+      box.append(card);
     }
     row.querySelector('.bubble').after(box);
   }
   function setWho(row, brain) { const w = row.querySelector('.who'); if (w) w.textContent = brain ? 'Ответила: ' + brain : ''; }
-  function attachProject(row, pr) {
+  // Проект Кодера: кнопка папки + список файлов с предпросмотром (HTML-шаблон или картинку показываем сразу)
+  function attachProject(row, pr, autoPreview) {
     if (!pr || !pr.name || row.querySelector('.pcard')) return;
-    const box = el('div', 'pcard'); const b = el('button', 'btn primary', '📁 Открыть папку проекта'); const msg = el('span', 'msg err');
+    const box = el('div', 'pcard'); const top = el('div', 'ptop');
+    const b = el('button', 'btn primary', '📁 Открыть папку проекта'); const msg = el('span', 'msg err');
     b.onclick = async () => { const r = await call('coder_open', pr.name); msg.textContent = r && !r.ok ? r.error : ''; };
-    box.append(b, msg); row.querySelector('.bubble').after(box);
+    top.append(b, msg); box.append(top);
+    let first = null;
+    for (const f of (pr.files || [])) {
+      const item = el('div', 'pfile'), line = el('div', 'fline'), t = el('div', 'ft'), m2 = el('div', 'fmsg');
+      t.append(el('b', '', f.path), el('span', '', fmtSize(f.size)));
+      line.append(el('span', 'ficon', /\.(html?|svg|png|jpe?g|webp|gif)$/i.test(f.path) ? '🎨' : '📄'), t);
+      let pv = null;
+      if (PREVIEWABLE.test(f.path)) { pv = previewToggle(item, m2, () => call('project_preview', pr.name, f.path)); line.append(pv); if (!first && /\.(html?|svg|png|jpe?g|webp|gif)$/i.test(f.path)) first = pv; }
+      const o = el('button', 'btn', 'Открыть'); o.onclick = async () => { const r = await call('project_open_file', pr.name, f.path); m2.textContent = r && !r.ok ? r.error : ''; };
+      line.append(o); item.append(line, m2); box.append(item);
+    }
+    row.querySelector('.bubble').after(box);
+    if (autoPreview && first) first.click();
   }
-  function addMsg(role, text, id, steps, files, brain, filesIn, project) {
+
+  // ---------- лента действий Кодера: что сказала → что записала / запустила → что получилось ----------
+  let actNodes = [], actBox = null;
+  const ACT_ICON = { write: '✏', read: '📖', find: '🔎', run: '▶', warn: '⚠', start: '📂' };
+  function actNode(e) {
+    if (e.k === 'say') { const d = el('div', 'a-say'); renderMd(d, e.text || ''); return d; }
+    if (e.k === 'read' || e.k === 'warn' || e.k === 'start') return el('div', 'a-line' + (e.k === 'warn' ? ' warn' : ''), ACT_ICON[e.k] + ' ' + (e.text || ''));
+    const hasBody = e.k === 'write' ? !!e.preview : !!e.output;
+    const d = el('details', 'a-tool ' + (e.ok === true ? 'ok' : e.ok === false ? 'bad' : ''));
+    if (e.ok === false) d.open = true;
+    const sm = el('summary'); sm.append(el('span', 'a-ico', ACT_ICON[e.k] || '•'));
+    if (e.k === 'run') {
+      sm.append(el('code', 'a-cmd', e.cmd || e.text));
+      sm.append(el('span', 'a-state', e.ok === null || e.ok === undefined ? '⏳ выполняется…' : e.ok ? '✔ прошла' : '✖ не прошла' + (e.code != null ? ' (код ' + e.code + ')' : '')));
+    } else if (e.k === 'write') { sm.append(el('span', '', 'Записала '), el('code', 'a-cmd', e.path || ''), el('span', 'a-state', (e.lines ? e.lines + ' стр.' : ''))); }
+    else sm.append(el('span', '', e.text || ''));
+    d.append(sm);
+    if (hasBody) { const pre = el('pre', 'a-out'); pre.append(el('code', '', e.k === 'write' ? e.preview : e.output)); d.append(pre); }
+    return d;
+  }
+  function actEnsure(row) {
+    if (actBox && actBox.isConnected) return actBox;
+    const d = el('details', 'work'); d.open = true;
+    d.append(el('summary', '', '🛠 Ход работы'));
+    d.append(el('div', 'work-body'));
+    row.insertBefore(d, row.querySelector('.bubble')); actBox = d; return d;
+  }
+  function actCount(d, n) { d.querySelector('summary').textContent = '🛠 Ход работы · действий: ' + n; }
+  function actEvent(ev) {
+    if (ev.chat !== chCur || !chBubble) return;
+    const row = chBubble.parentElement, d = actEnsure(row), body = d.querySelector('.work-body');
+    const n = actNode(ev.entry);
+    if (ev.op === 'add') { actNodes[ev.index] = n; body.append(n); }
+    else if (actNodes[ev.index]) { actNodes[ev.index].replaceWith(n); actNodes[ev.index] = n; }
+    actCount(d, actNodes.filter(Boolean).length); scrollChat();
+  }
+  function renderActivity(row, list, collapse) {
+    if (!list || !list.length || row.querySelector('.work')) return;
+    const d = el('details', 'work'); d.append(el('summary', '', '🛠 Ход работы · действий: ' + list.length));
+    const body = el('div', 'work-body'); list.forEach(e => body.append(actNode(e))); d.append(body);
+    d.open = !collapse; row.insertBefore(d, row.querySelector('.bubble'));
+  }
+
+  function addMsg(role, text, id, steps, files, brain, filesIn, project, activity) {
     const m = $('#chMsgs'); const row = el('div', 'cmsg ' + role); if (id) row.dataset.id = id;
     const b = el('div', 'bubble');
     if (role === 'assistant') renderMd(b, text); else { b.textContent = text; if (filesIn && filesIn.length) b.append(el('div', 'attached', '📎 ' + filesIn.join(', '))); }
@@ -280,13 +369,19 @@
       const meta = el('div', 'meta');
       const c = el('button', 'link copy', 'Копировать'); c.onclick = () => { try { navigator.clipboard.writeText(b.innerText); c.textContent = 'Скопировано'; setTimeout(() => c.textContent = 'Копировать', 1500); } catch (_) {} };
       meta.append(c, el('span', 'who')); row.append(meta);
-      attachProject(row, project); attachFiles(row, files); attachSteps(row, steps); setWho(row, brain);
+      renderActivity(row, activity, true); attachProject(row, project); attachFiles(row, files); attachSteps(row, steps); setWho(row, brain);
     }
     m.append(row); scrollChat(); return b;
   }
   function showWelcome() {
     const m = $('#chMsgs'); m.textContent = '';
-    const w = el('div', 'empty'); w.textContent = 'Задайте вопрос или опишите задачу. Нужно посмотреть или изменить код — приложите файлы кнопкой 📎 и напишите, что сделать: я отвечу здесь же (разберу код или напишу и проверю его в папке проекта, ваши файлы не меняются). Голосом: «Карина, объясни…» или «Карина, найди и напиши отчёт про…» — коротко отвечу вслух, подробности будут здесь.';
+    const w = el('div', 'empty');
+    w.append(el('b', '', 'Что будем делать?'));
+    for (const t of ['Перетащите сюда файлы, папку или zip-архив с проектом и напишите, что сделать, — я прочитаю всё, напишу или перепишу код, проверю запуском и отдам готовые файлы. Ваши оригиналы не меняются.',
+                     'Опишите программу или оформление (страница, макет, шаблон) — сделаю и покажу прямо здесь, в окне.',
+                     'Попросите нарисовать: «нарисуй аниме-девушку с белыми волосами» — картинка появится в чате.',
+                     'Переключатель «💻 Код» над полем ввода включён по умолчанию; выключите его, если нужен только разговор.'])
+      w.append(el('p', '', t));
     m.append(w);
   }
   async function loadChatList() {
@@ -303,7 +398,7 @@
     const c = await call('chat_get', id); if (!c) return;
     chCur = id; chBubble = null; $('#chMsgs').textContent = '';
     if (!c.messages.length) showWelcome();
-    for (const m of c.messages) addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain, m.files_in, m.project);
+    for (const m of c.messages) addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain, m.files_in, m.project, m.activity);
     loadChatList(); scrollChat();
   }
   async function openChatTab() {
@@ -317,58 +412,131 @@
   function chatStart(ev) {
     if (!chCur || ev.chat !== chCur) { chCur = ev.chat; $('#chMsgs').textContent = ''; }
     const w = $('#chMsgs .empty'); if (w) w.remove();
+    actNodes = []; actBox = null;
     addMsg('user', ev.user.text, ev.user.id, null, null, null, ev.user.files_in); chBubble = addMsg('assistant', '', ev.reply_id); chBubble.classList.add('typing');
     setBusy(true); setStep('Думаю…'); loadChatList();
   }
   function chatDone(ev) {
-    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); attachProject(chBubble.parentElement, ev.project); attachFiles(chBubble.parentElement, ev.files); attachSteps(chBubble.parentElement, ev.steps); setWho(chBubble.parentElement, ev.brain); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
+    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); if (actBox && actNodes.length > 10) actBox.open = false; actBox = null; attachProject(chBubble.parentElement, ev.project, true); attachFiles(chBubble.parentElement, ev.files); attachSteps(chBubble.parentElement, ev.steps); setWho(chBubble.parentElement, ev.brain); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
     if (ev.chat === chCur) setBusy(false);
     loadChatList(); scrollChat();
   }
   $('#chNew').onclick = async () => { const c = await call('chat_new'); if (c) { chCur = c.id; showWelcome(); loadChatList(); $('#chText').focus(); } };
   $('#chForm').addEventListener('submit', async e => {
-    e.preventDefault(); const t = $('#chText'); const text = t.value.trim(); if (!text || chBusy) return;
+    e.preventDefault(); const t = $('#chText'); const text = t.value.trim(); if (!text || chBusy || chUp) return;
     t.value = ''; t.style.height = '';
     const wm = webMode(); const paths = chPaths.slice();
-    const r = await call('chat_send', chCur || '', text, wm === 'always' ? true : wm === 'off' ? false : null, paths, chCodeMode);
-    if (r && !r.ok) { t.value = text; setStep(r.error); } else if (r) { chPaths = []; renderAttach(); }
+    const r = await call('chat_send', chCur || '', text, wm === 'always' ? true : wm === 'off' ? false : null, paths, chatMode());
+    if (r && !r.ok) { t.value = text; setStep(r.error); } else if (r) { chPaths = []; chMeta = {}; renderAttach(); }
   });
   $('#chText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chForm').requestSubmit(); } });
   $('#chText').addEventListener('input', e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight) + 'px'; });
   $('#chStop').onclick = () => call('chat_stop');
 
-  // приложенные файлы, режим «Код» и разрешение запуска
-  let chPaths = [], chCodeMode = 'auto';
-  try { const v = localStorage.getItem('karina.codeMode'); if (['auto', 'code', 'ask'].includes(v)) chCodeMode = v; } catch (_) {}
+  // приложенные файлы, переключатель «Код» и разрешение запуска
+  let chPaths = [], chMeta = {}, chCodeOn = true, chUp = 0;
+  try { if (localStorage.getItem('karina.code') === '0') chCodeOn = false; } catch (_) {}
   const baseName = p => p.split(/[\\/]/).pop();
+  const chatMode = () => chCodeOn ? 'auto' : 'ask';
   function renderAttach() {
-    const box = $('#chAttach'); box.textContent = ''; box.hidden = !chPaths.length;
+    const box = $('#chAttach'); box.textContent = ''; box.hidden = !chPaths.length && !chUp;
     chPaths.forEach((p, i) => {
+      const meta = chMeta[p] || {};
       const c = el('div', 'chip'); c.title = p; const x = el('button', '', '×'); x.type = 'button'; x.title = 'Убрать';
-      x.onclick = () => { chPaths.splice(i, 1); renderAttach(); }; c.append(el('span', '', baseName(p)), x); box.append(c);
+      x.onclick = () => { if (meta.temp) call('upload_discard', p); chPaths.splice(i, 1); delete chMeta[p]; renderAttach(); };
+      c.append(el('span', '', (meta.icon || '📎') + ' ' + (meta.label || baseName(p))), x); box.append(c);
     });
+    if (chUp) { const c = el('div', 'chip busy'); c.append(el('span', '', '⏳ Загружаю: ' + chUpText)); box.append(c); }
   }
+  let chUpText = '';
   async function pickAttach(folder) {
     const r = await call('coder_pick', !!folder);
-    for (const p of (r || [])) if (!chPaths.includes(p)) chPaths.push(p);
+    for (const p of (r || [])) if (!chPaths.includes(p)) { chPaths.push(p); chMeta[p] = { icon: folder ? '📂' : (/\.(zip|tar|tgz|gz)$/i.test(p) ? '📦' : '📎') }; }
     renderAttach(); $('#chText').focus();
   }
   $('#chPick').onclick = () => pickAttach(false);
   $('#chPickDir').onclick = () => pickAttach(true);
-  const CODE_LABEL = { auto: '💻 Код: авто', code: '💻 Код: всегда', ask: '💻 Код: только чат' };
-  function showCode() { const b = $('#chCode'); b.textContent = CODE_LABEL[chCodeMode]; b.classList.toggle('on', chCodeMode === 'code'); }
-  $('#chCode').onclick = () => {
-    const order = ['auto', 'code', 'ask']; chCodeMode = order[(order.indexOf(chCodeMode) + 1) % 3]; showCode();
-    try { localStorage.setItem('karina.codeMode', chCodeMode); } catch (_) {}
-  };
-  function showRun(on) { const b = $('#chRun'); b.textContent = on ? '▶ Запуск кода: вкл' : '▶ Запуск кода: выкл'; b.classList.toggle('on', !!on); b.dataset.on = on ? '1' : ''; }
+
+  // --- перетаскивание и вставка файлов: окно читает файл и передаёт байты кусками (путь на диске из браузера не узнать) ---
+  const CHUNK = 700 * 1024, MAX_ONE = 80 * 1024 * 1024;
+  const b64 = buf => { let s = '', a = new Uint8Array(buf); for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return btoa(s); };
+  async function entryFiles(entry, base) {
+    if (entry.isFile) return [await new Promise((res, rej) => entry.file(f => res({ file: f, rel: base + f.name }), rej))];
+    const out = [], rd = entry.createReader();
+    for (;;) {
+      const part = await new Promise((res, rej) => rd.readEntries(res, rej)); if (!part.length) break;
+      for (const e of part) out.push(...await entryFiles(e, base + entry.name + '/'));
+    }
+    return out;
+  }
+  async function collectDrop(dt) {
+    const items = [...(dt.items || [])].filter(i => i.kind === 'file');
+    const entries = items.map(i => ({ entry: i.webkitGetAsEntry ? i.webkitGetAsEntry() : null, file: i.getAsFile() }));   // синхронно: после await данные пропадут
+    const out = [];
+    if (!entries.length) for (const f of (dt.files || [])) out.push({ file: f, rel: f.name, top: f.name });
+    for (const { entry, file } of entries) {
+      try {
+        if (entry && entry.isDirectory) { const list = await entryFiles(entry, ''); list.forEach(x => x.top = entry.name); out.push(...list); }
+        else if (file) out.push({ file, rel: file.name, top: file.name });
+      } catch (_) { if (file) out.push({ file, rel: file.name, top: file.name }); }
+    }
+    return out;
+  }
+  async function uploadList(list) {
+    if (!list.length) return;
+    const batch = Math.random().toString(36).slice(2, 12), tops = new Map(); let done = 0, errs = [];
+    chUp++; chUpText = list.length + ' файл.'; renderAttach();
+    for (const { file, rel, top } of list) {
+      chUpText = `${++done} из ${list.length} · ${file.name}`; renderAttach();
+      if (file.size > MAX_ONE) { errs.push(`«${file.name}» больше ${MAX_ONE / 1048576} МБ`); continue; }
+      const b = await call('upload_begin', rel, file.size, batch);
+      if (!b || !b.ok) { if (b && !b.skipped) errs.push(b.error); continue; }
+      let ok = true;
+      for (let off = 0; off < file.size || off === 0; off += CHUNK) {
+        const buf = await file.slice(off, off + CHUNK).arrayBuffer();
+        const r = buf.byteLength ? await call('upload_chunk', b.token, b64(buf)) : { ok: true };
+        if (!r || !r.ok) { ok = false; errs.push(r ? r.error : 'сбой передачи'); break; }
+        if (file.size === 0) break;
+      }
+      const e = ok ? await call('upload_end', b.token) : null;
+      if (ok && e && e.ok) { const t = tops.get(b.top) || { n: 0, dir: top !== rel || rel.includes('/') }; t.n++; tops.set(b.top, t); }
+    }
+    chUp--;
+    for (const [p, t] of tops) if (!chPaths.includes(p)) {
+      chPaths.push(p);
+      const isArc = /\.(zip|tar|tgz|gz|bz2|xz)$/i.test(p);
+      chMeta[p] = { temp: true, icon: t.dir ? '📂' : isArc ? '📦' : '📎', label: baseName(p) + (t.dir ? ` (${t.n} файл.)` : '') };
+    }
+    renderAttach();
+    if (errs.length) setStep('⚠ ' + errs.slice(0, 2).join('; '), 8000);
+    $('#chText').focus();
+  }
+  const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+  let dragDepth = 0;
+  // браузер по умолчанию «открывает» брошенный файл вместо страницы — запрещаем это во всём окне
+  window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', e => { if (hasFiles(e)) e.preventDefault(); });
+  document.addEventListener('dragenter', e => { if (hasFiles(e)) { dragDepth++; $('#chDrop').hidden = false; const b = $('#tabs [data-tab="chat"]'); if (b && !$('#tab-chat').classList.contains('on')) b.click(); } });
+  document.addEventListener('dragleave', e => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; $('#chDrop').hidden = true; } });
+  document.addEventListener('drop', async e => {
+    if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; $('#chDrop').hidden = true;
+    uploadList(await collectDrop(e.dataTransfer));
+  });
+  $('#chText').addEventListener('paste', e => {
+    const fl = [...((e.clipboardData && e.clipboardData.files) || [])]; if (!fl.length) return;
+    e.preventDefault(); uploadList(fl.map(f => ({ file: f, rel: f.name, top: f.name })));
+  });
+
+  function showCode() { const b = $('#chCode'); b.classList.toggle('on', chCodeOn); b.setAttribute('aria-checked', chCodeOn ? 'true' : 'false'); }
+  $('#chCode').onclick = () => { chCodeOn = !chCodeOn; showCode(); try { localStorage.setItem('karina.code', chCodeOn ? '1' : '0'); } catch (_) {} };
+  function showRun(on) { const b = $('#chRun'); b.classList.toggle('on', !!on); b.setAttribute('aria-checked', on ? 'true' : 'false'); b.dataset.on = on ? '1' : ''; }
   $('#chRun').onclick = async () => {
     const turnOn = !$('#chRun').dataset.on;
     if (turnOn && !confirm('Разрешить Карине запускать написанный ею код для проверки?\n\nЭто не песочница: программа выполняется с вашими правами. Разрешены только python, pytest и node, без сети, подпроцессов и удаления файлов (Карина проверяет код перед запуском). Нужен установленный Python или Node.js.')) return;
     const s = await call('coder_set', turnOn); if (s) showRun(s.run);
   };
   async function loadCoderState() { const s = await call('coder_state'); if (s) showRun(s.settings.run); }
-  showCode();
+  showCode(); showRun(true);
   $('#chFolder').onclick = async () => { const r = await call('files_open_folder'); if (r && !r.ok) setStep(r.error, 5000); };
   const WEB_LABEL = { auto: '🌐 Поиск: авто', always: '🌐 Поиск: вкл', off: '🌐 Поиск: выкл' };
   const webMode = () => ((cfg && cfg.search) || {}).mode || 'auto';
@@ -381,6 +549,17 @@
     const box = $('#searchTest'); box.hidden = false; box.textContent = 'Проверяю…'; call('search_test');
   };
   document.addEventListener('click', e => { const a = e.target.closest('a[data-href]'); if (a) { e.preventDefault(); call('open_url', a.dataset.href); } });
+
+  // ---------- картинки ----------
+  function renderImg(st) {
+    if (!st) return;
+    $('#imgProvider').value = st.provider; $('#imgUrl').value = st.url || ''; $('#imgModel').value = st.model || ''; $('#imgKey').value = '';
+    $('#imgKeyClear').hidden = !st.has_key;
+  }
+  async function loadImg() { renderImg(await call('images_state')); }
+  $('#imgSave').onclick = async () => { const st = await call('images_set', $('#imgProvider').value, $('#imgUrl').value, $('#imgModel').value, $('#imgKey').value); renderImg(st); flash($('#imgMsg'), 'Сохранено'); };
+  $('#imgKeyClear').onclick = async () => { renderImg(await call('images_clear_key')); flash($('#imgMsg'), 'Ключ удалён'); };
+  $('#imgTest').onclick = async () => { await $('#imgSave').onclick(); $('#imgTest').disabled = true; $('#imgMsg').classList.remove('err'); $('#imgMsg').textContent = 'Рисую пробную картинку…'; call('images_test'); };
 
   // ---------- обновления ----------
   function showUpdate(u) {

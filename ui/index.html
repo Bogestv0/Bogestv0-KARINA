@@ -101,21 +101,22 @@
       <div class="chat-list" id="chList"></div>
       <button class="btn" id="chFolder" title="Открыть папку «Документы\Карина», куда сохраняются созданные файлы">📁 Папка с файлами</button>
     </aside>
-    <div class="card chat-main">
+    <div class="card chat-main" id="chMain">
+      <div class="dropzone" id="chDrop" hidden><div><b>Отпустите, чтобы приложить</b><span>файлы, папки или архивы (zip) — Карина их прочитает и разберёт</span></div></div>
       <div class="chat-msgs" id="chMsgs"></div>
       <div class="chat-step" id="chStep" hidden></div>
       <form class="chat-input" id="chForm">
         <div class="chat-tools">
           <button class="btn" type="button" id="chBrain" title="Кто отвечает: локальная модель → Claude → авто (простое локально, сложное в Claude)">🧠 Мозг: локальный</button>
           <button class="btn" type="button" id="chWeb" title="Поиск в интернете: авто (когда просьба этого требует) → всегда → выключен">🌐 Поиск: авто</button>
-          <button class="btn" type="button" id="chCode" title="Что делать с кодом и приложенными файлами: авто (если просите написать или изменить — работает Кодер, иначе просто читаю и отвечаю) → всегда Кодер → только ответ в чате">💻 Код: авто</button>
-          <button class="btn" type="button" id="chRun" title="Разрешить Кодеру запускать написанный код для проверки. Запуск — не песочница: программа выполняется с вашими правами. Только python, pytest и node, без сети, подпроцессов и удаления файлов.">▶ Запуск кода: выкл</button>
+          <button class="btn switch" type="button" id="chCode" role="switch" aria-checked="true" title="Кодер включён: приложите файлы, папку или архив (или просто опишите программу) — я сама прочитаю, напишу код, проверю запуском и отдам готовые файлы. Выключите, если нужен только обычный разговор.">💻 Код<i></i></button>
+          <button class="btn switch" type="button" id="chRun" role="switch" aria-checked="true" title="Запускать написанный код для проверки (python, pytest, node). Это не песочница: программа выполняется с вашими правами; сеть, подпроцессы и удаление файлов в коде запрещены.">▶ Проверка запуском<i></i></button>
         </div>
         <div class="chat-attach" id="chAttach" hidden></div>
         <div class="chat-row">
-          <button class="btn" type="button" id="chPick" title="Приложить файлы к сообщению">📎</button>
-          <button class="btn" type="button" id="chPickDir" title="Приложить папку к сообщению">📂</button>
-          <textarea id="chText" rows="1" placeholder="Спросите что угодно или опишите задачу (Enter — отправить)"></textarea>
+          <button class="btn" type="button" id="chPick" title="Приложить файлы (можно и просто перетащить их в окно)">📎</button>
+          <button class="btn" type="button" id="chPickDir" title="Приложить папку целиком (можно и просто перетащить)">📂</button>
+          <textarea id="chText" rows="1" placeholder="Опишите задачу, перетащите сюда файлы, папку или zip… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
           <button class="btn primary" type="submit" id="chSend">Отправить</button>
           <button class="btn danger" type="button" id="chStop" hidden>Стоп</button>
         </div>
@@ -181,6 +182,30 @@
       </select></label></div>
     <div class="cloud-list" id="cloudList"></div>
     <p class="muted small">Текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы уходят выбранному провайдеру по вашему ключу. Файлы с компьютера не отправляются. Ключи хранятся только на этом компьютере. Условия и лимиты бесплатных тарифов провайдеры меняют сами, а доступность из некоторых стран может быть ограничена.</p>
+  </div>
+  <div class="card" id="imgCard">
+    <div class="eyebrow">Картинки</div>
+    <p class="muted small">Карина рисует по просьбе: «нарисуй аниме-девушку с белыми волосами», «сделай обои с горами». Текстовая модель сама не рисует: она пишет подробное описание, а картинку создаёт генератор. По умолчанию это бесплатный сервис Pollinations (нужен интернет, ключ не нужен). Если он недоступен из вашей страны или нужна работа без интернета, подключите свой сервер Stable Diffusion (AUTOMATIC1111 / Forge, запуск с ключом <code>--api</code>) или любой сервис с OpenAI-совместимым API.</p>
+    <div class="form">
+      <label>Чем рисовать
+        <select id="imgProvider">
+          <option value="auto">Авто: свой сервер, если адрес указан, иначе Pollinations</option>
+          <option value="pollinations">Pollinations (бесплатно, через интернет)</option>
+          <option value="sd">Свой сервер Stable Diffusion (AUTOMATIC1111 / Forge)</option>
+          <option value="openai">Свой сервер с OpenAI-совместимым API картинок</option>
+        </select>
+      </label>
+      <label>Адрес своего сервера<input id="imgUrl" placeholder="http://127.0.0.1:7860" autocomplete="off"></label>
+      <label>Модель (для OpenAI-совместимого)<input id="imgModel" placeholder="необязательно" autocomplete="off"></label>
+      <label>Ключ (если нужен)<input id="imgKey" type="password" placeholder="оставьте пустым, чтобы не менять" autocomplete="off"></label>
+      <div class="form-actions">
+        <button class="btn primary" type="button" id="imgSave">Сохранить</button>
+        <button class="btn" type="button" id="imgTest">Проверить: нарисовать пробную</button>
+        <button class="btn" type="button" id="imgKeyClear" hidden>Забыть ключ</button>
+        <span class="msg" id="imgMsg"></span>
+      </div>
+    </div>
+    <p class="muted small">Описание картинки уходит выбранному сервису: Pollinations — это сторонний сервер, «свой сервер» — ваш компьютер или сервис, который вы указали.</p>
   </div>
   <div class="card">
     <div class="eyebrow">Встроенные модели</div>

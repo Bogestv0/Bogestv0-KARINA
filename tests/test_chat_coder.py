@@ -17,26 +17,42 @@ class FakeBrain:
 
 
 class Route(unittest.TestCase):
-    def test_with_files(self):
-        self.assertEqual(route("исправь ошибку в main.py", True, False), "code")
-        self.assertEqual(route("добавь тесты к приложенному коду", True, False), "code")
-        for t in ("посмотри код и скажи, что не так", "объясни, что делает этот файл", "найди ошибку в коде", "сделай ревью"):
-            self.assertEqual(route(t, True, False) if t != "сделай ревью" else "chat", "chat", t)
+    def test_files_go_to_agent_by_default(self):
+        """Приложены файлы и «Код» включён: работает агент — и для «сделай», и для «посмотри» (он читает архивы и большие проекты по частям)."""
+        for t in ("исправь ошибку в main.py", "добавь тесты к приложенному коду", "посмотри написаный код в файле", "вот что я хочу сделать", "переделай по описанию"):
+            self.assertEqual(route(t, True, False), "code", t)
+
+    def test_small_files_just_read(self):
+        for t in ("посмотри код и скажи, что не так", "объясни, что делает этот файл", "найди ошибку в коде"):
+            self.assertEqual(route(t, True, False, light=True), "chat", t)
+        self.assertEqual(route("исправь ошибку", True, False, light=True), "code")           # просят изменить — агент
+        self.assertEqual(route("посмотри код", True, False, light=False), "code")           # архив, папка, большой файл — агент
 
     def test_without_files(self):
         self.assertEqual(route("напиши программу, которая считает сумму по месяцам, с тестами", False, False), "code")
+        self.assertEqual(route("создай скрипт для переименования файлов", False, False), "code")           # скрипты тоже пишем и проверяем
+        self.assertEqual(route("сделай шаблон страницы для кофейни", False, False), "code")               # оформление: агент + предпросмотр
         self.assertEqual(route("напиши привет как дела", False, False), "chat")
         self.assertEqual(route("объясни, что такое декоратор", False, False), "chat")
-        self.assertEqual(route("создай скрипт для переименования файлов", False, False), "chat")     # мелочь — остаётся обычным файлом в чате
+        self.assertEqual(route("напиши письмо начальнику", False, False), "chat")
+        self.assertEqual(route("создай документ Word с планом проекта", False, False), "chat")           # документ — это файл, а не программа
 
     def test_follow_up_in_project(self):
         self.assertEqual(route("добавь в код обработку ошибок", False, True), "code")
+        self.assertEqual(route("посмотри, что не так с тестом", False, True), "code")
         self.assertEqual(route("добавь в отчёт абзац про цены", False, True), "chat")                 # не про код
 
     def test_modes_and_voice(self):
         self.assertEqual(route("привет", False, False, mode="code"), "code")
-        self.assertEqual(route("исправь main.py", True, True, mode="ask"), "chat")
+        self.assertEqual(route("исправь main.py", True, True, mode="ask"), "chat")                   # «Код» выключен — только чат
         self.assertEqual(route("напиши программу для расчёта", False, False, voice=True), "chat")
+
+    def test_images(self):
+        self.assertEqual(route("Сделай изображения аниме девушки с белыми волосами", False, False), "image")
+        self.assertEqual(route("нарисуй кота", False, False, mode="ask"), "image")                    # картинки работают и при выключенном «Коде»
+        self.assertEqual(route("нарисуй схему базы данных", False, False), "chat")                   # схема — это SVG-файл, не картинка
+        self.assertEqual(route("ещё вариант", False, False, last_image=True), "image")
+        self.assertEqual(route("ещё вариант", False, False, last_image=False), "chat")
 
 
 def make(replies):
@@ -65,13 +81,16 @@ class InChat(unittest.TestCase):
         user, reply = c["messages"]
         self.assertEqual(user["files_in"], ["data.txt"])
         self.assertIn("Готово: calc.py", reply["text"])
-        self.assertIn("`calc.py`", reply["text"])                                   # список файлов проекта — в ответе
+        self.assertEqual(sorted(f["path"] for f in reply["project"]["files"]), ["calc.py", "t.py"])   # файлы проекта — карточками
         self.assertTrue(reply["project"]["ok"])
         self.assertEqual(c["project"], reply["project"]["name"])
-        self.assertTrue(any(s.startswith("✏") for s in reply["steps"]))             # «Ход работы» сохранён
+        kinds = [a["k"] for a in reply["activity"]]                                  # лента действий сохранена: слова → записи → запуск
+        self.assertEqual(kinds[:1], ["start"]); self.assertIn("say", kinds); self.assertIn("write", kinds); self.assertIn("run", kinds)
+        run = [a for a in reply["activity"] if a["k"] == "run"][0]
+        self.assertEqual((run["cmd"], run["ok"]), ("python t.py", True))
         types = [e["type"] for e in ev]
         self.assertEqual(types[0], "chat_start"); self.assertEqual(types[-1], "chat_done")
-        self.assertIn("chat_delta", types); self.assertIn("chat_step", types)
+        self.assertIn("chat_activity", types); self.assertIn("chat_step", types)
         self.assertNotIn("coder", types)                                            # в окно идут события чата, а не отдельной вкладки
         self.assertFalse(svc.busy); self.assertFalse(svc.coder.busy)
 
@@ -87,7 +106,7 @@ class InChat(unittest.TestCase):
         self.assertIn("ПРОДОЛЖЕНИЕ", seen); self.assertIn("calc.py", seen)
         self.assertIn("напиши программу сложения", seen)                            # прежняя переписка видна кодеру
 
-    def test_attached_files_without_change_request_are_just_read(self):
+    def test_small_file_with_question_is_just_read(self):
         svc, model, ev, tmp = make(["В строке 2 деление на ноль."])
         src = tmp / "bug.py"
         src.write_text("def f(x):\n    return 1 / 0\n", "utf-8")
@@ -101,12 +120,52 @@ class InChat(unittest.TestCase):
         self.assertIn("Приложенные файлы", sent[0]["content"])                      # а в подсказке нет «не могу читать файлы»
         self.assertNotIn("Читать и открывать файлы на компьютере ты не можешь", sent[0]["content"])
 
-    def test_big_attachment_is_reported_not_silently_cut(self):
-        svc, model, ev, tmp = make(["Ок"])
+    def test_big_attachment_goes_to_agent_who_reads_in_parts(self):
+        svc, model, ev, tmp = make(["[[ЧИТАТЬ: input/big.py:1-3]]", "[[ГОТОВО]]Файл состоит из одинаковых строк.[[/ГОТОВО]]"])
         src = tmp / "big.py"
         src.write_text("x = 1\n" * 10000, "utf-8")
         cid = svc.send(None, "посмотри код", paths=[str(src)], wait=True)
-        self.assertIn("не поместился", svc.store.get(cid)["messages"][1]["text"])
+        self.assertIn("Файл состоит", svc.store.get(cid)["messages"][1]["text"])
+        self.assertIn("1: x = 1", model.seen[1][-1]["content"])                     # прочитан кусок со строками, а не весь файл
+
+    def test_image_turn(self):
+        from karina import images
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 50
+        orig = images.generate
+        seen = {}
+        def fake(cfg, prompt, size=(768, 768), seed=None, stop=None):
+            seen["prompt"], seen["size"] = prompt, size
+            return png, "png", "Тестовый сервис"
+        images.generate = fake
+        try:
+            svc, model, ev, tmp = make(["1girl, anime style, long white hair, masterpiece, high detail"])
+            cid = svc.send(None, "Сделай изображения аниме девушки с белыми волосами", wait=True)
+            reply = svc.store.get(cid)["messages"][1]
+            self.assertEqual(seen["prompt"], "1girl, anime style, long white hair, masterpiece, high detail")      # модель написала описание
+            self.assertEqual(reply["files"][0]["kind"], "image")
+            self.assertTrue((tmp / "Карина" / reply["files"][0]["name"]).read_bytes().startswith(b"\x89PNG"))
+            self.assertIn("нарисовала", reply["text"]); self.assertEqual(reply["image_prompt"], seen["prompt"])
+            # «ещё вариант» — продолжает ту же картинку, прежнее описание передаётся модели
+            model.replies.append("1girl, anime, long white hair, forest background")
+            svc.send(cid, "сделай фон лесом", wait=True)
+            self.assertIn("long white hair, masterpiece", model.seen[-1][-1]["content"])
+            self.assertEqual(seen["prompt"], "1girl, anime, long white hair, forest background")
+        finally:
+            images.generate = orig
+
+    def test_image_error_is_explained(self):
+        from karina import images
+        orig = images.generate
+        def boom(*a, **k): raise images.ImageError("нет связи с сервисом картинок")
+        images.generate = boom
+        try:
+            svc, model, ev, tmp = make(["anime girl"])
+            cid = svc.send(None, "нарисуй кота", wait=True)
+            reply = svc.store.get(cid)["messages"][1]
+            self.assertIn("Не получилось нарисовать", reply["text"]); self.assertIn("нет связи", reply["text"])
+            self.assertFalse(svc.busy)
+        finally:
+            images.generate = orig
 
     def test_error_and_stop(self):
         svc, model, ev, tmp = make([])
