@@ -18,7 +18,7 @@ from .textutil import norm
 MAX_BYTES = 20 * 1024 * 1024
 TIMEOUT = 150
 PROVIDERS = ("auto", "local", "pollinations", "sd", "openai")
-PROVIDER_LABEL = {"local": "встроенный аниме-генератор", "pollinations": "Pollinations", "sd": "свой сервер Stable Diffusion", "openai": "свой сервер (OpenAI API)"}
+PROVIDER_LABEL = {"local": "встроенный генератор", "pollinations": "Pollinations", "sd": "свой сервер Stable Diffusion", "openai": "свой сервер (OpenAI API)"}
 POLLINATIONS_URLS = ("https://image.pollinations.ai/prompt/{prompt}", "https://gen.pollinations.ai/image/{prompt}")
 UA = {"User-Agent": "Bogestv0-KARINA"}
 
@@ -363,10 +363,11 @@ def chain(cfg, request: str = "") -> list[str]:
     out = []
     if localimg.ready():
         out.append("local")
+    general = bool((localimg.pick_installed(s["local_model"]) or {}).get("general"))      # универсальная модель (FLUX.2) рисует и не аниме
     if s["url"]:
         out.append("sd")
     out.append("pollinations")
-    if "local" in out and not _is_anime(request) and "pollinations" in out:
+    if "local" in out and not general and not _is_anime(request) and "pollinations" in out:
         out.remove("local")                                       # обычные картинки (не аниме) лучше у Flux; встроенный — запасной
         out.append("local")
     return out

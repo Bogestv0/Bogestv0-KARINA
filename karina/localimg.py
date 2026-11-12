@@ -1,4 +1,4 @@
-"""Встроенный генератор картинок: stable-diffusion.cpp + аниме-модель SDXL прямо на этом компьютере.
+"""Встроенный генератор картинок: stable-diffusion.cpp + локальная модель (аниме SDXL или FLUX.2 Klein) прямо на этом компьютере.
 
 Без интернета (после одной загрузки), без водяного знака и без привязки к текстовой модели: текстовая модель только пишет описание,
 а рисует отдельная картинка-модель. Поэтому аниме получается одинаково хорошо с любой выбранной текстовой моделью.
@@ -34,7 +34,38 @@ CATALOG: list[dict] = [
      "negative": "lowres, worst quality, low quality, bad anatomy, bad hands, extra digits, fewer digits, jpeg artifacts, signature, watermark, username, blurry, artist name",
      "desc": "Альтернатива: больше разных стилей и персонажей. Если на Hugging Face потребуется принять условия, Карина скажет об этом при скачивании."},
 ]
-DEFAULT_ID = "animagine4"
+# FLUX.2 Klein 4B (Apache-2.0): быстрая универсальная модель (4 шага), рисует и фото, и иллюстрации, и аниме, понимает русские/английские описания.
+# Состоит из трёх файлов: сама модель (GGUF), VAE и текстовый энкодер Qwen3-4B (GGUF). Для каждого перечислены запасные репозитории.
+KLEIN_REPOS = ("leejet/FLUX.2-klein-4B-GGUF", "unsloth/FLUX.2-klein-4B-GGUF", "MXKA/FLUX.2-klein-4B-GGUF", "w3ss/FLUX.2-klein-4B-GGUF")
+CATALOG.insert(0, {
+    "id": "flux2klein", "title": "FLUX.2 Klein 4B", "kind": "flux2", "general": True,
+    "size_gb": 5.4, "vram": 6, "steps": 4, "cfg": 1.0, "quality": "", "negative": "",
+    "parts": [
+        {"role": "model", "repos": KLEIN_REPOS, "file": r"(?i)^flux[-_.]?2[-_.]klein[-_.]4b[-_.](Q4_K_M|Q4_0)\.gguf$"},
+        {"role": "vae", "repos": ("unsloth/FLUX.2-VAE", "Comfy-Org/flux2-dev"), "dir": "split_files/vae", "file": r"(?i)^flux2[-_.]vae\.safetensors$"},
+        {"role": "llm", "repos": ("unsloth/Qwen3-4B-GGUF", "Qwen/Qwen3-4B-GGUF"), "file": r"^Qwen3-4B-Q4_K_M\.gguf$"},
+    ],
+    "desc": "Новая универсальная модель: быстро (4 шага), хорошо рисует и людей, и пейзажи, и аниме, лучше слушается описания и надписей. "
+            "Три файла около 5,4 ГБ (модель, VAE, текстовый энкодер Qwen3). Нужна видеокарта от 6 ГБ или 16 ГБ ОЗУ; лицензия Apache-2.0.",
+})
+CATALOG.extend([
+    {"id": "ponyxl", "title": "Pony Diffusion V6 XL", "general": True, "clip_skip": 2, "qpos": "prefix",
+     "repos": ("LyliaEngine/Pony_Diffusion_V6_XL", "gnicartweet/Pony_Diffusion_V6_XL", "misri/ponyDiffusionV6XL"),
+     "file": r"(?i)^ponyDiffusionV6XL.*\.safetensors$",
+     "size_gb": 6.5, "vram": 8, "steps": 25, "cfg": 7.0,
+     "quality": "score_9, score_8_up, score_7_up, score_6_up, source_anime",
+     "negative": "score_6, score_5, score_4, source_pony, source_furry, source_cartoon, bad anatomy, bad hands, extra fingers, missing fingers, text, watermark, signature, blurry, lowres",
+     "desc": "Pony XL: очень гибкая модель, хорошо понимает сложные просьбы (позы, сцены, персонажи), качественная рисовка. Теги score_9… Карина добавляет сама. "
+             "Лицензия Fair AI Public License: личное использование разрешено, монетизация нет."},
+    {"id": "noobai", "title": "NoobAI XL 1.1", "general": True, "repos": ("Laxhar/noobai-XL-1.1",),
+     "file": r"(?i)^noobai-?xl[-_]?v?1\.1\.safetensors$",
+     "size_gb": 6.9, "vram": 8, "steps": 28, "cfg": 5.0,
+     "quality": "masterpiece, best quality, newest, absurdres, highres, very aesthetic",
+     "negative": "worst quality, old, early, low quality, lowres, bad anatomy, bad hands, extra digits, fewer digits, jpeg artifacts, signature, watermark, username, blurry, artist name, text",
+     "desc": "NoobAI XL: сильная danbooru-модель (на базе Illustrious), знает тысячи персонажей и стилей, чистые линии и цвета. Версия 1.1 (обычная, не v-pred)."},
+])
+DEFAULT_ID = "flux2klein"
+ENGINE_MIN_FLUX2 = "2026-01-20"   # сборки stable-diffusion.cpp старше этой даты FLUX.2 не знают
 SAFE_NEG = "nsfw"            # обычные просьбы не должны случайно давать лишнего
 
 
@@ -69,10 +100,31 @@ def _write(d: dict):
     tmp.replace(_index())
 
 
+def parts_of(m: dict) -> list[dict]:
+    return m.get("parts") or [{"role": "model", "repos": m.get("repos") or (m["repo"],), "file": m["file"]}]
+
+
+def model_paths(mid: str) -> dict[str, Path] | None:
+    """Все файлы модели по ролям (model / vae / llm). None, если чего-то не хватает."""
+    m = by_id(mid)
+    rec = _read().get(mid)
+    if not m or not rec:
+        return None
+    if isinstance(rec, str):
+        rec = {"model": rec}
+    out = {}
+    for part in parts_of(m):
+        name = rec.get(part["role"])
+        p = MODELS_DIR / name if name else None
+        if not p or not p.exists():
+            return None
+        out[part["role"]] = p
+    return out
+
+
 def model_path(mid: str) -> Path | None:
-    name = _read().get(mid)
-    p = MODELS_DIR / name if name else None
-    return p if p and p.exists() else None
+    paths = model_paths(mid)
+    return paths["model"] if paths else None
 
 
 def installed_ids() -> list[str]:
@@ -94,6 +146,17 @@ def engine_ready() -> bool:
     return bool(find_exe("vulkan") or find_exe("cpu"))
 
 
+def engine_published() -> str:
+    try:
+        return str(json.loads((ENGINE_DIR / "engine.json").read_text("utf-8")).get("published_at", ""))[:10]
+    except (OSError, ValueError):
+        return ""
+
+
+def engine_supports(m: dict) -> bool:
+    return m.get("kind") != "flux2" or engine_published() >= ENGINE_MIN_FLUX2
+
+
 def ready(mid: str = "") -> bool:
     """Можно рисовать прямо сейчас: есть и движок, и хотя бы одна модель."""
     return engine_ready() and bool(model_path(mid) if mid else installed_ids())
@@ -107,16 +170,19 @@ def pick_installed(preferred: str = "") -> dict | None:
 
 
 def delete(mid: str) -> bool:
-    p = model_path(mid)
+    paths = model_paths(mid)
     d = _read()
     d.pop(mid, None)
     _write(d)
+    ok = True
     try:
-        if p:
+        for p in (paths or {}).values():
             p.unlink()
+        if (MODELS_DIR / mid).is_dir():
+            shutil.rmtree(MODELS_DIR / mid, ignore_errors=True)
     except OSError:
-        return False
-    return True
+        ok = False
+    return ok
 
 
 # ---------- загрузка ----------
@@ -179,8 +245,8 @@ def find_release() -> dict:
     raise LocalImgError("Не нашла сборку stable-diffusion.cpp для Windows в последних релизах GitHub.")
 
 
-def fetch_engine(prog, cancel: threading.Event):
-    if engine_ready():
+def fetch_engine(prog, cancel: threading.Event, need: dict | None = None):
+    if engine_ready() and (not need or engine_supports(need)):
         return
     prog(0, 0, "search")
     rel = find_release()
@@ -200,38 +266,63 @@ def fetch_engine(prog, cancel: threading.Event):
         z.unlink(missing_ok=True)
     if not engine_ready():
         raise LocalImgError("Движок скачан, но в нём нет программы sd.")
+    try:
+        (ENGINE_DIR / "engine.json").write_text(json.dumps({"tag": rel.get("tag_name", ""), "published_at": rel.get("published_at", "")}), "utf-8")
+    except OSError:
+        pass
 
 
-def resolve_file(m: dict) -> dict:
-    with _open(f"{HF}/api/models/{m['repo']}/tree/main?recursive=false", timeout=30) as r:
-        items = json.loads(r.read().decode("utf-8"))
-    for it in items:
-        p = it.get("path", "")
-        if it.get("type") == "file" and re.search(m["file"], p):
-            return {"path": p, "size": int(it.get("size") or (it.get("lfs") or {}).get("size") or 0)}
-    raise LocalImgError(f"В репозитории {m['repo']} не нашёлся файл модели. Возможно, его переименовали.")
+def resolve_file(part: dict) -> dict:
+    """Ищет файл по шаблону в репозиториях части (по очереди: если в первом нет, пробуем запасной)."""
+    last = ""
+    for repo in part["repos"]:
+        sub = "/" + part["dir"].strip("/") if part.get("dir") else ""
+        try:
+            with _open(f"{HF}/api/models/{repo}/tree/main{sub}", timeout=30) as r:
+                items = json.loads(r.read().decode("utf-8"))
+        except (urllib.error.URLError, ValueError, OSError) as e:
+            last = f"{repo}: {e}"
+            continue
+        for it in items:
+            p = it.get("path", "")
+            if it.get("type") == "file" and re.search(part["file"], p.rsplit("/", 1)[-1]):
+                return {"repo": repo, "path": p, "size": int(it.get("size") or (it.get("lfs") or {}).get("size") or 0)}
+    raise LocalImgError(f"Не нашёлся файл модели ({', '.join(part['repos'])}). Возможно, его переименовали или нет доступа к Hugging Face. {last}".strip())
 
 
 def download(mid: str, progress=None, cancel: threading.Event | None = None) -> Path:
-    """Движок (один раз) + модель. progress(done, total, stage): stage = search | engine | download | done."""
+    """Движок (один раз) + файлы модели. progress(done, total, stage): stage = search | engine | download | done."""
     m = by_id(mid)
     if not m:
         raise LocalImgError("Неизвестная модель картинок")
     cancel = cancel or threading.Event()
     prog = progress or (lambda *a: None)
-    fetch_engine(prog, cancel)
+    fetch_engine(prog, cancel, m)
+    parts = parts_of(m)
+    multi = len(parts) > 1
     prog(0, 0, "search")
-    info = resolve_file(m)
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    final = MODELS_DIR / info["path"]
-    part = final.with_name(final.name + ".part")
-    _stream(f"{HF}/{m['repo']}/resolve/main/{info['path']}", part, info["size"], prog, cancel, "download")
-    part.replace(final)
+    infos = [resolve_file(p) for p in parts]
+    grand = sum(i["size"] for i in infos)
+    base = 0
+    names: dict[str, str] = {}
+    for part, info in zip(parts, infos):
+        fname = info["path"].rsplit("/", 1)[-1]
+        rel = f"{mid}/{fname}" if multi else info["path"]
+        final = MODELS_DIR / rel
+        final.parent.mkdir(parents=True, exist_ok=True)
+        part_file = final.with_name(final.name + ".part")
+        if not (final.exists() and info["size"] and final.stat().st_size == info["size"]):
+            offset = base
+            _stream(f"{HF}/{info['repo']}/resolve/main/{info['path']}", part_file, info["size"],
+                    (lambda d, t, s, o=offset: prog(o + d, grand or t, s)) if multi else prog, cancel, "download")
+            part_file.replace(final)
+        base += info["size"]
+        names[part["role"]] = rel
     d = _read()
-    d[mid] = final.name
+    d[mid] = names if multi else names["model"]
     _write(d)
-    prog(info["size"], info["size"], "done")
-    return final
+    prog(grand, grand, "done")
+    return MODELS_DIR / names["model"]
 
 
 # ---------- рисование ----------
@@ -247,9 +338,19 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
     m = pick_installed(model_id)
     if not m or not engine_ready():
         raise LocalImgError("встроенный генератор не установлен (Настройки → Модели → Картинки → «Скачать»).")
+    if not engine_supports(m):
+        raise LocalImgError("движок stable-diffusion.cpp устарел и не знает FLUX.2: удалите модель в «Настройки → Модели → Картинки» и скачайте её заново: движок обновится.")
     w, h = sdxl_size(size)
-    full = f"{prompt.rstrip(' ,.')}, {m['quality']}"
+    flux = m.get("kind") == "flux2"
+    base = prompt.rstrip(" ,.")
+    if not m.get("quality"):
+        full = base
+    elif m.get("qpos") == "prefix":          # Pony: теги score_* должны стоять в начале описания
+        full = f"{m['quality']}, {base}"
+    else:
+        full = f"{base}, {m['quality']}"
     neg = ", ".join(x for x in (SAFE_NEG, negative or m["negative"]) if x)
+    paths = model_paths(m["id"]) or {}
     out = Path(tempfile.mkdtemp(prefix="karina-sd-")) / "out.png"
     errors = []
     try:
@@ -257,8 +358,15 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
             exe = find_exe(flavor)
             if not exe:
                 continue
-            cmd = [str(exe), "-m", str(model_path(m["id"])), "-p", full, "-n", neg, "-W", str(w), "-H", str(h), "--steps", str(m["steps"]),
-                   "--cfg-scale", str(m["cfg"]), "-s", str(seed), "--sampling-method", "euler_a", "--vae-tiling", "-o", str(out)]
+            if flux:      # FLUX.2 Klein: три файла, дистиллированная модель (4 шага, cfg 1.0), негативного промпта нет
+                cmd = [str(exe), "--diffusion-model", str(paths["model"]), "--vae", str(paths["vae"]), "--llm", str(paths["llm"]),
+                       "-p", full, "-W", str(w), "-H", str(h), "--steps", str(m["steps"]), "--cfg-scale", str(m["cfg"]),
+                       "-s", str(seed), "--diffusion-fa", "--offload-to-cpu", "--vae-tiling", "-o", str(out)]
+            else:
+                cmd = [str(exe), "-m", str(paths["model"]), "-p", full, "-n", neg, "-W", str(w), "-H", str(h), "--steps", str(m["steps"]),
+                       "--cfg-scale", str(m["cfg"]), "-s", str(seed), "--sampling-method", "euler_a", "--vae-tiling", "-o", str(out)]
+                if m.get("clip_skip"):
+                    cmd[1:1] = ["--clip-skip", str(m["clip_skip"])]
             flags = 0x08000000 if IS_WIN else 0                       # CREATE_NO_WINDOW
             try:
                 p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags)
