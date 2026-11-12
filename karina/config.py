@@ -28,7 +28,7 @@ DEFAULTS: dict = {
     # voice — svetlana_cute | ava_calm (см. tts.VOICES); pronounce — словарь «слово → как произнести»
     # offline — auto (нейросетевой Piper, если скачан, иначе системный) | system
     "tts": {"enabled": True, "engine": "auto", "voice": "svetlana_cute", "rate": 0, "offline": "auto",
-            "pronounce": {"discord": "дискорд", "youtube": "ютуб", "steam": "стим", "telegram": "телеграм", "chrome": "хром",
+            "pronounce": {"discord": "дискорд", "vpn": "вэ пэ эн", "впн": "вэ пэ эн", "youtube": "ютуб", "steam": "стим", "telegram": "телеграм", "chrome": "хром",
                           "карина": "Кари́на", "карины": "Кари́ны", "карине": "Кари́не", "карину": "Кари́ну", "кариной": "Кари́ной"}},
     "search_engine": "google",    # google | yandex
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-5-5"},
@@ -48,6 +48,14 @@ DEFAULTS: dict = {
     "cloud": {"strategy": "failover", "order": [], "providers": {}},
     "updates": {"auto": True},   # проверять новую версию при запуске
     "models": {"active": "", "gpu": "auto", "ctx": 0, "threads": 0},
+    # Микшер Bogestv0 MIXER (удалённый пульт по WebSocket): host/port/pin пустые или 0 = взять из настроек самого микшера;
+    # step_db — на сколько дБ меняет «тише/громче»; aliases — свои слова для дорожек {"Игры": ["варзон"]}
+    "mixer": {"enabled": True, "host": "127.0.0.1", "port": 0, "pin": "", "step_db": 3.0, "aliases": {}},
+    # Bogestv0 VPN: расширение само подключается к Карине на 127.0.0.1:port (только с адреса расширения) и ждёт команды «включи / выключи впн»
+    "vpn": {"enabled": True, "port": 47835},
+    # Профиль: имя, дата рождения, город, питомцы. google.client_id / client_secret — ваш OAuth-клиент для входа через Google
+    "profile": {"name": "", "birth_day": 0, "birth_month": 0, "birth_year": 0, "city": "", "pets": [], "google": {}, "last_greeted": "", "share_with_llm": True},
+    "google": {"client_id": "", "client_secret": ""},
     "apps": [],       # свои программы: {"name","aliases":[],"path","args","proc":[]}
     "commands": [],   # свои команды: {"phrases":[],"do":{"type","value"},"reply"}
 }

@@ -21,11 +21,18 @@ class Command:
     patterns: list
     func: Callable
     llm_args: str = ""   # имена аргументов для разбора языковой моделью, через запятую
+    first: bool = False
 
 
-def command(name: str, desc: str, examples: list, *patterns: str, llm_args: str = ""):
+def command(name: str, desc: str, examples: list, *patterns: str, llm_args: str = "", first: bool = False):
+    """first=True — проверять раньше остальных: узкие команды («тише в игре», «включи впн») должны обгонять общие
+    («тише», «включи …» = открыть программу)."""
     def deco(fn):
-        REGISTRY.append(Command(name, desc, list(examples), [re.compile(p) for p in patterns], fn, llm_args))
+        cmd = Command(name, desc, list(examples), [re.compile(p) for p in patterns], fn, llm_args, first)
+        if first:
+            REGISTRY.insert(sum(1 for c in REGISTRY if c.first), cmd)
+        else:
+            REGISTRY.append(cmd)
         return fn
     return deco
 
@@ -277,7 +284,9 @@ def _open(ctx, target):
 def _hello(ctx):
     h = datetime.datetime.now().hour
     part = "Доброе утро" if 5 <= h < 12 else "Добрый день" if 12 <= h < 18 else "Добрый вечер" if h < 23 else "Привет"
-    return f"{part}! Чем помочь?"
+    from . import profile as prof, personal
+    greet = personal.morning_greeting(ctx.cfg)                  # день рождения: поздравляем один раз за день
+    return (greet + " " if greet else "") + prof.with_name(ctx.cfg, f"{part}!") + " Чем помочь?"
 
 
 @command("thanks", "Поблагодарить", ["спасибо"], r"^(?:спасибо|благодарю)\b")

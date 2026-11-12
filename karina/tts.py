@@ -2,7 +2,7 @@
 from __future__ import annotations
 import asyncio, hashlib, os, re, sys, tempfile, threading, time
 from pathlib import Path
-from . import net, offline_voice
+from . import net, offline_voice, silero_voice
 
 IS_WIN = sys.platform == "win32"
 
@@ -12,6 +12,13 @@ VOICES = {
     "svetlana_cute": {"label": "Светлана — милая", "voice": "ru-RU-SvetlanaNeural", "rate": -4, "pitch": 4},
     "dariya_soft": {"label": "Дария — мягкая", "voice": "ru-RU-DariyaNeural", "rate": -4, "pitch": 0},
     "ava_calm": {"label": "Ava — спокойная героиня", "voice": "en-US-AvaMultilingualNeural", "rate": -4, "pitch": 10},
+    "dmitry": {"label": "Дмитрий — мужской (Microsoft)", "voice": "ru-RU-DmitryNeural", "rate": -2, "pitch": 0},
+    # Silero v5: работает на вашем компьютере, без интернета; модель скачивается один раз (см. silero_voice.py). «voice» тут только ключ для кэша.
+    "silero_xenia": {"label": "Ксения — Silero (локально, очень естественный)", "voice": "silero:xenia", "rate": 0, "pitch": 0, "engine": "silero", "speaker": "xenia"},
+    "silero_kseniya": {"label": "Ксения-2 — Silero (локально, мягче)", "voice": "silero:kseniya", "rate": 0, "pitch": 0, "engine": "silero", "speaker": "kseniya"},
+    "silero_baya": {"label": "Байя — Silero (локально, живая)", "voice": "silero:baya", "rate": 0, "pitch": 0, "engine": "silero", "speaker": "baya"},
+    "silero_aidar": {"label": "Айдар — Silero (локально, мужской)", "voice": "silero:aidar", "rate": 0, "pitch": 0, "engine": "silero", "speaker": "aidar"},
+    "silero_eugene": {"label": "Евгений — Silero (локально, мужской)", "voice": "silero:eugene", "rate": 0, "pitch": 0, "engine": "silero", "speaker": "eugene"},
 }
 DEFAULT_VOICE = "svetlana_cute"
 
@@ -80,13 +87,20 @@ class Speaker:
             return
         self._stop.clear()
         eng = t.get("engine", "auto")
-        if eng != "offline" and self._play_cached(text):
+        sel = VOICES.get(t.get("voice") or DEFAULT_VOICE) or {}
+        if sel.get("engine") == "silero" and eng != "online":
+            if self._silero(text, sel):         # выбран локальный голос: он главнее онлайн-голоса; не вышло — обычная цепочка ниже
+                self.engine_used = "silero"
+                return
+        if eng != "offline" and not sel.get("engine") and self._play_cached(text):
             self.engine_used = "online"
             return
         want_online = eng in ("auto", "online") and net.is_online() and time.time() > self._edge_fail_until
         if want_online:
             # выбранный голос; если сервер его не принял — родной русский, и только потом системный
             for vid in dict.fromkeys([t.get("voice") or DEFAULT_VOICE, DEFAULT_VOICE]):
+                if (VOICES.get(vid) or {}).get("engine"):
+                    continue                    # локальные голоса — не для сервера Microsoft
                 try:
                     self._edge(text, vid)
                     self.engine_used = "online"
@@ -96,6 +110,34 @@ class Speaker:
                         return
             self._edge_fail_until = time.time() + 60   # минуту не пытаемся, пока сеть не наладится
         self._offline(text)
+
+    def _silero(self, text: str, v: dict) -> bool:
+        """Говорит локальным голосом Silero. False — не вышло (нет torch или модели): тогда говорит обычный голос, а причина видна в предупреждении."""
+        base = self.cfg.path.parent
+        if not silero_voice.is_ready(base):
+            self.warning = "Голос Silero не скачан: Настройки → «Голос» → «Скачать голос Silero». Пока говорю обычным голосом."
+            return False
+        if not silero_voice.torch_available():
+            self.warning = silero_voice.torch_hint()
+            return False
+        fd, path = tempfile.mkstemp(suffix=".wav", prefix="karina_")
+        os.close(fd)
+        try:
+            silero_voice.synth_wav(base, text, path, v.get("speaker", "xenia"), int(self.cfg["tts"].get("rate", 0)))
+            if not self._stop.is_set():
+                self._play(path)
+            self.warning = ""
+            return True
+        except Exception as e:
+            if self._stop.is_set():
+                return True
+            self.warning = f"Голос Silero не запустился ({e.__class__.__name__}: {e}), говорю обычным голосом."
+            return False
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     def _offline(self, text: str):
         """Без интернета: нейросетевая «Ирина» (если скачана и включена), иначе системный голос Windows."""
@@ -211,6 +253,9 @@ class Speaker:
         with self._warm_lock:
             t = self.cfg["tts"]
             vid = t.get("voice") or DEFAULT_VOICE
+            if (VOICES.get(vid) or {}).get("engine") == "silero":
+                silero_voice.preload(self.cfg.path.parent)     # локальный голос: заранее загружаем модель, готовые записи не нужны
+                return
             for text in dict.fromkeys(prep_text(x, t) for x in texts):
                 if not text or len(text) > CACHE_MAX_LEN:
                     continue

@@ -243,6 +243,122 @@ class Api:
             offline_voice.delete(self.cfg.path.parent)
         return self.voice_offline_status()
 
+    # ---- голос Silero ----
+    def silero_status(self):
+        from . import silero_voice
+        base = self.cfg.path.parent
+        size = silero_voice.model_path(base).stat().st_size if silero_voice.is_ready(base) else 0
+        return {"ready": silero_voice.is_ready(base), "size": size, "downloading": "silero" in self._downloads, "torch": silero_voice.torch_available(), "hint": silero_voice.torch_hint()}
+
+    def silero_download(self):
+        from . import silero_voice
+        if "silero" in self._downloads or silero_voice.is_ready(self.cfg.path.parent):
+            return False
+        cancel = threading.Event()
+        self._downloads["silero"] = {"cancel": cancel}
+
+        def run():
+            err = ""
+            try:
+                silero_voice.download(self.cfg.path.parent, lambda d, t, st: self.emit({"type": "silero_dl", "done": d, "total": t, "stage": st}), cancel)
+            except silero_voice.Cancelled:
+                err = "cancelled"
+            except Exception as e:
+                err = str(e) or e.__class__.__name__
+            finally:
+                self._downloads.pop("silero", None)
+                self.emit({"type": "silero_dl_done", "error": err, "ready": silero_voice.is_ready(self.cfg.path.parent)})
+        threading.Thread(target=run, daemon=True, name="silero-download").start()
+        return True
+
+    def silero_delete(self):
+        from . import silero_voice
+        if "silero" not in self._downloads:
+            silero_voice.delete(self.cfg.path.parent)
+        return self.silero_status()
+
+    # ---- профиль и вход через Google ----
+    def get_profile(self):
+        from . import profile as prof
+        g = self.cfg.get("google") or {}
+        return {"profile": prof.get(self.cfg), "kinds": prof.PET_KINDS, "google": {"client_id": g.get("client_id", ""), "has_secret": bool(g.get("client_secret"))},
+                "signing_in": "google" in self._downloads}
+
+    def save_profile(self, p: dict):
+        from . import profile as prof
+        cur = prof.get(self.cfg)
+        new = prof.clean({**p, "google": cur.get("google") or {}, "last_greeted": cur.get("last_greeted", "")})
+        if new["birth_day"] != cur["birth_day"] or new["birth_month"] != cur["birth_month"]:
+            new["last_greeted"] = ""            # дату поменяли: сегодняшнее поздравление снова возможно
+        self.cfg.update({"profile": new})
+        return self.get_profile()
+
+    def save_google_client(self, client_id: str, client_secret: str = ""):
+        g = {"client_id": str(client_id or "").strip()[:200]}
+        if client_secret:
+            g["client_secret"] = str(client_secret).strip()[:200]
+        self.cfg.update({"google": g})
+        return self.get_profile()
+
+    def google_login(self):
+        from . import google_auth, profile as prof
+        if "google" in self._downloads:
+            return False
+        cancel = threading.Event()
+        self._downloads["google"] = {"cancel": cancel}
+        g = dict(self.cfg.get("google") or {})
+
+        def run():
+            err, info = "", None
+            try:
+                info = google_auth.sign_in(g.get("client_id", ""), g.get("client_secret", ""), cancel=cancel)
+                cur = prof.get(self.cfg)
+                patch = {"google": {k: info[k] for k in ("sub", "name", "email", "picture")}}
+                if not cur["name"]:
+                    patch["name"] = info.get("given_name") or info.get("name") or ""      # имя подставляем, только если своё не вписано
+                self.cfg.update({"profile": patch})
+            except google_auth.GoogleError as e:
+                err = str(e)
+            except Exception as e:
+                err = f"Не получилось войти: {e}"
+            finally:
+                self._downloads.pop("google", None)
+                self.emit({"type": "google_done", "error": err})
+        threading.Thread(target=run, daemon=True, name="google-login").start()
+        return True
+
+    def google_cancel(self):
+        d = self._downloads.get("google")
+        if d:
+            d["cancel"].set()
+        return True
+
+    def google_logout(self):
+        self.cfg.update({"profile": {"google": {}}})
+        c = self.cfg.data["profile"]
+        c["google"] = {}                      # _merge не умеет «обнулять» вложенные словари, поэтому чистим напрямую
+        self.cfg.save()
+        return self.get_profile()
+
+    # ---- микшер и VPN ----
+    def integrations_status(self):
+        v = self.assistant.vpn
+        return {"vpn": {"enabled": v.enabled(), "browsers": v.browsers(), "error": v.error}}
+
+    def mixer_test(self):
+        from .mixer_remote import MixerError
+        m = self.assistant.mixer
+        m.close()                                   # заново, с текущими PIN и портом
+        try:
+            strips = m.strips()
+            names = ", ".join(s["name"] for s in strips if not s["hidden"])
+            host, port, pin = m.target()
+            return {"ok": True, "text": f"Связь есть ({host}:{port}). Дорожки: {names}."}
+        except MixerError as e:
+            return {"ok": False, "text": str(e)}
+        except Exception as e:
+            return {"ok": False, "text": f"Ошибка: {e}"}
+
     def test_voice(self):
         threading.Thread(target=self.assistant.say, args=(f"Привет! Меня зовут {self.cfg['name']}. Я вас слышу.",), daemon=True).start()
         return True
@@ -260,6 +376,19 @@ class Api:
         patch.pop("cloud", None)        # облачные модели меняются только через cloud_* (с проверкой значений)
         patch.pop("images", None)       # картинки меняются только через images_set
         patch.pop("audio_out", None)    # вывод звука меняется только через audio_out_set
+        mx, vp = patch.get("mixer"), patch.get("vpn")
+        if isinstance(mx, dict):                    # проверяем значения: в config.json не должно попасть мусора
+            clean = {"enabled": bool(mx.get("enabled", True)), "pin": "".join(ch for ch in str(mx.get("pin") or "") if ch.isdigit())[:8]}
+            try:
+                port = int(mx.get("port") or 0)
+                clean["port"] = port if port == 0 or 1024 <= port <= 65535 else 0
+                clean["step_db"] = max(0.5, min(12.0, float(mx.get("step_db") or 3.0)))
+            except (TypeError, ValueError):
+                clean.update(port=0, step_db=3.0)
+            patch["mixer"] = clean
+        if isinstance(vp, dict):
+            patch["vpn"] = {"enabled": bool(vp.get("enabled", True))}
+        old_vpn = bool((self.cfg.get("vpn") or {}).get("enabled", True))
         stt = patch.get("stt") or {}
         if "mics" in stt:
             stt["mics"] = audiomod.sanitize_mics(stt["mics"], self._mics())
@@ -267,6 +396,11 @@ class Api:
         if "assist" in stt and stt["assist"] not in ("smart", "all", "best"):
             stt.pop("assist")
         self.cfg.update(patch)
+        if bool(self.cfg["vpn"].get("enabled", True)) != old_vpn:
+            self.assistant.vpn.stop()
+            self.assistant.vpn.start()
+        if isinstance(mx, dict):
+            self.assistant.mixer.close()            # новые PIN и порт применятся при следующей команде
         if self.cfg["stt"]["model"] != old_model:
             self.assistant.reload_model()
         if audiomod.mic_slots(self.cfg) != old_mics:
@@ -650,6 +784,15 @@ class Api:
             patch["max_steps"] = max_steps
         self.cfg.update({"coder": patch})
         return self.assistant.coder.settings()
+
+    def clipboard_set(self, text: str):
+        """Копирование в буфер обмена Windows из окна (надёжнее, чем navigator.clipboard в окне с file://)."""
+        try:
+            import pyperclip
+            pyperclip.copy(str(text)[:2_000_000])
+            return True
+        except Exception:
+            return False
 
     # ---- файлы, перетащенные в окно (приходят кусками; см. uploads.py) ----
     def upload_begin(self, rel: str, size: int = 0, batch: str = ""):

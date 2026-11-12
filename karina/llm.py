@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json, os, re, urllib.request
 from .actions import REGISTRY
+from . import profile
 
 
 def ask(cfg, text: str, app_names: list[str]) -> dict | None:
@@ -15,6 +16,7 @@ def ask(cfg, text: str, app_names: list[str]) -> dict | None:
         "Выбери ОДНО действие из списка либо коротко ответь по-русски (1–2 предложения); о себе говори в женском роде («я открыла», «я не поняла»). Верни ТОЛЬКО JSON без пояснений: "
         '{"action":"имя","args":{...}} или {"say":"ответ"}. Если действие не подходит — отвечай через say.\n'
         f"Действия:\n{cmds}\nИзвестные программы: {', '.join(app_names[:60])}"
+        + profile.prompt_section(cfg)
     )
     body = json.dumps({"model": c.get("model", "claude-haiku-5-5"), "max_tokens": 300, "system": system,
                        "messages": [{"role": "user", "content": text}]}).encode("utf-8")

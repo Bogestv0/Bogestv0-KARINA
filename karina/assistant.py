@@ -2,6 +2,9 @@
 from __future__ import annotations
 import queue, threading, time, traceback
 from . import actions, chat as chatmod, llm, net
+from . import integrations, personal, profile as prof  # noqa: F401  (регистрируют команды микшера, VPN, погоды и профиля)
+from .mixer_remote import MixerRemote
+from .vpn_link import VpnLink
 from .brain import Brain
 from .coder import CoderService
 from .diag import trace
@@ -28,6 +31,7 @@ STATIC_PHRASES = [
     "Открываю папку с файлами.", "Не получилось открыть папку с файлами.",
     "Готово, файл сохранён в папке Карина в документах.", "Готово, файлы сохранены в папке Карина в документах.",
     "Готово, смотрите в окне чата.",
+    "Включила впн.", "Выключила впн.", "Впн уже включён.", "Впн уже выключен.", "Впн включён.", "Впн выключен.",
     "Доброе утро! Чем помочь?", "Добрый день! Чем помочь?", "Добрый вечер! Чем помочь?", "Привет! Чем помочь?",
 ] + [f"Громкость {v}." for v in range(0, 101, 10)] + [f"Громкость {v} процентов." for v in range(0, 101, 10)]
 
@@ -47,6 +51,8 @@ class Assistant:
         self.coder = CoderService(cfg, self.brain, emit)
         self.chat = chatmod.ChatService(cfg, self.engine, emit, speak=self.say, brain=self.brain, coder=self.coder)
         self.stt, self.tts = STT(cfg), Speaker(cfg)
+        self.mixer = MixerRemote(cfg)                       # «сделай тише музыку»: связь с Bogestv0 MIXER
+        self.vpn = VpnLink(cfg, log=lambda m: trace(m))     # «включи впн»: расширение Bogestv0 VPN подключается к нам
         self.listener = Listener(cfg, self._on_audio, self._on_level, self._on_mics)
         self.mic_status: list = []
         self._levels: dict = {}
@@ -66,7 +72,28 @@ class Assistant:
         self._threads = [threading.Thread(target=self._worker, daemon=True, name="karina-worker")]
         for t in self._threads:
             t.start()
+        self.vpn.start()
+        chatmod.PROFILE_PROVIDER = lambda: prof.prompt_section(self.cfg)
+        t = threading.Thread(target=self._birthday_loop, daemon=True, name="karina-birthday")
+        t.start()
+        self._threads.append(t)
         self.warm_voice()
+
+    def _birthday_loop(self):
+        """Раз в минуту проверяет, не пора ли поздравить (день рождения владельца или питомца). Один раз за день."""
+        time.sleep(8)                                       # дать приложению запуститься
+        while not self._stop.is_set():
+            try:
+                g = prof.due_greeting(self.cfg)
+                if g and self.cfg["tts"].get("enabled", True) and not self.sleeping:
+                    prof.mark_greeted(self.cfg)
+                    self.say(g)
+                elif g:
+                    prof.mark_greeted(self.cfg)
+                    self.log("karina", g)
+            except Exception as e:
+                trace(f"поздравление: {e}")
+            self._stop.wait(60)
 
     def phrases_to_cache(self) -> list[str]:
         """Что стоит озвучить заранее: стандартные ответы, ответы своих команд, «Открываю/Запускаю/Закрываю <программа>»."""
@@ -96,6 +123,8 @@ class Assistant:
         self.listener.stop()
         self.chat.stop()
         self.engine.stop()
+        self.vpn.stop()
+        self.mixer.close()
 
     def _set_state(self, s: str, detail: str = ""):
         self.state = s

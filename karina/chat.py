@@ -110,6 +110,9 @@ def wants_open_files(text: str) -> bool:
     return bool(OPEN_FILES.search(text))
 
 
+PROFILE_PROVIDER = lambda: ""      # noqa: E731  Ассистент подставляет сюда справку о пользователе (profile.prompt_section)
+
+
 def system_prompt(voice: bool = False, web: bool = False, files: bool = False, attached: bool = False) -> str:
     today = datetime.date.today().strftime("%d.%m.%Y")
     access = ("Ты можешь пользоваться материалами из интернета, которые тебе дадут. " if web
@@ -125,6 +128,7 @@ def system_prompt(voice: bool = False, web: bool = False, files: bool = False, a
          "Не выдумывай факты, цифры, имена и ссылки; если не уверена или не знаешь — скажи об этом прямо. "
          "Знания могут быть устаревшими, для свежих событий предупреждай об этом. "
          "Оформление: короткие абзацы, списки и **жирный** можно, код — в блоках ```.")
+    p += PROFILE_PROVIDER()
     if files:
         p += filesmod.prompt_section()
     if voice:
