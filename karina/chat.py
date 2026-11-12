@@ -377,7 +377,9 @@ class ChatService:
             prompt = imagesmod.clean_prompt(raw, text)
         except (BrainUnavailable, EngineError) as e:
             note = f"ⓘ Модель сейчас не отвечает ({e}) — рисую по вашему тексту как есть, результат может быть хуже.\n\n"
-        prompt = imagesmod.style_prompt(prompt, text)
+        if imagesmod.has_cyrillic(prompt) and imagesmod.ANIME.search(norm(text)):
+            prompt = imagesmod.ru_prompt(text)                      # слабая модель не справилась — собираем теги сами
+        prompt = imagesmod.finish_prompt(imagesmod.style_prompt(prompt, text), text)
         if self._stop.is_set():
             return "*(остановлено)*", "", []
         step("Рисую картинку… (обычно до минуты)")

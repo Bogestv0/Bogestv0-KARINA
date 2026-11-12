@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, queue, subprocess, sys, threading, time
 from .diag import trace
-from . import actions, claude as claudemod, files as filesmod, images as imagesmod, net, models, updater, __version__
+from . import actions, claude as claudemod, files as filesmod, images as imagesmod, localimg, net, models, updater, __version__
 from .uploads import Uploads
 from . import audio as audiomod
 from .audio import Listener
@@ -827,7 +827,51 @@ class Api:
     # ---- картинки ----
     def images_state(self):
         s = imagesmod.settings(self.cfg)
-        return {"provider": s["provider"], "url": s["url"], "model": s["model"], "has_key": bool(s["key"]), "active": imagesmod.provider_name(self.cfg)}
+        dl = self._downloads.get("img:dl")
+        inst = set(localimg.installed_ids())
+        local = [{"id": m["id"], "title": m["title"], "size_gb": m["size_gb"], "desc": m["desc"], "installed": m["id"] in inst,
+                  "selected": m["id"] == (s["local_model"] or localimg.DEFAULT_ID)} for m in localimg.CATALOG]
+        return {"provider": s["provider"], "url": s["url"], "model": s["model"], "has_key": bool(s["key"]), "active": imagesmod.provider_name(self.cfg, "аниме"),
+                "local": local, "local_ready": localimg.ready(), "local_model": s["local_model"] or localimg.DEFAULT_ID,
+                "dl": dl and {"done": dl["done"], "total": dl["total"], "stage": dl["stage"], "id": dl["id"]}}
+
+    def localimg_download(self, mid: str):
+        if "img:dl" in self._downloads or not localimg.by_id(mid):
+            return False
+        cancel = threading.Event()
+        self._downloads["img:dl"] = {"done": 0, "total": 0, "stage": "search", "cancel": cancel, "id": mid}
+
+        def run():
+            def prog(done, total, stage):
+                self._downloads["img:dl"].update(done=done, total=total, stage=stage)
+                self.emit({"type": "limg_progress", "id": mid, "done": done, "total": total, "stage": stage})
+            err = ""
+            try:
+                localimg.download(mid, prog, cancel)
+                self.cfg.update({"images": {"local_model": mid}})
+            except localimg.Cancelled:
+                err = "cancelled"
+            except Exception as e:
+                err = str(e) or e.__class__.__name__
+            finally:
+                self._downloads.pop("img:dl", None)
+                self.emit({"type": "limg_done", "id": mid, "error": err})
+        threading.Thread(target=run, daemon=True, name="localimg-download").start()
+        return True
+
+    def localimg_cancel(self):
+        d = self._downloads.get("img:dl")
+        if d:
+            d["cancel"].set()
+        return True
+
+    def localimg_delete(self, mid: str):
+        return localimg.delete(mid)
+
+    def localimg_select(self, mid: str):
+        if mid in localimg.installed_ids():
+            self.cfg.update({"images": {"local_model": mid}})
+        return self.images_state()
 
     def images_set(self, provider: str = "auto", url: str = "", model: str = "", key: str = ""):
         patch = {"provider": provider if provider in imagesmod.PROVIDERS else "auto", "url": (url or "").strip()[:300], "model": (model or "").strip()[:120]}
