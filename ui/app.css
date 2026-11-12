@@ -342,6 +342,22 @@ main:has(#tab-chat.on){overflow:hidden}
 .fcard>.pview{background:var(--surface-2)}
 .fcard>img.pimg,.fcard>.pview .pimg{max-height:420px}
 
+/* варианты картинок: плитки 2×2 с названием модели */
+.files.igrid{display:grid;align-items:start;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:min(720px,100%)}
+.itile{border:1px solid var(--line);background:var(--surface);border-radius:13px;padding:8px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.itile .iph{display:flex;align-items:center;justify-content:center;min-height:200px;border-radius:9px;background:var(--surface-2);color:var(--muted);font-size:13px;text-align:center;padding:8px;overflow-wrap:anywhere}
+.itile .iph .pimg{max-height:360px;width:100%;object-fit:contain;cursor:zoom-in;padding:0}
+.itile.run .iph{animation:tilepulse 1.4s ease-in-out infinite}
+.itile.fail .iph{color:var(--bad);font-size:12px}
+.itile.skip{opacity:.55}
+.itile .icap{display:flex;align-items:baseline;gap:8px;min-width:0}
+.itile .icap b{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.itile .icap .ist{font-size:12px;color:var(--muted)}
+.itile .iact{display:flex;gap:8px}
+.itile .iact .btn{padding:6px 11px;font-size:12.5px}
+@keyframes tilepulse{0%,100%{opacity:1}50%{opacity:.55}}
+@media (max-width:620px){.files.igrid{grid-template-columns:minmax(0,1fr)}}
+
 /* ---- 1.7.2: ввод как у Claude, правая панель просмотра, живая строка «думаю» ---- */
 .composer{display:flex;flex-direction:column;gap:2px;border:1px solid var(--line);border-radius:18px;background:var(--surface-2);padding:8px 10px 8px 14px;transition:border-color .15s,box-shadow .15s}
 .composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
@@ -414,3 +430,5 @@ main:has(#tab-chat.on){overflow:hidden}
 .codecopy{padding:3px 10px;border-radius:7px;font:500 12px var(--f-body);color:var(--accent)}
 .codecopy:hover{background:var(--accent-soft)}
 .codebox pre{margin:0!important;border:0!important;border-radius:0!important;background:transparent!important}
+
+.choices{display:flex;gap:8px;margin:8px 0 2px;flex-wrap:wrap} .choices .btn{min-width:44px}

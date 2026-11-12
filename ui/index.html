@@ -202,8 +202,8 @@
   <div class="card" id="imgCard">
     <div class="eyebrow">Картинки</div>
     <p class="muted small">Карина рисует по просьбе: «нарисуй аниме-девушку с белыми волосами», «сделай обои с горами». Текстовая модель сама не рисует: она пишет подробное описание, а картинку создаёт генератор. По умолчанию это бесплатный сервис Pollinations (нужен интернет, ключ не нужен). Если он недоступен из вашей страны или нужна работа без интернета, подключите свой сервер Stable Diffusion (AUTOMATIC1111 / Forge, запуск с ключом <code>--api</code>) или любой сервис с OpenAI-совместимым API.</p>
-    <div class="eyebrow" style="margin-top:6px">Встроенный аниме-генератор</div>
-    <p class="muted small">Рисует прямо на вашем компьютере: без интернета (после загрузки), без водяного знака и с любой выбранной текстовой моделью. Скачивается один раз: движок stable-diffusion.cpp и аниме-модель. Нужна видеокарта от 6–8 ГБ; на процессоре картинка рисуется несколько минут.</p>
+    <div class="eyebrow" style="margin-top:6px">Встроенные модели картинок</div>
+    <p class="muted small">Рисует прямо на вашем компьютере: без интернета (после загрузки), без водяного знака и с любой выбранной текстовой моделью. Скачивается один раз: движок stable-diffusion.cpp и модели. Каждая скачанная модель — отдельный «художник» со своим стилем: при включённом режиссёре (ниже) текстовая модель пишет им описания и предлагает несколько вариантов, а «Выбрать» нужно только для режима одной картинки. Нужна видеокарта от 6–8 ГБ; на процессоре каждая картинка рисуется несколько минут.</p>
     <div id="limgList"></div>
     <div class="form">
       <label>Чем рисовать
@@ -214,6 +214,11 @@
           <option value="sd">Свой сервер Stable Diffusion (AUTOMATIC1111 / Forge)</option>
           <option value="openai">Свой сервер с OpenAI-совместимым API картинок</option>
         </select>
+      </label>
+      <label class="switch"><input type="checkbox" id="imgDirector"><span class="sw"></span><span>Режиссёр: текстовая модель (например, Qwen 3.5 9B) пишет описание и поручает рисовать скачанным моделям (NoobAI, Pony, FLUX.2 Klein …) — несколько вариантов в их стилях; правки («поверни её», «на втором варианте…») она отдаёт той модели, которая лучше справится, или всем сразу</span></label>
+      <label class="switch"><input type="checkbox" id="imgAsk"><span class="sw"></span><span>Спрашивать, сколько вариантов нарисовать (кнопки 1–4), когда просьба новая и число не названо</span></label>
+      <label>Сколько вариантов рисовать (если не спрашивать)
+        <select id="imgVariants"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option></select>
       </label>
       <label>Адрес своего сервера<input id="imgUrl" placeholder="http://127.0.0.1:7860" autocomplete="off"></label>
       <label>Модель (для OpenAI-совместимого)<input id="imgModel" placeholder="необязательно" autocomplete="off"></label>

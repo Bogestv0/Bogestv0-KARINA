@@ -153,6 +153,8 @@
       else if (ev.type === 'chat_start') chatStart(ev);
       else if (ev.type === 'chat_step') { if (ev.chat === chCur) setStep(ev.text); }
       else if (ev.type === 'chat_delta') { if (ev.chat === chCur && chBubble) renderMd(chBubble, ev.text); scrollChat(); }
+      else if (ev.type === 'chat_image_plan') { if (ev.chat === chCur && chBubble) imgPlan(chBubble.parentElement, ev.items); }
+      else if (ev.type === 'chat_image') { if (ev.chat === chCur && chBubble) imgEvent(chBubble.parentElement, ev); }
       else if (ev.type === 'chat_activity') actEvent(ev);
       else if (ev.type === 'chat_done') chatDone(ev);
       else if (ev.type === 'limg_progress') limgProgress(ev);
@@ -339,8 +341,62 @@
   $('#pnOpen').onclick = async () => { const t = pnTabs[pnCur]; if (!t) return; const r = t.project ? await call('project_open_file', t.project, t.path) : await call('file_open', t.name); if (r && !r.ok) { const n = el('div', 'pn-note', r.error); $('#pnBody').append(n); setTimeout(() => n.remove(), 3500); } };
   function viewButton(item, msg) { const b = el('button', 'btn', '👁 Просмотр'); b.onclick = () => pnOpen(item); return b; }
 
+  // ---------- варианты картинок: плитки 2×2, каждая подписана моделью, которая рисовала; появляются по мере готовности ----------
+  const TILE = { wait: 'в очереди', run: 'рисую…', fail: 'не получилось', skip: 'остановлено' };
+  function variantGrid(row) {
+    let g = row.querySelector('.igrid');
+    if (!g) { g = el('div', 'files igrid'); row.querySelector('.bubble').after(g); }
+    return g;
+  }
+  function variantTile(grid, n, label) {
+    let t = grid.querySelector(`.itile[data-n="${n}"]`);
+    if (!t) {
+      t = el('div', 'itile wait'); t.dataset.n = n;
+      const ph = el('div', 'iph', TILE.wait);
+      const cap = el('div', 'icap'); cap.append(el('b', '', `${n} · ${label || ''}`), el('span', 'ist'));
+      t.append(ph, cap);
+      grid.append(t);
+      [...grid.children].sort((a, b) => a.dataset.n - b.dataset.n).forEach(c => grid.append(c));
+    }
+    return t;
+  }
+  function tileState(t, state, text) {
+    t.classList.remove('wait', 'run', 'done', 'fail', 'skip'); t.classList.add(state);
+    const ph = $('.iph', t); if (ph && state !== 'done') ph.textContent = text || TILE[state] || '';
+    const st = $('.ist', t); if (st) st.textContent = state === 'done' ? '' : (TILE[state] || '');
+  }
+  function tileDone(t, f) {
+    tileState(t, 'done');
+    const old = $('.iph', t); if (old) old.remove();
+    const cap = $('.icap', t);
+    const ph = el('div', 'iph'); t.insertBefore(ph, cap);
+    call('file_preview_full', f.name).then(r => {
+      if (r && r.ok && r.result.type === 'image') { const i = el('img', 'pimg'); i.src = r.result.src; i.alt = f.label || ''; i.title = 'Открыть в панели просмотра'; i.onclick = () => pnOpen({ title: f.name, name: f.name }); ph.replaceChildren(i); scrollChat(); }
+      else ph.textContent = f.name;
+    });
+    if (!$('.iact', t)) {
+      const act = el('div', 'iact');
+      const b1 = el('button', 'btn', 'Открыть'); b1.onclick = () => call('file_open', f.name);
+      const b2 = el('button', 'btn', 'В папке'); b2.onclick = () => call('file_reveal', f.name);
+      act.append(b1, b2); t.append(act);
+    }
+  }
+  function imgPlan(row, items) { const g = variantGrid(row); (items || []).forEach(i => variantTile(g, i.n, i.label)); scrollChat(); }
+  function imgEvent(row, ev) {
+    const t = variantTile(variantGrid(row), ev.n, ev.label);
+    if (ev.status === 'start') tileState(t, 'run');
+    else if (ev.status === 'fail') { tileState(t, 'fail', ev.error || ''); t.title = ev.error || ''; }
+    else if (ev.status === 'done' && ev.file) tileDone(t, ev.file);
+  }
+  function finishGrid(row) { $$('.itile.wait, .itile.run', row).forEach(t => tileState(t, 'skip')); }
+  function attachVariants(row, files) {
+    const g = variantGrid(row);
+    for (const f of files) tileDone(variantTile(g, f.variant, f.label), f);
+  }
+
   function attachFiles(row, files) {
     if (!files || !files.length || row.querySelector('.files')) return;
+    if (files.some(f => f.variant)) { attachVariants(row, files); return; }
     const box = el('div', 'files');
     for (const f of files) {
       const card = el('div', 'fcard'), k = KIND[f.kind] || KIND.text, msg = el('div', 'fmsg');
@@ -429,7 +485,18 @@
     d.open = !collapse; row.insertBefore(d, row.querySelector('.bubble'));
   }
 
-  function addMsg(role, text, id, steps, files, brain, filesIn, project, activity) {
+  // «Сколько вариантов?»: кнопки-ответы под вопросом Карины; нажатие отправляет число как обычное сообщение
+  function attachChoices(row, choices) {
+    if (!choices || !choices.length || row.querySelector('.choices')) return;
+    const box = el('div', 'choices');
+    for (const c of choices) {
+      const b = el('button', 'btn' + (c === '4' ? '' : ''), c); b.type = 'button';
+      b.onclick = () => { if (chBusy) return; box.remove(); $('#chText').value = c; $('#chForm').requestSubmit(); };
+      box.append(b);
+    }
+    row.querySelector('.bubble').after(box);
+  }
+  function addMsg(role, text, id, steps, files, brain, filesIn, project, activity, choices) {
     const m = $('#chMsgs'); const row = el('div', 'cmsg ' + role); if (id) row.dataset.id = id;
     const b = el('div', 'bubble');
     if (role === 'assistant') renderMd(b, text); else { b.textContent = text; if (filesIn && filesIn.length) b.append(el('div', 'attached', '📎 ' + filesIn.join(', '))); }
@@ -438,7 +505,7 @@
       const meta = el('div', 'meta');
       const c = el('button', 'link copy', 'Копировать'); c.onclick = async () => flashBtn(c, await copyText(b.innerText));
       meta.append(c, el('span', 'who')); row.append(meta);
-      renderActivity(row, activity, true); attachProject(row, project); attachFiles(row, files); attachSteps(row, steps); setWho(row, brain);
+      renderActivity(row, activity, true); attachProject(row, project); attachFiles(row, files); attachSteps(row, steps); setWho(row, brain); attachChoices(row, choices);
     }
     m.append(row); scrollChat(); return b;
   }
@@ -448,7 +515,7 @@
     w.append(el('b', '', 'Что будем делать?'));
     for (const t of ['Перетащите сюда файлы, папку или zip-архив с проектом и напишите, что сделать, — я прочитаю всё, напишу или перепишу код, проверю запуском и отдам готовые файлы. Ваши оригиналы не меняются.',
                      'Опишите программу или оформление (страница, макет, шаблон) — сделаю и покажу прямо здесь, в окне.',
-                     'Попросите нарисовать: «нарисуй аниме-девушку с белыми волосами» — картинка появится в чате.',
+                     'Попросите нарисовать: «нарисуй аниме-девушку с белыми волосами» — я предложу 4 варианта в стилях разных моделей (NoobAI, Pony, FLUX.2 Klein), а потом поправлю по вашей просьбе: «поверни её», «на втором варианте сделай волосы длиннее».',
                      'Переключатель «💻 Код» над полем ввода включён по умолчанию; выключите его, если нужен только разговор.'])
       w.append(el('p', '', t));
     m.append(w);
@@ -467,7 +534,7 @@
     const c = await call('chat_get', id); if (!c) return;
     chCur = id; chBubble = null; $('#chMsgs').textContent = '';
     if (!c.messages.length) showWelcome();
-    for (const m of c.messages) addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain, m.files_in, m.project, m.activity);
+    c.messages.forEach((m, i) => addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain, m.files_in, m.project, m.activity, i === c.messages.length - 1 && c.pending_image ? m.choices : null));
     loadChatList(); scrollChat();
   }
   async function openChatTab() {
@@ -486,7 +553,7 @@
     setBusy(true); setStep('Думаю…'); loadChatList();
   }
   function chatDone(ev) {
-    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); if (actBox && actNodes.length > 10) actBox.open = false; actBox = null; attachProject(chBubble.parentElement, ev.project, true); attachFiles(chBubble.parentElement, ev.files); attachSteps(chBubble.parentElement, ev.steps); setWho(chBubble.parentElement, ev.brain); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
+    if (ev.chat === chCur && chBubble) { renderMd(chBubble, ev.text); chBubble.classList.remove('typing'); if (actBox && actNodes.length > 10) actBox.open = false; actBox = null; attachProject(chBubble.parentElement, ev.project, true); finishGrid(chBubble.parentElement); attachFiles(chBubble.parentElement, ev.files); attachSteps(chBubble.parentElement, ev.steps); setWho(chBubble.parentElement, ev.brain); attachChoices(chBubble.parentElement, ev.choices); if (ev.error) chBubble.classList.add('err'); chBubble = null; }
     if (ev.chat === chCur) setBusy(false);
     loadChatList(); scrollChat();
   }
@@ -624,6 +691,7 @@
     if (!st) return;
     $('#imgProvider').value = st.provider; $('#imgUrl').value = st.url || ''; $('#imgModel').value = st.model || ''; $('#imgKey').value = '';
     $('#imgKeyClear').hidden = !st.has_key;
+    $('#imgDirector').checked = st.director !== false; $('#imgAsk').checked = st.ask_count !== false; $('#imgVariants').value = String(st.variants || 4);
     renderLimg(st);
   }
   function renderLimg(st) {
@@ -654,7 +722,7 @@
     lab.textContent = (ev.stage === 'engine' ? 'Движок: ' : 'Модель: ') + (ev.total ? `${fmtGb(ev.done)} из ${fmtGb(ev.total)} · ${pct.toFixed(0)}%` : fmtGb(ev.done));
   }
   async function loadImg() { renderImg(await call('images_state')); }
-  $('#imgSave').onclick = async () => { const st = await call('images_set', $('#imgProvider').value, $('#imgUrl').value, $('#imgModel').value, $('#imgKey').value); renderImg(st); flash($('#imgMsg'), 'Сохранено'); };
+  $('#imgSave').onclick = async () => { const st = await call('images_set', $('#imgProvider').value, $('#imgUrl').value, $('#imgModel').value, $('#imgKey').value, $('#imgDirector').checked, +$('#imgVariants').value, $('#imgAsk').checked); renderImg(st); flash($('#imgMsg'), 'Сохранено'); };
   $('#imgKeyClear').onclick = async () => { renderImg(await call('images_clear_key')); flash($('#imgMsg'), 'Ключ удалён'); };
   $('#imgTest').onclick = async () => { await $('#imgSave').onclick(); $('#imgTest').disabled = true; $('#imgMsg').classList.remove('err'); $('#imgMsg').textContent = 'Рисую пробную картинку…'; call('images_test'); };
 

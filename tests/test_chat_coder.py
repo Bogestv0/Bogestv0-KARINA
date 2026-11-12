@@ -149,7 +149,7 @@ class InChat(unittest.TestCase):
             cid = svc.send(None, "Сделай изображения аниме девушки с белыми волосами", wait=True)
             reply = svc.store.get(cid)["messages"][1]
             self.assertTrue(seen["prompt"].startswith("anime illustration, 2D"))                                   # для аниме добавлен 2D-стиль
-            self.assertTrue(seen["prompt"].endswith("1girl, anime style, long white hair, masterpiece, high detail"))      # модель написала описание
+            self.assertIn("1girl, anime style, long white hair, masterpiece, high detail", seen["prompt"])                 # модель написала описание (дальше идёт хвост качества)
             self.assertEqual(reply["files"][0]["kind"], "image")
             self.assertTrue((tmp / "Карина" / reply["files"][0]["name"]).read_bytes().startswith(b"\x89PNG"))
             self.assertIn("нарисовала", reply["text"]); self.assertEqual(reply["image_prompt"], seen["prompt"])
@@ -157,7 +157,7 @@ class InChat(unittest.TestCase):
             model.replies.append("1girl, anime, long white hair, forest background")
             svc.send(cid, "сделай фон лесом", wait=True)
             self.assertIn("long white hair, masterpiece", model.seen[-1][-1]["content"])
-            self.assertTrue(seen["prompt"].endswith("1girl, anime, long white hair, forest background"))
+            self.assertIn("1girl, anime, long white hair, forest background", seen["prompt"])
         finally:
             images.generate = orig
 
