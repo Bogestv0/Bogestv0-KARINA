@@ -1,5 +1,6 @@
-import unittest, tempfile
+import sys, unittest, tempfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from karina import localimg
 
 
