@@ -37,8 +37,12 @@ DEFAULTS: dict = {
     "search": {"mode": "auto", "depth": "normal"},
     # «мозг» чата: mode — local (встроенная модель) | claude (по ключу API) | auto (простое локально, сложное в Claude)
     "brain": {"mode": "local", "claude_model": "claude-sonnet-5-5"},
-    # «Кодер»: run — разрешить запускать написанный код для проверки (python / pytest / node в папке проекта); max_steps — шагов на задачу
-    "coder": {"run": False, "max_steps": 12},
+    # «Кодер»: run — запускать написанный код для проверки (python / pytest / node в папке проекта); max_steps — шагов на задачу
+    # run включён по умолчанию (запуск — не песочница, но код перед запуском проверяется на опасные вещи); выключатель — в чате («▶ Запуск и проверка»)
+    "coder": {"run": True, "max_steps": 16},
+    # картинки по запросу: provider — auto (свой сервер, если указан адрес, иначе Pollinations) | pollinations | sd (AUTOMATIC1111 / Forge) | openai (свой сервер с OpenAI API);
+    # url — адрес своего сервера (например http://127.0.0.1:7860), key — ключ (если нужен), model — имя модели (для openai)
+    "images": {"provider": "auto", "url": "", "key": "", "model": ""},
     # бесплатные облачные модели (свои ключи): strategy — failover (по порядку, при исчерпании лимита — следующий) | spread (по кругу);
     # order — порядок провайдеров; providers — {id: {"enabled","key","model","url","name"}} (см. cloud.PRESETS)
     "cloud": {"strategy": "failover", "order": [], "providers": {}},

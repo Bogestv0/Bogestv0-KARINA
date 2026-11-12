@@ -2,7 +2,8 @@
 from __future__ import annotations
 import json, os, queue, subprocess, sys, threading, time
 from .diag import trace
-from . import actions, claude as claudemod, files as filesmod, net, models, updater, __version__
+from . import actions, claude as claudemod, files as filesmod, images as imagesmod, net, models, updater, __version__
+from .uploads import Uploads
 from . import audio as audiomod
 from .audio import Listener
 from .config import DATA, DEFAULTS
@@ -13,6 +14,7 @@ class Api:
         self.cfg = cfg
         self._win = window_getter
         self.assistant = None
+        self.uploads = Uploads()
         self._downloads: dict = {}
         self.frame = None               # FrameControl безрамочного окна (None — обычное окно с рамкой Windows)
         self.quitting = False           # True — окну можно закрыться по-настоящему (выход из трея, обновление)
@@ -63,6 +65,8 @@ class Api:
         d = json.loads(json.dumps(self.cfg.data))
         d["llm"]["has_key"] = bool(d["llm"].get("api_key"))
         d["llm"]["api_key"] = ""       # ключ в окно не отдаём
+        d.setdefault("images", {})["has_key"] = bool((d.get("images") or {}).get("key"))
+        d["images"]["key"] = ""        # ключ сервиса картинок в окно не отдаём
         for pv in ((d.get("cloud") or {}).get("providers") or {}).values():
             pv["has_key"] = bool(pv.get("key"))
             pv["key"] = ""             # ключи облачных провайдеров тоже не отдаём
@@ -254,6 +258,7 @@ class Api:
         patch.pop("commands", None)
         patch.pop("brain", None)        # «мозг» меняется только через brain_set (с проверкой значений)
         patch.pop("cloud", None)        # облачные модели меняются только через cloud_* (с проверкой значений)
+        patch.pop("images", None)       # картинки меняются только через images_set
         patch.pop("audio_out", None)    # вывод звука меняется только через audio_out_set
         stt = patch.get("stt") or {}
         if "mics" in stt:
@@ -645,6 +650,65 @@ class Api:
             patch["max_steps"] = max_steps
         self.cfg.update({"coder": patch})
         return self.assistant.coder.settings()
+
+    # ---- файлы, перетащенные в окно (приходят кусками; см. uploads.py) ----
+    def upload_begin(self, rel: str, size: int = 0, batch: str = ""):
+        return self.uploads.begin(str(rel or ""), int(size or 0), str(batch or ""))
+
+    def upload_chunk(self, token: str, data: str):
+        return self.uploads.chunk(str(token), str(data))
+
+    def upload_end(self, token: str):
+        return self.uploads.end(str(token))
+
+    def upload_discard(self, path: str):
+        return self.uploads.discard(str(path))
+
+    # ---- предпросмотр файлов проекта ----
+    def project_preview(self, project: str, rel: str):
+        try:
+            return {"ok": True, "result": self.assistant.coder.preview(str(project), str(rel))}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def project_open_file(self, project: str, rel: str):
+        try:
+            self.assistant.coder.open_file(str(project), str(rel))
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def file_preview_full(self, name: str):
+        return self._file_op(self.assistant.chat.files.preview, name)
+
+    # ---- картинки ----
+    def images_state(self):
+        s = imagesmod.settings(self.cfg)
+        return {"provider": s["provider"], "url": s["url"], "model": s["model"], "has_key": bool(s["key"]), "active": imagesmod.provider_name(self.cfg)}
+
+    def images_set(self, provider: str = "auto", url: str = "", model: str = "", key: str = ""):
+        patch = {"provider": provider if provider in imagesmod.PROVIDERS else "auto", "url": (url or "").strip()[:300], "model": (model or "").strip()[:120]}
+        if key:
+            patch["key"] = key.strip()[:300]          # пустое поле = «оставить ключ как был»
+        self.cfg.update({"images": patch})
+        return self.images_state()
+
+    def images_clear_key(self):
+        self.cfg.update({"images": {"key": ""}})
+        return self.images_state()
+
+    def images_test(self):
+        """Проверка: нарисовать маленькую картинку. Результат придёт событием images_test."""
+        def run():
+            try:
+                data, ext, who = imagesmod.generate(self.cfg, "a small red apple on a white table, simple, high quality", (256, 256))
+                self.emit({"type": "images_test", "ok": True, "text": f"✔ {who}: картинка получена ({len(data) // 1024} КБ)"})
+            except imagesmod.ImageError as e:
+                self.emit({"type": "images_test", "ok": False, "text": f"✖ {e}"})
+            except Exception as e:
+                self.emit({"type": "images_test", "ok": False, "text": f"✖ {e.__class__.__name__}: {e}"})
+        threading.Thread(target=run, daemon=True, name="images-test").start()
+        return True
 
     def coder_open(self, project: str = ""):
         try:

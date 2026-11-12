@@ -4,7 +4,8 @@
   * Для каждой задачи создаётся своя папка проекта «Документы\\Карина\\Проекты\\<имя>». Приложенные файлы копируются туда (оригиналы не трогаются).
   * Модель отвечает текстом с командами-блоками:
         [[ЗАПИСАТЬ: путь]] … [[/ЗАПИСАТЬ]]   — создать или заменить файл проекта
-        [[ЧИТАТЬ: путь]]                      — прочитать файл проекта
+        [[ЧИТАТЬ: путь]] или [[ЧИТАТЬ: путь:10-80]] — прочитать файл проекта (целиком или строки 10–80)
+        [[НАЙТИ: текст]]                      — найти текст по всем файлам проекта (номера строк)
         [[ЗАПУСТИТЬ: команда]]                — запустить проверку (python …, pytest …, node …)
         [[ГОТОВО]] итог [[/ГОТОВО]]           — закончить
     Карина выполняет команды сама и возвращает модели результат (вывод программы, ошибки), и так по кругу, пока не получится или не кончатся шаги.
@@ -16,14 +17,14 @@
 from __future__ import annotations
 import datetime, os, re, shlex, shutil, subprocess, sys, threading, time, uuid, zipfile
 from pathlib import Path
-from . import files as filesmod
+from . import archives, files as filesmod
 from .engine import EngineError
 from .textutil import FEMALE
 
 PROJECTS = "Проекты"
-MAX_STEPS = 12
-MAX_INPUT_FILES = 60
-MAX_INPUT_BYTES = 25 * 1024 * 1024
+MAX_STEPS = 16
+MAX_INPUT_FILES = 400
+MAX_INPUT_BYTES = 80 * 1024 * 1024
 MAX_WRITE_CHARS = 400_000
 MAX_PROJECT_FILES = 120
 INLINE_BYTES = 24_000          # файл такого размера и меньше отдаём модели целиком в первом сообщении
@@ -33,9 +34,9 @@ OUT_LIMIT = 6000
 LIMITS = {"local": 4000, "claude": 8000, "cloud": 3000}     # токенов на один шаг
 
 # что можно записывать (код и данные); программы и скрипты запуска Windows — нельзя
-WRITE_EXT = (set(filesmod.KINDS) - {"docx", "xlsx", "pdf"}) | {"cfg", "gitignore", "ts", "vue", "in"}
-BLOCKED_EXT = {"exe", "bat", "cmd", "ps1", "vbs", "msi", "dll", "lnk", "scr", "com", "sh", "reg", "jar", "psm1", "hta", "pif"}
-SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", ".idea", ".vscode"}
+WRITE_EXT = (set(filesmod.KINDS) - {"docx", "xlsx", "pdf"} - filesmod.IMAGE_EXT) | {"cfg", "gitignore", "ts", "vue", "in"}
+BLOCKED_EXT = set(archives.BLOCKED_EXT)
+SKIP_DIRS = set(archives.SKIP_DIRS)
 RUNNERS = {"python": "python", "python3": "python", "py": "python", "pytest": "pytest", "node": "node"}
 
 # Явно опасные обращения в коде проекта: запуск в таком случае отклоняется (страховка, не песочница)
@@ -53,11 +54,12 @@ class CoderError(Exception):
 
 # ---------------------------------------------------------------- разбор ответа модели
 _TAG = r"\[\[\s*{}\s*(?::\s*(?P<arg>[^\]\n]{{0,300}}?))?\s*\]\]"
-_WRITE = re.compile(_TAG.format(r"(?:ЗАПИСАТЬ|WRITE)") + r"(?P<body>.*?)(?:\[\[\s*/\s*(?:ЗАПИСАТЬ|WRITE)\s*\]\]|(?=\[\[\s*(?:ЗАПИСАТЬ|WRITE|ЧИТАТЬ|READ|ЗАПУСТИТЬ|RUN|ГОТОВО|DONE)\b)|\Z)", re.S | re.I)
+_WRITE = re.compile(_TAG.format(r"(?:ЗАПИСАТЬ|WRITE)") + r"(?P<body>.*?)(?:\[\[\s*/\s*(?:ЗАПИСАТЬ|WRITE)\s*\]\]|(?=\[\[\s*(?:ЗАПИСАТЬ|WRITE|ЧИТАТЬ|READ|НАЙТИ|FIND|ЗАПУСТИТЬ|RUN|ГОТОВО|DONE)\b)|\Z)", re.S | re.I)
 _READ = re.compile(_TAG.format(r"(?:ЧИТАТЬ|READ)"), re.I)
+_FIND = re.compile(_TAG.format(r"(?:НАЙТИ|FIND)"), re.I)
 _RUN = re.compile(_TAG.format(r"(?:ЗАПУСТИТЬ|RUN)"), re.I)
 _DONE = re.compile(r"\[\[\s*(?:ГОТОВО|DONE)\s*\]\](?P<body>.*?)(?:\[\[\s*/\s*(?:ГОТОВО|DONE)\s*\]\]|\Z)", re.S | re.I)
-_ANY = re.compile(r"\[\[\s*/?\s*(?:ЗАПИСАТЬ|WRITE|ЧИТАТЬ|READ|ЗАПУСТИТЬ|RUN|ГОТОВО|DONE)\b[^\]]*\]\]", re.I)
+_ANY = re.compile(r"\[\[\s*/?\s*(?:ЗАПИСАТЬ|WRITE|ЧИТАТЬ|READ|НАЙТИ|FIND|ЗАПУСТИТЬ|RUN|ГОТОВО|DONE)\b[^\]]*\]\]", re.I)
 
 
 def _unfence(body: str) -> str:
@@ -75,6 +77,8 @@ def parse(text: str) -> dict:
         acts.append((m.start(), "write", (m["arg"] or "").strip().strip("\"'«»`"), _unfence(m["body"])))
     for m in _READ.finditer(text):
         acts.append((m.start(), "read", (m["arg"] or "").strip().strip("\"'«»`"), ""))
+    for m in _FIND.finditer(text):
+        acts.append((m.start(), "find", (m["arg"] or "").strip().strip("\"'«»`"), ""))
     for m in _RUN.finditer(text):
         acts.append((m.start(), "run", (m["arg"] or "").strip().strip("`"), ""))
     d = _DONE.search(text)
@@ -82,7 +86,7 @@ def parse(text: str) -> dict:
         done = d["body"].strip() or "Готово."
     acts.sort(key=lambda a: a[0])
     say = _DONE.sub("", _WRITE.sub("", text))
-    say = _ANY.sub("", _RUN.sub("", _READ.sub("", say)))
+    say = _ANY.sub("", _RUN.sub("", _FIND.sub("", _READ.sub("", say))))
     say = re.sub(r"\n{3,}", "\n\n", say).strip()
     return {"say": say, "actions": [(k, a, b) for _, k, a, b in acts], "done": done}
 
@@ -139,22 +143,72 @@ class Workspace:
                 out.append((p.relative_to(self.root).as_posix(), p.stat().st_size))
         return out
 
-    def tree_text(self, limit: int = 80) -> str:
+    def tree_text(self, limit: int = 80, max_chars: int = 0) -> str:
+        """Список файлов. Если проект большой — по папкам (имя папки и сколько в ней файлов), чтобы не съесть контекст модели."""
         items = self.listing()
         lines = [f"{n} ({s} байт)" for n, s in items[:limit]]
         if len(items) > limit:
             lines.append(f"… и ещё {len(items) - limit}")
-        return "\n".join(lines) or "(пусто)"
+        text = "\n".join(lines) or "(пусто)"
+        if max_chars and len(text) > max_chars:
+            dirs: dict[str, list[int]] = {}
+            for n, s in items:
+                d = n.rpartition("/")[0] or "."
+                e = dirs.setdefault(d, [0, 0])
+                e[0] += 1
+                e[1] += s
+            lines = [f"{d}/ — файлов: {c}, {sz // 1024 + 1} КБ" for d, (c, sz) in sorted(dirs.items())]
+            text = f"Файлов всего: {len(items)}. По папкам (содержимое смотри командами [[НАЙТИ: …]] и [[ЧИТАТЬ: папка/файл]]):\n" + "\n".join(lines)
+            if len(text) > max_chars:
+                text = text[:max_chars].rsplit("\n", 1)[0] + "\n…"
+        return text
 
     # ---- чтение / запись ----
     def read(self, rel: str, limit: int = 20_000) -> str:
+        """Файл проекта целиком или частью: «путь» либо «путь:10-80» (строки с 10 по 80)."""
+        rng = re.match(r"^(?P<p>.*?):(?P<a>\d+)(?:\s*[-–]\s*(?P<b>\d+))?$", rel.strip())
+        a = b = 0
+        if rng and not re.match(r"^[A-Za-z]$", rng["p"]):
+            rel, a, b = rng["p"], int(rng["a"]), int(rng["b"] or 0)
         p = self.safe(rel)
         if not p.is_file():
             raise CoderError(f"файла «{rel}» нет в проекте")
         text = read_text(p)
         if text is None:
             raise CoderError(f"«{rel}» — не текстовый файл, прочитать его нельзя")
-        return text if len(text) <= limit else text[:limit] + f"\n… (обрезано, всего {len(text)} символов; читайте частями или создайте файл меньше)"
+        if a:
+            lines = text.split("\n")
+            b = b if b >= a else a + 79
+            chunk = "\n".join(f"{i}: {ln}" for i, ln in enumerate(lines[a - 1:b], start=a))
+            tail = f"\n… (показаны строки {a}–{min(b, len(lines))} из {len(lines)})"
+            return (chunk if len(chunk) <= limit else chunk[:limit] + "\n… (обрезано)") + tail
+        n_lines = text.count("\n") + 1
+        return text if len(text) <= limit else text[:limit] + f"\n… (обрезано: показано {limit} из {len(text)} символов, всего строк {n_lines}; читайте частями: [[ЧИТАТЬ: {rel}:1-80]])"
+
+    def find(self, query: str, limit: int = 40) -> str:
+        """Поиск текста (без учёта регистра) по текстовым файлам проекта: «путь:строка: текст»."""
+        q = (query or "").strip().lower()
+        if len(q) < 2:
+            raise CoderError("для поиска нужно хотя бы 2 символа")
+        hits, files_hit = [], 0
+        for rel, size in self.listing():
+            if size > 2_000_000:
+                continue
+            text = read_text(self.root / rel)
+            if text is None:
+                continue
+            found = False
+            for i, ln in enumerate(text.split("\n"), start=1):
+                if q in ln.lower():
+                    found = True
+                    hits.append(f"{rel}:{i}: {ln.strip()[:160]}")
+                    if len(hits) >= limit:
+                        break
+            files_hit += found
+            if len(hits) >= limit:
+                hits.append(f"… (показаны первые {limit} совпадений — уточните запрос)")
+                break
+        return "\n".join(hits) if hits else f"«{query}» в проекте не найдено"
 
     def write(self, rel: str, body: str) -> int:
         if len(body) > MAX_WRITE_CHARS:
@@ -167,13 +221,16 @@ class Workspace:
         return len(body)
 
     def import_paths(self, paths: list[str]) -> tuple[list[str], list[str]]:
-        """Копирует приложенные файлы и папки в проект. → (скопированные, предупреждения)."""
+        """Копирует приложенные файлы и папки в проект, архивы (zip, tar.gz) распаковывает в input/<имя архива>/.
+        → (скопированные, предупреждения)."""
         copied, warns, total = [], [], 0
         (self.root / "input").mkdir(exist_ok=True)
+        dropped = 0
 
         def add(src: Path, rel: Path):
-            nonlocal total
+            nonlocal total, dropped
             if len(copied) >= MAX_INPUT_FILES:
+                dropped += 1
                 return
             try:
                 size = src.stat().st_size
@@ -191,18 +248,46 @@ class Workspace:
             total += size
             copied.append(("input" / rel).as_posix())
 
+        def add_archive(src: Path):
+            nonlocal total
+            name = archives.stem(src)
+            dest = self.root / "input" / name
+            n = 2
+            while dest.exists():
+                dest = self.root / "input" / f"{name}_{n}"
+                n += 1
+            try:
+                files, w = archives.extract(src, dest, max_files=max(0, MAX_INPUT_FILES - len(copied)), budget_left=max(0, MAX_INPUT_BYTES - total))
+            except archives.ArchiveError as e:
+                warns.append(str(e))
+                return
+            warns.extend(w)
+            for f in files:
+                try:
+                    total += (dest / f).stat().st_size
+                except OSError:
+                    pass
+                copied.append(("input/" + dest.name + "/" + f))
+            if not files:
+                warns.append(f"«{src.name}»: в архиве не нашлось подходящих файлов")
+
         for raw in paths:
             src = Path(raw)
             if src.is_file():
-                add(src, Path(src.name))
+                if archives.kind(src) == "unsupported":
+                    warns.append(archives.unsupported_text(src))
+                elif archives.is_archive(src):
+                    add_archive(src)
+                else:
+                    add(src, Path(src.name))
             elif src.is_dir():
                 for f in sorted(src.rglob("*")):
                     if f.is_file() and not (set(f.relative_to(src).parts) & SKIP_DIRS):
                         add(f, Path(src.name) / f.relative_to(src))
             else:
                 warns.append(f"«{raw}» не найден")
-        if len(copied) >= MAX_INPUT_FILES:
-            warns.append(f"Принято не больше {MAX_INPUT_FILES} файлов — остальные пропущены.")
+        if dropped:
+            warns.append(f"Принято не больше {MAX_INPUT_FILES} файлов — остальных ({dropped}) нет в проекте.")
         return copied, warns
 
     def zip(self) -> Path:
@@ -252,12 +337,13 @@ def read_text(p: Path) -> str | None:
 
 
 def read_attachments(paths: list[str], limit: int) -> tuple[list[dict], list[str]]:
-    """Для ответа «только прочитать»: тексты приложенных файлов и папок (без копирования и без проекта).
+    """Для ответа «только прочитать»: тексты приложенных файлов, папок и архивов (без копирования и без проекта).
     → ([{'name', 'text'}], замечания). Всего не больше limit символов; что не поместилось или не текст — в замечаниях."""
     out, notes, used, count = [], [], 0, 0
+    skipped_big, skipped_bin = [], 0
 
     def add(src: Path, name: str):
-        nonlocal used, count
+        nonlocal used, count, skipped_bin
         count += 1
         if count > MAX_INPUT_FILES:
             if count == MAX_INPUT_FILES + 1:
@@ -265,16 +351,33 @@ def read_attachments(paths: list[str], limit: int) -> tuple[list[dict], list[str
             return
         text = read_text(src)
         if text is None:
-            notes.append(f"«{name}» — не текстовый файл, содержимое не показано")
+            if len(paths or []) == 1 and not src.is_dir() and "/" not in name:
+                notes.append(f"«{name}» — не текстовый файл, содержимое не показано")
+            else:
+                skipped_bin += 1
         elif used + len(text) > limit:
-            notes.append(f"«{name}» не поместился в запрос ({len(text)} символов) — выберите нужные файлы или включите режим «Кодер»")
+            skipped_big.append(name)
         else:
             used += len(text)
             out.append({"name": name, "text": text})
 
     for raw in paths or []:
         src = Path(raw)
-        if src.is_file():
+        if src.is_file() and archives.kind(src) == "unsupported":
+            notes.append(archives.unsupported_text(src))
+        elif src.is_file() and archives.is_archive(src):
+            try:
+                d, files, w = archives.extract_temp(src)
+            except archives.ArchiveError as e:
+                notes.append(str(e))
+                continue
+            try:
+                notes.extend(w)
+                for rel in sorted(files):
+                    add(d / rel, f"{archives.stem(src)}/{rel}")
+            finally:
+                shutil.rmtree(d, ignore_errors=True)
+        elif src.is_file():
             add(src, src.name)
         elif src.is_dir():
             for f in sorted(src.rglob("*")):
@@ -282,6 +385,11 @@ def read_attachments(paths: list[str], limit: int) -> tuple[list[dict], list[str
                     add(f, (Path(src.name) / f.relative_to(src)).as_posix())
         else:
             notes.append(f"«{raw}» не найден")
+    if skipped_big:
+        shown = ", ".join(f"«{x}»" for x in skipped_big[:4]) + (f" и ещё {len(skipped_big) - 4}" if len(skipped_big) > 4 else "")
+        notes.append(f"Не поместилось в запрос ({len(skipped_big)} файл.): {shown} — для больших проектов используется режим «Код» (читаю файлы по частям)")
+    if skipped_bin:
+        notes.append(f"Нетекстовых файлов (картинки, шрифты, базы) пропущено: {skipped_bin}")
     return out, notes
 
 
@@ -407,28 +515,39 @@ def system_prompt(can_run: bool, run_note: str = "") -> str:
            "Программа запускается в папке проекта; вывод и ошибки Карина вернёт тебе. Сеть, подпроцессы и удаление файлов в коде запрещены.\n" if can_run else
            f"• Запуск программ сейчас НЕДОСТУПЕН{(' (' + run_note + ')') if run_note else ''}: проверяй код внимательным чтением и в итоге честно скажи, что запуск не выполнялся.\n")
     return (
-        "Ты — Карина, помощник-программист. " + FEMALE + " Пользователь дал задачу и, возможно, файлы (они лежат в папке input/). Работай сама, шагами, пока не получится готовый, проверенный результат. "
-        "Отвечай по-русски. Комментарии в коде — по-русски, имена — как принято в языке.\n"
+        "Ты — Карина, помощник-программист. " + FEMALE + " Пользователь дал задачу и, возможно, файлы или архивы (они лежат в папке input/, архивы уже распакованы). "
+        "Работай сама, шагами, пока не получится готовый, проверенный результат. Отвечай по-русски. Комментарии в коде — по-русски, имена — как принято в языке.\n"
         "Ты управляешь проектом командами-блоками. Карина выполнит их и пришлёт результат:\n"
         "• [[ЗАПИСАТЬ: путь/файл.py]] … [[/ЗАПИСАТЬ]] — создать или полностью заменить файл проекта (в блоке — только содержимое файла, без ```). Путь относительный, внутри проекта.\n"
-        "• [[ЧИТАТЬ: путь]] — прочитать файл проекта.\n"
+        "• [[ЧИТАТЬ: путь]] — прочитать файл проекта; [[ЧИТАТЬ: путь:10-80]] — только строки 10–80 (так читай большие файлы).\n"
+        "• [[НАЙТИ: текст]] — найти текст по всем файлам проекта (имя функции, переменной, сообщения об ошибке); вернутся «файл:строка: текст».\n"
         + run +
         "• [[ГОТОВО]] итог [[/ГОТОВО]] — закончить; в итоге: что сделано, какие файлы, как запускать, что проверено и что нет.\n"
-        "Правила: 1) начни с короткого плана в 1–3 предложения; 2) пиши полные файлы, не «…остальное без изменений»; 3) сначала напиши код, потом тесты или проверочный запуск; "
-        "4) если проверка упала — исправь причину и запусти снова, не меняй тест ради зелёного результата; 5) приложенные файлы в input/ не меняй, результат клади рядом (src/, output/ и т. п.); "
-        "6) не выдумывай, что проверка прошла — опирайся только на присланный вывод; 7) в одном ответе можно несколько блоков, они выполняются по порядку; 8) закончив, обязательно напиши [[ГОТОВО]]."
+        "Правила: 1) начни с короткого плана в 1–3 предложения и перед каждым шагом коротко пиши, что делаешь и зачем; "
+        "2) проект большой — не читай всё подряд: смотри список файлов, ищи [[НАЙТИ]], читай нужные куски; "
+        "3) пиши полные файлы, не «…остальное без изменений»; 4) сначала напиши код, потом тесты или проверочный запуск; "
+        "5) если проверка упала — исправь причину и запусти снова, не меняй тест ради зелёного результата; "
+        "6) файлы в input/ не меняй: исправленную полную версию клади в output/ с тем же относительным путём (например output/karina/chat.py), новые файлы — в src/, output/ и т. п.; "
+        "7) не выдумывай, что проверка прошла — опирайся только на присланный вывод; 8) в одном ответе можно несколько блоков, они выполняются по порядку; "
+        "9) если просят «посмотреть», «разобрать» или «объяснить» код — ничего не записывай: прочитай нужное и сразу заверши [[ГОТОВО]] с понятным разбором (что где, какие проблемы, что советуешь); "
+        "10) оформление, макет, шаблон, страница, интерфейс — делай одним файлом .html (стили внутри <style>, без внешних ссылок и шрифтов) или .svg: Карина покажет его прямо в окне; "
+        "11) закончив, обязательно напиши [[ГОТОВО]]."
     )
 
 
-def first_message(task: str, ws: Workspace, copied: list[str], context: str = "", resumed: bool = False) -> str:
+def first_message(task: str, ws: Workspace, copied: list[str], context: str = "", resumed: bool = False, budget: int = 60_000) -> str:
+    """Первое сообщение модели: задача, список файлов и содержимое небольших файлов. budget — сколько символов контекста есть у модели:
+    у локальной модели он мал, поэтому большие проекты отдаются списком, а читаются по частям командами."""
     parts = []
     if context:
-        parts += ["Предыдущая переписка с пользователем (для контекста):\n" + context, ""]
+        parts += ["Предыдущая переписка с пользователем (для контекста):\n" + context[-int(budget * 0.1):], ""]
     if resumed:
         parts += ["Это ПРОДОЛЖЕНИЕ работы над уже существующим проектом: файлы лежат в папке проекта, прочитай нужные командой [[ЧИТАТЬ: путь]] и вноси правки в них.", ""]
-    parts += [f"Задача:\n{task.strip()}", "", "Файлы проекта:\n" + ws.tree_text()]
+    parts += [f"Задача:\n{task.strip()[:int(budget * 0.25)]}", "", "Файлы проекта:\n" + ws.tree_text(max_chars=max(600, int(budget * 0.18)))]
+    inline_total, inline_each = min(INLINE_TOTAL, int(budget * 0.35)), min(INLINE_BYTES, int(budget * 0.15))
     used = 0
-    for rel in copied:
+    few = len(copied) <= 12                 # много файлов (проект, архив) целиком не показываем: список + чтение по частям
+    for rel in copied if few else []:
         p = ws.root / rel
         try:
             size = p.stat().st_size
@@ -436,12 +555,14 @@ def first_message(task: str, ws: Workspace, copied: list[str], context: str = ""
             continue
         text = read_text(p)
         if text is None:
-            parts.append(f"\n[{rel}: двоичный файл, содержимое не показано — программа может открыть его сама]")
-        elif size <= INLINE_BYTES and used + len(text) <= INLINE_TOTAL:
+            continue                        # картинки, шрифты и т. п. в списке уже есть; модели они не нужны
+        elif size <= inline_each and used + len(text) <= inline_total:
             used += len(text)
             parts.append(f"\n=== {rel} ===\n{text}")
         else:
-            parts.append(f"\n[{rel}: {len(text)} символов, не помещается — прочитайте нужное командой [[ЧИТАТЬ: {rel}]]]")
+            parts.append(f"\n[{rel}: {len(text)} символов, не помещается — читай по частям: [[ЧИТАТЬ: {rel}:1-80]] или ищи: [[НАЙТИ: …]]]")
+    if not few:
+        parts.append("\nФайлов много, содержимое сюда не вставлено: читай нужное командами [[ЧИТАТЬ: путь]], [[ЧИТАТЬ: путь:строки]] и [[НАЙТИ: текст]].")
     return "\n".join(parts)
 
 
@@ -456,6 +577,18 @@ class CoderService:
         self._stop = threading.Event()
         self.last: dict = {}
 
+    def project_dir(self, project: str) -> Path | None:
+        """Папка существующего проекта по имени или None. Принимается только имя папки прямо внутри «Проекты» (без «..», «.» и путей)."""
+        if not isinstance(project, str) or not project or project in (".", "..") or project != Path(project).name or "\\" in project or "/" in project:
+            return None
+        d = self.base / project
+        try:
+            if d.is_dir() and d.resolve().parent == self.base.resolve():
+                return d
+        except OSError:
+            pass
+        return None
+
     @property
     def base(self) -> Path:
         return self._dir or filesmod.documents_dir() / filesmod.FOLDER_NAME / PROJECTS
@@ -469,7 +602,7 @@ class CoderService:
 
     def settings(self) -> dict:
         c = self.cfg.get("coder", {}) or {}
-        return {"run": bool(c.get("run", False)), "max_steps": max(1, min(30, int(c.get("max_steps") or MAX_STEPS)))}
+        return {"run": bool(c.get("run", True)), "max_steps": max(1, min(30, int(c.get("max_steps") or MAX_STEPS)))}
 
     def start(self, task: str, paths: list[str], wait: bool = False, sink=None, project: str = "", context: str = "") -> dict:
         """Запускает задачу в фоне (wait=True — дождаться конца).
@@ -485,8 +618,8 @@ class CoderService:
         except Exception as e:
             return {"ok": False, "error": str(e)}
         resumed = False
-        if project and project == Path(project).name and (self.base / project).is_dir():
-            ws, resumed = Workspace(self.base / project), True
+        if project and self.project_dir(project):
+            ws, resumed = Workspace(self.project_dir(project)), True
         else:
             ws = Workspace.create(self.base, task)
         copied, warns = ws.import_paths([p for p in (paths or []) if isinstance(p, str)][:200]) if paths else ([], [])
@@ -539,7 +672,9 @@ class CoderService:
         for w in warns:
             self._say("warn", w)
         try:
-            msgs = [{"role": "user", "content": first_message(task, ws, copied, context, resumed)}]
+            budget = self._budget(is_claude, max_tokens, backend.ctx_tokens if choice.name == "cloud" else 0)
+            read_limit = max(2000, min(20_000, int(budget * 0.3)))                 # сколько символов файла отдаём за одно чтение
+            msgs = [{"role": "user", "content": first_message(task, ws, copied, context, resumed, budget)}]
             sysmsg = {"role": "system", "content": system_prompt(can_run, run_note)}
             nudged = False
             if backend.state != "ready":
@@ -548,7 +683,7 @@ class CoderService:
                 if self._stop.is_set():
                     break
                 self._say("step", f"Шаг {step} из {st['max_steps']}: думаю…")
-                msgs = self._trim(msgs, self._budget(is_claude, max_tokens, backend.ctx_tokens if choice.name == "cloud" else 0))
+                msgs = self._trim(msgs, budget)
                 reply = backend.chat([sysmsg] + msgs, max_tokens=max_tokens, temperature=0.3, stop=self._stop)
                 if self._stop.is_set():
                     break
@@ -564,20 +699,24 @@ class CoderService:
                             n = ws.write(arg, body)
                             stats["writes"] += 1
                             stats["dirty"] = True
-                            self._say("write", f"Записала {arg} ({n} символов)", path=arg)
+                            self._say("write", f"Записала {arg}", path=arg, chars=n, lines=body.count("\n") + 1, preview=body[:1500])
                             results.append(f"✔ {arg} записан ({n} символов)")
                         elif kind == "read":
-                            text = ws.read(arg)
-                            self._say("read", f"Читаю {arg}")
+                            text = ws.read(arg, read_limit)
+                            self._say("read", f"Читаю {arg}", path=arg)
                             results.append(f"=== {arg} ===\n{text}")
+                        elif kind == "find":
+                            found = ws.find(arg)
+                            self._say("find", f"Ищу «{arg}»", query=arg, output=found[:1500])
+                            results.append(f"Поиск «{arg}»:\n{found}")
                         elif kind == "run":
                             if not can_run:
                                 raise CoderError("запуск недоступен" + (f" ({run_note})" if run_note else ""))
-                            self._say("run", f"Запускаю: {arg}")
+                            self._say("run", f"Запускаю: {arg}", cmd=arg)
                             code, out = runner.run(arg, self._stop)
                             stats["runs"] += 1
                             stats["last_run"], stats["dirty"] = code, False
-                            self._say("result", f"Код возврата {code}", ok=(code == 0), output=out[-1500:])
+                            self._say("result", "Проверка прошла" if code == 0 else f"Проверка не прошла (код {code})", ok=(code == 0), code=code, output=out[-1500:])
                             results.append(f"$ {arg}\n[код возврата: {code}]\n{out.strip() or '(вывода нет)'}")
                     except CoderError as e:
                         self._say("warn", f"{kind}: {e}")
@@ -626,10 +765,35 @@ class CoderService:
         sink_(done)
 
     # ---- доступ из окна ----
-    def open_folder(self, project: str = "") -> None:
-        p = self.base / project if project else self.base
-        if project and (project != Path(project).name or not p.is_dir()):
+    def _project_file(self, project: str, rel: str) -> Path:
+        d = self.project_dir(project)
+        if d is None:
             raise CoderError("Проект не найден.")
+        p = Workspace(d).safe(rel)
+        if not p.is_file():
+            raise CoderError("Файл не найден — возможно, его удалили.")
+        return p
+
+    def preview(self, project: str, rel: str) -> dict:
+        """Предпросмотр файла проекта в окне: картинка / HTML-шаблон / текст (см. files.preview_file)."""
+        return filesmod.preview_file(self._project_file(project, rel))
+
+    def open_file(self, project: str, rel: str) -> None:
+        """Открыть файл проекта: картинки и SVG — программой по умолчанию, код, текст и HTML — только в Блокноте (не запускаем)."""
+        p = self._project_file(project, rel)
+        if sys.platform != "win32":
+            subprocess.Popen(["xdg-open", str(p)])
+        elif p.suffix[1:].lower() in filesmod.SHELL_OPEN:
+            os.startfile(str(p))                                   # noqa: S606 — путь проверен выше
+        else:
+            subprocess.Popen(["notepad.exe", str(p)])
+
+    def open_folder(self, project: str = "") -> None:
+        p = self.base
+        if project:
+            p = self.project_dir(project)
+            if p is None:
+                raise CoderError("Проект не найден.")
         p.mkdir(parents=True, exist_ok=True)
         if sys.platform == "win32":
             os.startfile(str(p))                                   # noqa: S606 — путь проверен выше

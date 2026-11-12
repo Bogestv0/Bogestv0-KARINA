@@ -24,9 +24,13 @@ for _e in ("txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "ini", "toml
     KINDS[_e] = "text"
 for _e in ("py", "js", "mjs", "ts", "tsx", "jsx", "html", "css", "sql", "java", "c", "cpp", "h", "cs", "go", "rs", "php", "rb", "kt", "swift", "lua"):
     KINDS[_e] = "code"
-KIND_LABEL = {"word": "Документ Word", "excel": "Таблица Excel", "pdf": "PDF", "svg": "Схема SVG", "text": "Текстовый файл", "code": "Код"}
+# картинки Карина не «пишет текстом»: их создаёт только генератор изображений (create_bytes), модель файлом-блоком их не заказывает
+IMAGE_EXT = {"png", "jpg", "jpeg", "webp", "gif"}
+for _e in IMAGE_EXT:
+    KINDS[_e] = "image"
+KIND_LABEL = {"word": "Документ Word", "excel": "Таблица Excel", "pdf": "PDF", "svg": "Схема SVG", "text": "Текстовый файл", "code": "Код", "image": "Изображение"}
 # Этими программами Windows открывает файл «как есть»; всё остальное (код, текст) открываем в Блокноте — его нельзя «запустить».
-SHELL_OPEN = {"docx", "xlsx", "pdf", "svg", "csv"}
+SHELL_OPEN = {"docx", "xlsx", "pdf", "svg", "csv"} | IMAGE_EXT
 RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
 
 
@@ -84,15 +88,16 @@ def display_text(text: str) -> str:
 _BAD = re.compile(r'[\x00-\x1f<>:"/\\|?*\u200b-\u200f\u202a-\u202e]')
 
 
-def safe_name(raw: str) -> tuple[str, str]:
-    """→ (имя без расширения, расширение в нижнем регистре). Путь отбрасывается, символы очищаются."""
+def safe_name(raw: str, images: bool = False) -> tuple[str, str]:
+    """→ (имя без расширения, расширение в нижнем регистре). Путь отбрасывается, символы очищаются.
+    images=False: картинки (png, jpg …) модель заказывать не может — их делает только генератор изображений."""
     base = (raw or "").replace("\\", "/").split("/")[-1].strip()
     stem, dot, ext = base.rpartition(".")
     if not dot or not stem:
         raise FileError(f"У файла «{base or raw}» не указан тип (например, .docx или .txt).")
     ext = ext.lower().strip()
-    if ext not in KINDS:
-        raise FileError(f"тип «.{ext}» Карина не создаёт. Доступно: {', '.join('.' + e for e in sorted(KINDS))}.")
+    if ext not in KINDS or (ext in IMAGE_EXT and not images):
+        raise FileError(f"тип «.{ext}» Карина не создаёт. Доступно: {', '.join('.' + e for e in sorted(set(KINDS) - IMAGE_EXT))}.")
     stem = re.sub(r"\s+", " ", _BAD.sub("", stem)).strip(" .")[:80].strip(" .")
     if not stem:
         stem = "файл"
@@ -682,6 +687,31 @@ class FileService:
             raise FileError("слишком много файлов с таким именем.")
         return {"name": fname, "kind": KINDS[ext], "size": len(data), "warning": warn}
 
+    def create_bytes(self, name: str, data: bytes, warning: str = "") -> dict:
+        """Готовый файл-картинка от генератора изображений (png, jpg, webp, gif). Правила те же: только эта папка, ничего не перезаписывается."""
+        stem, ext = safe_name(name, images=True)
+        if ext not in IMAGE_EXT:
+            raise FileError("так сохраняются только изображения.")
+        if not data or len(data) > 25 * 1024 * 1024:
+            raise FileError("изображение пустое или слишком большое.")
+        folder = self.folder
+        folder.mkdir(parents=True, exist_ok=True)
+        root = folder.resolve()
+        for n in range(1, 1000):
+            fname = f"{stem}.{ext}" if n == 1 else f"{stem} ({n}).{ext}"
+            path = folder / fname
+            if path.resolve().parent != root:
+                raise FileError("недопустимое имя файла.")
+            try:
+                with open(path, "xb") as f:
+                    f.write(data)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise FileError("слишком много файлов с таким именем.")
+        return {"name": fname, "kind": "image", "size": len(data), "warning": warning}
+
     def create_all(self, reqs: list[Request]) -> tuple[list[dict], list[str]]:
         made, errors = [], []
         for r in reqs[:MAX_FILES]:
@@ -740,6 +770,44 @@ class FileService:
         if p.suffix.lower() != ".svg" or p.stat().st_size > 2_000_000:
             raise FileError("Предпросмотр только для SVG.")
         return "data:image/svg+xml;base64," + base64.b64encode(p.read_bytes()).decode("ascii")
+
+    def preview(self, name: str) -> dict:
+        return preview_file(self.resolve(name))
+
+
+# ---------------------------------------------------------------- предпросмотр в окне
+PREVIEW_TEXT = {"txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "ini", "toml", "py", "js", "mjs", "ts", "tsx", "jsx", "css", "sql", "java", "c", "cpp", "h",
+                "cs", "go", "rs", "php", "rb", "kt", "swift", "lua", "cfg", "vue", "in", "gitignore"}
+_IMG_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif", "svg": "image/svg+xml"}
+
+
+def preview_file(p: Path, limit: int = 8_000_000) -> dict:
+    """Что показать в окне для файла: {'type': 'image', 'src': data-URI} | {'type': 'html', 'html': текст} | {'type': 'text', 'text': текст}.
+    HTML окно показывает в изолированной рамке без доступа к сети и к самой программе; SVG и картинки — только как <img>."""
+    import base64
+    ext = p.suffix[1:].lower()
+    size = p.stat().st_size
+    if ext in _IMG_MIME:
+        if size > limit:
+            raise FileError("файл слишком большой для предпросмотра.")
+        data = p.read_bytes()
+        if ext == "svg":
+            data = sanitize_svg(data.decode("utf-8", "replace")).encode("utf-8")       # старые и чужие SVG очищаем ещё раз
+        return {"type": "image", "src": f"data:{_IMG_MIME[ext]};base64," + base64.b64encode(data).decode("ascii")}
+    if ext in ("html", "htm"):
+        if size > 1_500_000:
+            raise FileError("HTML-файл слишком большой для предпросмотра.")
+        return {"type": "html", "html": p.read_bytes().decode("utf-8", "replace")}
+    if ext in PREVIEW_TEXT:
+        if size > 1_500_000:
+            raise FileError("файл слишком большой для предпросмотра.")
+        raw = p.read_bytes()
+        for enc in ("utf-8-sig", "cp1251"):
+            try:
+                return {"type": "text", "text": raw.decode(enc)}
+            except UnicodeDecodeError:
+                continue
+    raise FileError("для этого типа файла предпросмотра нет — используйте «Открыть».")
 
 
 # ---------------------------------------------------------------- описание формата для модели

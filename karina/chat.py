@@ -2,7 +2,7 @@
 from __future__ import annotations
 import datetime, json, re, threading, time, uuid
 from pathlib import Path
-from . import coder as codermod, files as filesmod, net, research, websearch
+from . import coder as codermod, files as filesmod, images as imagesmod, net, research, websearch
 from .brain import Brain, BrainUnavailable
 from .config import DATA
 from .engine import EngineError
@@ -15,20 +15,49 @@ CLAUDE_CTX = 32768                                          # сколько и�
 CHARS_PER_TOKEN = 2.0          # для русского с запасом: лучше обрезать историю раньше, чем переполнить контекст
 
 ATTACH_CHARS = {"local": 20_000, "claude": 90_000, "cloud": 30_000}          # сколько текста приложенных файлов отдаём модели при ответе «только прочитать»
-MODES = ("auto", "code", "ask")                              # авто / всегда кодер / только ответ в чате
+MODES = ("auto", "code", "ask")                              # авто (Код включён: агент берёт задачи с кодом и файлами) / всегда агент / только ответ в чате (Код выключен)
 
 # Просьба что-то СДЕЛАТЬ с кодом (нужен кодер) — в отличие от «посмотри», «объясни», «найди ошибку» (достаточно прочитать и ответить).
 CODE_VERB = re.compile(
     r"\b(?:напиши|написать|создай|сделай|реализуй|разработай|исправь|почини|поправь|доработай|дополни|добавь|измени|переделай|перепиши|рефактор\w*|"
-    r"оптимизируй|внеси|запусти|протестируй|покрой|обнови|удали|убери|замени|сгенерируй|допиши|доделай)\b")
-CODE_HINT = re.compile(r"(?:\bкод|файл|функци|класс|тест|скрипт|ошибк|баг|програм|приложен|проект|модул|\.py\b|\.js\b|\bpython|\bnode)")
-# новая программа без приложенных файлов: достаточно крупная, чтобы её вёл кодер
-CODE_TARGET = re.compile(r"(?:програм|приложен|проект|\bбот\b|\bбота\b|парсер|утилит|\bсайт|\bигр[уы]|модул|библиотек|\bтест(?:ы|ами|ов)?\b|\bapi\b)")
+    r"оптимизируй|внеси|запусти|протестируй|покрой|обнови|удали|убери|замени|сгенерируй|допиши|доделай|собери|оформи|нарисуй макет|верстай|сверстай)\b")
+CODE_HINT = re.compile(r"(?:\bкод|файл|функци|класс|тест|скрипт|ошибк|баг|програм|приложен|проект|модул|страниц|шаблон|макет|\.py\b|\.js\b|\.html\b|\bpython|\bnode)")
+# просьба «только посмотреть, объяснить, разобрать»: изменений не нужно
+READ_ONLY = re.compile(r"\b(?:посмотри|глянь|взгляни|объясни|поясни|расскажи|опиши|что делает|как работает|почему|зачем|проверь|найди (?:ошибк\w*|баг\w*|проблем\w*)|разбер\w*|ревью|оцени|прокомментируй|что (?:тут|здесь|в нем|не так))\b")
+# новая программа или оформление без приложенных файлов: достаточно крупное, чтобы его вёл кодер (с проверкой запуском)
+CODE_TARGET = re.compile(r"(?:програм|приложен|проект|\bбот\b|\bбота\b|парсер|утилит|\bсайт|\bигр[уы]|модул|библиотек|\bтест(?:ы|ами|ов)?\b|\bapi\b|"
+                         r"скрипт|функци|\bкласс|\bкод\b|калькулятор|страниц|лендинг|верстк|шаблон|макет|интерфейс|\bформ[ауы]\b|\bhtml\b|\bcss\b|\bpython\b|\bnode\b|\bjs\b|расширени)")
+# что в этих сообщениях значит «просто файл» (документ, таблица, PDF), а не программа
+PLAIN_DOC = re.compile(r"(?:документ|\bворд|\bword|\bdocx|таблиц\w* в excel|\bэксел|\bexcel|\bpdf|\bпдф|реферат|доклад|эссе|резюме|письм)")
+LIGHT_EXT = {"py", "js", "mjs", "ts", "html", "css", "json", "txt", "md", "csv", "xml", "yaml", "yml", "ini", "toml", "sql", "log", "java", "c", "cpp", "h", "cs", "go", "rs", "php", "rb"}
+LIGHT_BYTES = 9000
 
 
-def route(text: str, has_paths: bool, has_project: bool, mode: str = "auto", voice: bool = False) -> str:
-    """Куда пойдёт сообщение: "code" — кодер пишет и проверяет код в папке проекта; "chat" — обычный ответ
-    (приложенные файлы при этом просто читаются). Голосовые вопросы всегда идут в чат."""
+def light_attachments(paths: list[str]) -> bool:
+    """Приложено немного обычных текстовых файлов (не архив, не папка): их можно просто прочитать и ответить, не заводя проект."""
+    from pathlib import Path as _P
+    if not paths or len(paths) > 3:
+        return False
+    total = 0
+    for raw in paths:
+        p = _P(raw)
+        try:
+            if not p.is_file() or p.suffix[1:].lower() not in LIGHT_EXT:
+                return False
+            total += p.stat().st_size
+        except OSError:
+            return False
+    return total <= LIGHT_BYTES
+
+
+def route(text: str, has_paths: bool, has_project: bool, mode: str = "auto", voice: bool = False, light: bool = False,
+          last_image: bool = False) -> str:
+    """Куда пойдёт сообщение: "image" — картинка; "code" — агент пишет, запускает и проверяет код в папке проекта; "chat" — обычный ответ.
+    «Код» включён (mode "auto") — агент берёт файлы, архивы и просьбы написать или оформить что-то: он сам читает проект по частям, правит, проверяет и отдаёт готовое.
+    Только когда приложено немного обычных файлов и просят «посмотреть / объяснить» без изменений (light), хватает ответа в чате.
+    Голосовые вопросы идут в чат (или на картинку); «Код» выключен (mode "ask") — только чат и картинки."""
+    if imagesmod.wants_image(text) or (last_image and imagesmod.is_follow_up(text)):
+        return "image"
     if voice or mode == "ask":
         return "chat"
     if mode == "code":
@@ -36,10 +65,14 @@ def route(text: str, has_paths: bool, has_project: bool, mode: str = "auto", voi
     t = norm(text)
     verb = bool(CODE_VERB.search(t))
     if has_paths:
-        return "code" if verb else "chat"
-    if verb and has_project and CODE_HINT.search(t):
+        if light and READ_ONLY.search(t) and not verb:
+            return "chat"
+        return "code"
+    if has_project and verb and CODE_HINT.search(t):
         return "code"                                  # продолжение работы над проектом этого диалога
-    return "code" if verb and CODE_TARGET.search(t) else "chat"
+    if has_project and READ_ONLY.search(t) and CODE_HINT.search(t) and not PLAIN_DOC.search(t):
+        return "code"                                  # «посмотри, что в проекте / что не так с тестом» — агент видит файлы проекта
+    return "code" if verb and CODE_TARGET.search(t) and not PLAIN_DOC.search(t) else "chat"
 
 
 # Фразы, которые сразу идут в чат (раньше обычных команд: «найди и напиши…» иначе стало бы поиском в браузере).
@@ -73,7 +106,7 @@ def system_prompt(voice: bool = False, web: bool = False, files: bool = False, a
               else "Сейчас у тебя нет доступа к интернету: не утверждай, что что-то нашла в сети. ")
     access += ("Пользователь приложил файлы: их содержимое дано в сообщении (раздел «Приложенные файлы»). Других файлов на компьютере ты не видишь и не меняешь; "
                "ты можешь только прочитать приложенное и ответить в чате (разобрать код, найти ошибки, объяснить, предложить правки текстом). "
-               "Если нужно изменить файлы или написать проект — скажи, что для этого есть режим «Кодер» (кнопка «💻 Код»). "
+               "Если нужно изменить файлы или написать проект — скажи, что для этого нужно включить переключатель «💻 Код» (он включён по умолчанию; когда он включён, файлы читает и правит Кодер). "
                if attached else
                "Читать и открывать файлы на компьютере ты не можешь: не утверждай, что открыла или прочитала файл. ")
     p = ("Ты — Карина, помощник на компьютере пользователя. Отвечай по-русски (если не просят иначе), по делу и без воды. "
@@ -163,6 +196,10 @@ def fit_history(messages: list[dict], budget_chars: int) -> list[dict]:
     return keep
 
 
+def codermod_light(paths: list[str]) -> bool:
+    return light_attachments(paths)
+
+
 class ChatService:
     def __init__(self, cfg, engine, emit, speak=None, store: ChatStore | None = None, brain: Brain | None = None,
                  files: filesmod.FileService | None = None, coder=None):
@@ -227,20 +264,21 @@ class ChatService:
         return c
 
     # ---------- кодер внутри диалога ----------
-    def _code_turn(self, chat: dict, reply: dict, text: str, paths: list[str], step) -> tuple[str, str, list[str]]:
-        """Кодер ведёт задачу прямо в этом диалоге: ход работы виден в сообщении, итог приходит ответом.
-        → (текст ответа, ошибка, шаги для «Хода работы»)."""
+    def _code_turn(self, chat: dict, reply: dict, text: str, paths: list[str], step) -> tuple[str, str, list[dict]]:
+        """Кодер ведёт задачу прямо в этом диалоге. Ход работы — лента действий (что сказала, что записала, что запустила и что получилось),
+        она приходит в окно событиями chat_activity и сохраняется вместе с ответом; итог приходит текстом ответа.
+        → (текст ответа, ошибка, лента действий)."""
         cid = chat["id"]
-        log: list[dict] = []                    # {'text', 'output'?}
+        log: list[dict] = []
         done: dict = {}
 
-        def show():
-            md = []
-            for e in log[-30:]:
-                md.append("- " + e["text"].replace("\n", " "))
-                if e.get("output"):
-                    md.append("```\n" + e["output"].strip()[-500:] + "\n```")
-            self.emit({"type": "chat_delta", "chat": cid, "id": reply["id"], "text": "🛠 **Работаю над задачей**\n\n" + "\n".join(md)})
+        def push(entry: dict):
+            log.append(entry)
+            self.emit({"type": "chat_activity", "chat": cid, "id": reply["id"], "op": "add", "index": len(log) - 1, "entry": entry})
+
+        def update(i: int, **kw):
+            log[i].update(kw)
+            self.emit({"type": "chat_activity", "chat": cid, "id": reply["id"], "op": "update", "index": i, "entry": log[i]})
 
         def sink(ev: dict):
             if ev.get("type") == "coder_done":
@@ -248,32 +286,36 @@ class ChatService:
                 return
             k, t = ev.get("kind"), ev.get("text", "")
             if k == "say":
-                log.append({"text": "💬 " + t[:400]})
+                push({"k": "say", "text": t[:1500]})
             elif k == "write":
-                log.append({"text": "✏ " + t})
+                push({"k": "write", "text": t, "path": ev.get("path", ""), "lines": ev.get("lines", 0), "preview": ev.get("preview", "")[:1500]})
             elif k == "read":
-                log.append({"text": "📖 " + t})
+                push({"k": "read", "text": t, "path": ev.get("path", "")})
+            elif k == "find":
+                push({"k": "find", "text": t, "output": ev.get("output", "")[:1500]})
             elif k == "run":
-                log.append({"text": "▶ " + t})
+                push({"k": "run", "text": t, "cmd": ev.get("cmd", ""), "ok": None})
             elif k == "result":
-                log.append({"text": ("✔ " if ev.get("ok") else "✖ ") + t, "output": "" if ev.get("ok") else (ev.get("output") or "")})
+                i = next((j for j in range(len(log) - 1, -1, -1) if log[j]["k"] == "run" and log[j].get("ok") is None), None)
+                if i is not None:
+                    update(i, ok=bool(ev.get("ok")), code=ev.get("code"), output=(ev.get("output") or "")[-1500:])
+                else:
+                    push({"k": "run", "text": t, "ok": bool(ev.get("ok")), "output": (ev.get("output") or "")[-1500:]})
             elif k == "warn":
-                log.append({"text": "⚠ " + t})
-            else:
-                log.append({"text": t})
+                push({"k": "warn", "text": t})
+            elif k == "start":
+                push({"k": "start", "text": t})
             if k in ("step", "start", "run"):
                 step(t)
-            show()
 
         ctx = "\n".join(f"{'Пользователь' if m['role'] == 'user' else 'Карина'}: {m['text'][:400]}"
                         for m in chat["messages"][:-2] if m.get("text"))[-2500:]
         r = self.coder.start(text, paths, wait=True, sink=sink, project=chat.get("project", ""), context=ctx)
         if not r.get("ok"):
-            return "⚠ " + r.get("error", "Кодер не смог начать."), r.get("error", "Кодер не смог начать."), []
+            return "⚠ " + r.get("error", "Кодер не смог начать."), r.get("error", "Кодер не смог начать."), log
         reply["brain"] = r.get("brain", "")
-        steps_out = [e["text"] for e in log]
         if not done:
-            return "⚠ Кодер завершился без результата.", "Кодер завершился без результата.", steps_out
+            return "⚠ Кодер завершился без результата.", "Кодер завершился без результата.", log
         err = done.get("error", "")
         name = done.get("project", r.get("project", ""))
         icon = "✅" if done.get("ok") else ("⚠" if err or "не прошла" in done.get("verdict", "") else "ℹ")
@@ -281,13 +323,40 @@ class ChatService:
         if done.get("summary"):
             parts.append(done["summary"])
         files = done.get("files") or []
-        if files:
-            parts.append("**Файлы проекта** (`Документы\\Карина\\Проекты\\" + name + "`):\n" + "\n".join(f"- `{f['path']}` — {f['size']} Б" for f in files[:40]))
         if done.get("zip"):
             parts.append(f"📦 Всё одним архивом: `{done['zip']}` (рядом с папкой проекта).")
         parts.append("Можно писать дальше в этом же чате: «добавь…», «исправь…» — я продолжу в этом проекте." if files else "")
-        reply["project"] = {"name": name, "zip": done.get("zip", ""), "ok": bool(done.get("ok"))}
-        return "\n\n".join(x for x in parts if x), err, steps_out
+        reply["project"] = {"name": name, "zip": done.get("zip", ""), "ok": bool(done.get("ok")), "files": files[:60]}
+        return "\n\n".join(x for x in parts if x), err, log
+
+    # ---------- картинки ----------
+    def _image_turn(self, chat: dict, reply: dict, text: str, step) -> tuple[str, str, list[dict]]:
+        """Рисует картинку: модель пишет описание для генератора, генератор рисует, файл ложится в «Документы\\Карина».
+        → (текст ответа, ошибка, созданные файлы)."""
+        prev = next((m.get("image_prompt", "") for m in reversed(chat["messages"][:-1]) if m.get("image_prompt")), "")
+        prompt, note = text.strip(), ""
+        step("Придумываю описание картинки…")
+        try:
+            choice = self.brain.choose(text)
+            reply["brain"] = choice.label
+            raw = choice.backend.chat(imagesmod.prompt_request(text, prev if imagesmod.is_follow_up(text) else ""), max_tokens=260, temperature=0.7, stop=self._stop)
+            prompt = imagesmod.clean_prompt(raw, text)
+        except (BrainUnavailable, EngineError) as e:
+            note = f"ⓘ Модель сейчас не отвечает ({e}) — рисую по вашему тексту как есть, результат может быть хуже.\n\n"
+        if self._stop.is_set():
+            return "*(остановлено)*", "", []
+        step("Рисую картинку… (обычно до минуты)")
+        try:
+            data, ext, who = imagesmod.generate(self.cfg, prompt, imagesmod.pick_size(text), stop=self._stop)
+        except imagesmod.ImageError as e:
+            if self._stop.is_set():
+                return "*(остановлено)*", "", []
+            return (note + f"⚠ Не получилось нарисовать: {e}"), str(e), []
+        made = self.files.create_bytes(imagesmod.file_stem(text) + "." + ext, data)
+        reply["image_prompt"] = prompt
+        reply["brain"] = (reply.get("brain") or "") + f" · рисует: {who}" if reply.get("brain") else f"рисует: {who}"
+        return (note + f"**Готово — нарисовала.** Картинка сохранена в папке «Документы\\Карина» (`{made['name']}`).\n\n"
+                f"**Описание для генератора:** {prompt}\n\nМожно попросить изменить: «сделай волосы длиннее», «ещё вариант», «в стиле акварели» — я составлю новое описание."), "", [made]
 
     def _history_budget(self, max_tokens: int = MAX_TOKENS, claude: bool = False, ctx: int = 0) -> int:
         ctx = ctx or (CLAUDE_CTX if claude else int((self.cfg.get("models", {}) or {}).get("ctx") or 0))
@@ -339,7 +408,10 @@ class ChatService:
         if paths:
             umsg["files_in"] = [Path(x).name for x in paths][:20]
         chat["messages"].append(umsg)
-        way = route(text, bool(paths), bool(chat.get("project")) and self.coder is not None, mode, voice) if self.coder else "chat"
+        last_img = any(m.get("image_prompt") for m in chat["messages"][-3:-1])
+        way = route(text, bool(paths), bool(chat.get("project")) and self.coder is not None, mode, voice, codermod_light(paths), last_img)
+        if way == "code" and self.coder is None:
+            way = "chat"
         if chat["title"] == "Новый чат":
             chat["title"] = (text[:48] + "…") if len(text) > 48 else text
         reply = {"id": uuid.uuid4().hex[:8], "role": "assistant", "text": "", "ts": now}
@@ -355,11 +427,20 @@ class ChatService:
         made: list[dict] = []
         ferrs: list[str] = []
         try:
-            if way == "code":
-                out_text, err_code, steps_code = self._code_turn(chat, reply, text, paths, step)
+            if way == "image":
+                out_text, err_img, made_img = self._image_turn(chat, reply, text, step)
                 reply["text"] = out_text
-                if steps_code:
-                    reply["steps"] = steps_code[-60:]
+                if made_img:
+                    made = made_img
+                    reply["files"] = made_img
+                if err_img:
+                    err = err_img
+                spoken = "Готово, картинка сохранена в папке Карина в документах." if made_img else ""
+            elif way == "code":
+                out_text, err_code, activity = self._code_turn(chat, reply, text, paths, step)
+                reply["text"] = out_text
+                if activity:
+                    reply["activity"] = activity[-80:]
                 if err_code:
                     err = err_code
             else:
@@ -450,12 +531,15 @@ class ChatService:
         chat["updated"] = time.time()
         self.store.save(chat)
         self.emit({"type": "chat_done", "chat": cid, "id": reply["id"], "text": reply["text"], "error": err, "title": chat["title"],
-                   "steps": reply.get("steps"), "files": reply.get("files"), "brain": reply.get("brain"), "project": reply.get("project")})
+                   "steps": reply.get("steps"), "files": reply.get("files"), "brain": reply.get("brain"), "project": reply.get("project"),
+                   "activity": reply.get("activity")})
         self._busy.release()
         self.current = None
         if voice and self.speak:
             if err:
                 self.speak("Не получилось: " + err[:160])
+            elif way == "image":
+                self.speak(spoken if spoken else "Картинку нарисовать не получилось, подробности в окне чата.")
             elif made:           # о файле говорим только то, что действительно создано
                 self.speak("Готово, файл сохранён в папке Карина в документах." if len(made) == 1 else "Готово, файлы сохранены в папке Карина в документах.")
             elif ferrs:
