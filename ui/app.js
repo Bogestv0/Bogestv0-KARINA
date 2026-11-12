@@ -155,6 +155,8 @@
       else if (ev.type === 'chat_delta') { if (ev.chat === chCur && chBubble) renderMd(chBubble, ev.text); scrollChat(); }
       else if (ev.type === 'chat_activity') actEvent(ev);
       else if (ev.type === 'chat_done') chatDone(ev);
+      else if (ev.type === 'limg_progress') limgProgress(ev);
+      else if (ev.type === 'limg_done') { if (ev.error && ev.error !== 'cancelled') flash($('#imgMsg'), ev.error, true); loadImg(); }
       else if (ev.type === 'images_test') { flash($('#imgMsg'), ev.text, !ev.ok); $('#imgTest').disabled = false; }
       else if (ev.type === 'search_test') { const b = $('#searchTest'); b.hidden = false; b.textContent = ev.lines.join('\n'); flash($('#searchMsg'), ev.ok ? 'Поиск работает' : 'Поиск не работает', !ev.ok); }
       else if (ev.type === 'cloud_test') { const r = $(`.cloud-row[data-pid="${ev.pid}"]`); if (r) { const o = $('.note', r); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Работает (${ev.sec} с): ${ev.text}` : ev.text; $$('button', r).forEach(b => b.disabled = false); } loadCloud(); loadBrain(); }
@@ -622,6 +624,34 @@
     if (!st) return;
     $('#imgProvider').value = st.provider; $('#imgUrl').value = st.url || ''; $('#imgModel').value = st.model || ''; $('#imgKey').value = '';
     $('#imgKeyClear').hidden = !st.has_key;
+    renderLimg(st);
+  }
+  function renderLimg(st) {
+    const box = $('#limgList'); if (!box) return; box.textContent = '';
+    (st.local || []).forEach(m => {
+      const it = el('div', 'item model ' + (m.installed && m.selected ? 'ok' : '')); it.dataset.lid = m.id;
+      const t = el('div', 't'); t.append(el('b', '', `${m.title} · ${m.size_gb} ГБ`), el('span', 'wrap', m.desc));
+      const dl = st.dl && st.dl.id === m.id;
+      if (dl) { const pb = el('div', 'pbar'); pb.append(el('i')); t.append(pb, el('span', 'plab', 'Подготовка…')); }
+      it.append(t);
+      if (m.installed && m.selected) it.append(el('span', 'tag', 'Выбрана'));
+      if (dl) { const b = el('button', 'btn', 'Отмена'); b.onclick = () => call('localimg_cancel'); it.append(b); }
+      else if (m.installed) {
+        if (!m.selected) { const b = el('button', 'btn primary', 'Выбрать'); b.onclick = async () => renderImg(await call('localimg_select', m.id)); it.append(b); }
+        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (confirm('Удалить модель с диска?')) { await call('localimg_delete', m.id); loadImg(); } }; it.append(d);
+      } else {
+        const b = el('button', 'btn primary', 'Скачать'); b.onclick = async () => { b.disabled = true; await call('localimg_download', m.id); loadImg(); }; it.append(b);
+      }
+      box.append(it);
+    });
+  }
+  function limgProgress(ev) {
+    const row = $(`[data-lid="${ev.id}"]`); if (!row) return;
+    const bar = $('.pbar i', row), lab = $('.plab', row); if (!bar || !lab) return;
+    if (ev.stage === 'search') { lab.textContent = 'Ищу файлы…'; return; }
+    const pct = ev.total ? Math.min(100, ev.done / ev.total * 100) : 0;
+    bar.style.width = pct.toFixed(1) + '%';
+    lab.textContent = (ev.stage === 'engine' ? 'Движок: ' : 'Модель: ') + (ev.total ? `${fmtGb(ev.done)} из ${fmtGb(ev.total)} · ${pct.toFixed(0)}%` : fmtGb(ev.done));
   }
   async function loadImg() { renderImg(await call('images_state')); }
   $('#imgSave').onclick = async () => { const st = await call('images_set', $('#imgProvider').value, $('#imgUrl').value, $('#imgModel').value, $('#imgKey').value); renderImg(st); flash($('#imgMsg'), 'Сохранено'); };

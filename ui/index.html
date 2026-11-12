@@ -202,10 +202,14 @@
   <div class="card" id="imgCard">
     <div class="eyebrow">Картинки</div>
     <p class="muted small">Карина рисует по просьбе: «нарисуй аниме-девушку с белыми волосами», «сделай обои с горами». Текстовая модель сама не рисует: она пишет подробное описание, а картинку создаёт генератор. По умолчанию это бесплатный сервис Pollinations (нужен интернет, ключ не нужен). Если он недоступен из вашей страны или нужна работа без интернета, подключите свой сервер Stable Diffusion (AUTOMATIC1111 / Forge, запуск с ключом <code>--api</code>) или любой сервис с OpenAI-совместимым API.</p>
+    <div class="eyebrow" style="margin-top:6px">Встроенный аниме-генератор</div>
+    <p class="muted small">Рисует прямо на вашем компьютере: без интернета (после загрузки), без водяного знака и с любой выбранной текстовой моделью. Скачивается один раз: движок stable-diffusion.cpp и аниме-модель. Нужна видеокарта от 6–8 ГБ; на процессоре картинка рисуется несколько минут.</p>
+    <div id="limgList"></div>
     <div class="form">
       <label>Чем рисовать
         <select id="imgProvider">
-          <option value="auto">Авто: свой сервер, если адрес указан, иначе Pollinations</option>
+          <option value="auto">Авто: встроенный аниме-генератор → свой сервер → Pollinations (запасной)</option>
+          <option value="local">Только встроенный аниме-генератор (на этом компьютере, без водяного знака)</option>
           <option value="pollinations">Pollinations (бесплатно, через интернет)</option>
           <option value="sd">Свой сервер Stable Diffusion (AUTOMATIC1111 / Forge)</option>
           <option value="openai">Свой сервер с OpenAI-совместимым API картинок</option>
