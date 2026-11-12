@@ -19,7 +19,7 @@ API = "https://api.github.com/repos/leejet/stable-diffusion.cpp/releases?per_pag
 UA = {"User-Agent": "Bogestv0-KARINA"}
 EXE_NAMES = ("sd-cli.exe", "sd.exe") if IS_WIN else ("sd-cli", "sd")
 FLAVORS = {"vulkan": (r"bin-win-vulkan-x64\.zip$",),
-           "cpu": (r"bin-win-avx2-x64\.zip$", r"bin-win-avx-x64\.zip$", r"bin-win-noavx-x64\.zip$")}
+           "cpu": (r"bin-win-cpu-x64\.zip$", r"bin-win-avx2-x64\.zip$", r"bin-win-avx-x64\.zip$", r"bin-win-noavx-x64\.zip$")}   # новые релизы: win-cpu (все варианты процессора внутри), старые: avx2/avx/noavx
 
 # Хорошие аниме-модели SDXL по умолчанию. quality — теги качества, которые эти модели понимают лучше всего.
 CATALOG: list[dict] = [
