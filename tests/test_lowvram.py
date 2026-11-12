@@ -48,3 +48,32 @@ class LowVram(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EngineAssets(unittest.TestCase):
+    """Имена архивов в релизах stable-diffusion.cpp менялись: «Не нашла сборку для Windows» — именно из-за этого."""
+    def rel(self, *names):
+        return {"tag_name": "master-x", "assets": [{"name": n, "browser_download_url": "u/" + n, "size": 1} for n in names]}
+
+    def test_new_names(self):
+        r = self.rel("sd-master-1c11b2d-bin-win-cpu-x64.zip", "sd-master-1c11b2d-bin-win-vulkan-x64.zip",
+                     "sd-master-1c11b2d-bin-win-cuda12-x64.zip", "sd-master-1c11b2d-bin-Linux-Ubuntu-24.04-x86_64.zip")
+        self.assertIn("win-cpu", localimg._asset(r, "cpu")["name"])
+        self.assertIn("win-vulkan", localimg._asset(r, "vulkan")["name"])
+
+    def test_old_names_still_work(self):
+        r = self.rel("sd-master-abc-bin-win-avx2-x64.zip", "sd-master-abc-bin-win-vulkan-x64.zip")
+        self.assertIn("avx2", localimg._asset(r, "cpu")["name"])
+
+    def test_find_release_picks_first_complete(self):
+        import json
+        rels = [self.rel("sd-a-bin-win-cuda12-x64.zip"),
+                self.rel("sd-b-bin-win-cpu-x64.zip", "sd-b-bin-win-vulkan-x64.zip")]
+        orig = localimg._open
+        class R:
+            def read(self_): return json.dumps(rels).encode()
+        localimg._open = lambda *a, **k: R()
+        try:
+            self.assertEqual(localimg.find_release()["assets"][0]["name"], "sd-b-bin-win-cpu-x64.zip")
+        finally:
+            localimg._open = orig
