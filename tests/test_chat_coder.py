@@ -140,7 +140,7 @@ class InChat(unittest.TestCase):
         png = b"\x89PNG\r\n\x1a\n" + b"0" * 50
         orig = images.generate
         seen = {}
-        def fake(cfg, prompt, size=(768, 768), seed=None, stop=None, request=""):
+        def fake(cfg, prompt, size=(768, 768), seed=None, stop=None, request="", progress=None):
             seen["prompt"], seen["size"] = prompt, size
             return png, "png", "Тестовый сервис"
         images.generate = fake

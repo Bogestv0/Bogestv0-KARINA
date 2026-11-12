@@ -2,7 +2,7 @@
 import random, sys, tempfile, unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent)); sys.path.insert(0, str(Path(__file__).resolve().parent))
-from karina import chat, images, imgdirector as d, localimg
+from karina import chat, images, imgdirector as d, imgpower, localimg
 from karina.chat import ChatService, ChatStore, route
 from karina.config import Config
 from karina.files import FileService
@@ -105,17 +105,20 @@ class Brief(unittest.TestCase):
         self.assertNotIn("flux2klein", d.brief_request("x", ["noobai"])[0]["content"])             # про нескачанные модели не упоминается
 
 
-class Studio(unittest.TestCase):
+class StudioKit:
     """Чат целиком: настоящий ChatService, подменены только модель текста и сама рисовалка."""
 
+    GPU = {"detected": True, "gpu": "Test GPU 24GB", "vram_gb": 24.0, "integrated": False, "gpus": []}      # тесты не зависят от железа, на котором запущены
+
     def setUp(self):
-        self.orig = (localimg.installed_ids, localimg.engine_ready, localimg.engine_supports, localimg.generate, images.generate)
+        self.orig = (localimg.installed_ids, localimg.engine_ready, localimg.engine_supports, localimg.generate, images.generate, imgpower._HW)
+        imgpower._HW = dict(self.GPU)
         self.calls, self.broken = [], set()
         localimg.installed_ids = lambda: list(IDS)
         localimg.engine_ready = lambda: True
         localimg.engine_supports = lambda m: True
 
-        def fake(prompt, size, seed, model_id="", negative="", stop=None, vram=""):
+        def fake(prompt, size, seed, model_id="", negative="", stop=None, vram="", plan=None, progress=None):
             self.calls.append({"prompt": prompt, "size": size, "seed": seed, "model": model_id, "neg": negative})
             if model_id in self.broken:
                 raise localimg.LocalImgError("видеокарте не хватило памяти")
@@ -123,7 +126,7 @@ class Studio(unittest.TestCase):
         localimg.generate = fake
 
     def tearDown(self):
-        localimg.installed_ids, localimg.engine_ready, localimg.engine_supports, localimg.generate, images.generate = self.orig
+        localimg.installed_ids, localimg.engine_ready, localimg.engine_supports, localimg.generate, images.generate, imgpower._HW = self.orig
 
     def make(self, replies, ask=False):
         tmp = Path(tempfile.mkdtemp())
@@ -134,6 +137,8 @@ class Studio(unittest.TestCase):
         svc = ChatService(cfg, model, ev.append, store=ChatStore(tmp / "chats"), brain=FakeBrain(model), files=FileService(tmp / "Карина"))
         return svc, model, ev, tmp
 
+
+class Studio(StudioKit, unittest.TestCase):
     def test_four_variants_in_styles_of_different_models(self):
         svc, model, ev, tmp = self.make([BRIEF])
         cid = svc.send(None, "Сделай изображения аниме девушки с белыми волосами", wait=True)
@@ -231,7 +236,7 @@ class Studio(unittest.TestCase):
         self.broken = set(IDS)
         seen = {}
 
-        def online(cfg, prompt, size=(768, 768), seed=None, stop=None, request=""):
+        def online(cfg, prompt, size=(768, 768), seed=None, stop=None, request="", progress=None):
             seen["provider"] = cfg.get("images")["provider"]
             return PNG, "png", "Pollinations"
         images.generate = online
@@ -263,7 +268,7 @@ class Studio(unittest.TestCase):
     def test_external_provider_keeps_old_single_picture_path(self):
         svc, model, ev, tmp = self.make(["anime girl, white hair"])
         svc.cfg.update({"images": {"provider": "pollinations"}})
-        images.generate = lambda cfg, prompt, size=(768, 768), seed=None, stop=None, request="": (PNG, "png", "Pollinations")
+        images.generate = lambda cfg, prompt, size=(768, 768), seed=None, stop=None, request="", progress=None: (PNG, "png", "Pollinations")
         cid = svc.send(None, "нарисуй аниме девушку", wait=True)
         reply = svc.store.get(cid)["messages"][1]
         self.assertEqual(len(reply["files"]), 1); self.assertEqual(self.calls, []); self.assertIn("Готово — нарисовала", reply["text"])
@@ -271,7 +276,7 @@ class Studio(unittest.TestCase):
     def test_director_can_be_switched_off(self):
         svc, model, ev, tmp = self.make(["anime girl, white hair"])
         svc.cfg.update({"images": {"director": False}})
-        images.generate = lambda cfg, prompt, size=(768, 768), seed=None, stop=None, request="": (PNG, "png", "встроенный генератор")
+        images.generate = lambda cfg, prompt, size=(768, 768), seed=None, stop=None, request="", progress=None: (PNG, "png", "встроенный генератор")
         svc.send(None, "нарисуй аниме девушку", wait=True)
         self.assertEqual(self.calls, [])                                                                          # режиссёр выключен — прежний путь
 
@@ -321,6 +326,76 @@ class AskCount(Studio):
             self.assertEqual(d.parse_answer(t), n, t)
         for t in ("0", "5", "нарисуй кота", "", "я хочу 3 кота"):
             self.assertIsNone(d.parse_answer(t), t)
+
+
+class WeakPc(StudioKit, unittest.TestCase):
+    """Видеокарта 4 ГБ (как у автора жалобы «рисует 10 минут»): быстрая модель первой, текстовая модель выгружается, виден прогресс."""
+    GPU = {"detected": True, "gpu": "GTX 1650", "vram_gb": 4.0, "integrated": False, "gpus": []}
+
+    def make(self, replies, ask=False):
+        svc, model, ev, tmp = super().make(replies, ask)
+        model.stopped = 0
+        model.flavor, model.state = "vulkan", "ready"
+
+        def stop():
+            model.stopped += 1
+            model.state = "stopped"
+        model.stop = stop
+        return svc, model, ev, tmp
+
+    def test_fast_model_first_text_model_unloaded_and_note(self):
+        svc, model, ev, tmp = self.make([BRIEF])
+        cid = svc.send(None, "нарисуй аниме девушку, 3 варианта", wait=True)
+        self.assertEqual(self.calls[0]["model"], "flux2klein")                                       # быстрая модель рисует первой
+        self.assertEqual(sorted(c["model"] for c in self.calls), sorted(IDS))
+        self.assertEqual(model.stopped, 1)                                                           # Qwen выгружен перед рисованием
+        reply = svc.store.get(cid)["messages"][1]
+        self.assertIn("сначала рисует быстрая модель", reply["text"])
+        self.assertEqual([f["variant"] for f in reply["files"]], [1, 2, 3])
+
+    def test_named_model_is_respected(self):
+        svc, model, ev, tmp = self.make([BRIEF])
+        svc.send(None, "нарисуй аниме девушку через pony, 1 вариант", wait=True)
+        self.assertEqual([c["model"] for c in self.calls], ["ponyxl"])
+
+    def test_plan_reaches_generator_and_progress_events_flow(self):
+        got = {}
+
+        def fake(prompt, size, seed, model_id="", negative="", stop=None, vram="", plan=None, progress=None):
+            got["plan"] = plan
+            progress(3, 20, 2.0)
+            progress(20, 20, 2.0)
+            self.calls.append({"model": model_id})
+            return PNG, "png"
+        localimg.generate = fake
+        svc, model, ev, tmp = self.make([BRIEF])
+        svc.send(None, "нарисуй аниме девушку, 1 вариант", wait=True)
+        self.assertEqual((got["plan"]["mode"], got["plan"]["quality"]), ("low", "fast"))
+        prog = [e for e in ev if e["type"] == "chat_image" and e["status"] == "progress"]
+        self.assertEqual((prog[0]["step"], prog[0]["steps"], prog[0]["eta"]), (3, 20, 34))
+        self.assertTrue(any(e["type"] == "chat_step" and "шаг 3 из 20" in e["text"] for e in ev))
+
+    def test_no_fast_model_installed_suggests_klein(self):
+        localimg.installed_ids = lambda: ["noobai", "ponyxl"]
+        svc, model, ev, tmp = self.make([BRIEF])
+        cid = svc.send(None, "нарисуй аниме девушку, 2 варианта", wait=True)
+        self.assertIn("FLUX.2 Klein рисует в несколько раз быстрее", svc.store.get(cid)["messages"][1]["text"])
+
+    def test_manual_max_power_keeps_order_and_does_not_unload(self):
+        svc, model, ev, tmp = self.make([BRIEF])
+        svc.cfg.update({"images": {"power": "max", "unload_llm": "no"}})
+        svc.send(None, "нарисуй аниме девушку, 3 варианта", wait=True)
+        self.assertEqual([c["model"] for c in self.calls], ["noobai", "ponyxl", "flux2klein"])
+        self.assertEqual(model.stopped, 0)
+
+
+class StrongPc(StudioKit, unittest.TestCase):
+    def test_strong_pc_keeps_llm_loaded(self):
+        svc, model, ev, tmp = self.make([BRIEF])
+        model.flavor, model.state, model.stopped = "vulkan", "ready", 0
+        model.stop = lambda: setattr(model, "stopped", model.stopped + 1)
+        svc.send(None, "нарисуй аниме девушку, 2 варианта", wait=True)
+        self.assertEqual(model.stopped, 0)
 
 
 if __name__ == "__main__":

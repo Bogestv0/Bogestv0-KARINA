@@ -384,7 +384,11 @@
   function imgPlan(row, items) { const g = variantGrid(row); (items || []).forEach(i => variantTile(g, i.n, i.label)); scrollChat(); }
   function imgEvent(row, ev) {
     const t = variantTile(variantGrid(row), ev.n, ev.label);
-    if (ev.status === 'start') tileState(t, 'run');
+    if (ev.status === 'start') { tileState(t, 'run', 'загружаю модель…'); const st = $('.ist', t); if (st) st.textContent = ''; }
+    else if (ev.status === 'progress') {
+      tileState(t, 'run', `рисую… шаг ${ev.step} из ${ev.steps}`);
+      const st = $('.ist', t); if (st) st.textContent = ev.eta ? `≈ ${ev.eta >= 60 ? Math.round(ev.eta / 60) + ' мин' : ev.eta + ' с'}` : '';
+    }
     else if (ev.status === 'fail') { tileState(t, 'fail', ev.error || ''); t.title = ev.error || ''; }
     else if (ev.status === 'done' && ev.file) tileDone(t, ev.file);
   }
@@ -691,17 +695,38 @@
     if (!st) return;
     $('#imgProvider').value = st.provider; $('#imgUrl').value = st.url || ''; $('#imgModel').value = st.model || ''; $('#imgKey').value = '';
     $('#imgKeyClear').hidden = !st.has_key;
-    $('#imgDirector').checked = st.director !== false; $('#imgAsk').checked = st.ask_count !== false; $('#imgVram').value = st.vram || 'balanced'; $('#imgVariants').value = String(st.variants || 4);
+    $('#imgDirector').checked = st.director !== false; $('#imgAsk').checked = st.ask_count !== false; $('#imgVariants').value = String(st.variants || 4);
+    renderPower(st);
     renderLimg(st);
+  }
+  // «Мощность рисования»: что за видеокарта, что выбрала «Авто», ручные настройки
+  function renderPower(st) {
+    const pw = st.power || {}, hw = st.hw || {};
+    $('#imgPower').value = pw.power || 'auto'; $('#imgQuality').value = pw.quality || 'auto';
+    const vg = String(pw.vram_gb || 0); $('#imgVramGb').value = [...$('#imgVramGb').options].some(o => o.value === vg) ? vg : '0';
+    $('#imgThreads').value = pw.threads || 0; $('#imgUnload').value = pw.unload_llm || 'auto';
+    const box = $('#imgHw'); box.hidden = false;
+    let t;
+    if (hw.detected && hw.vram_gb) t = `Видеокарта: ${hw.gpu || 'не определена'} · ${hw.vram_gb} ГБ видеопамяти${hw.source === 'manual' ? ' (указано вами)' : ''}`;
+    else if (hw.detected && hw.integrated) t = `Видеокарта: ${hw.gpu || 'встроенная'} — встроенная, своей видеопамяти почти нет`;
+    else t = 'Видеокарту и объём видеопамяти определить не удалось — укажите видеопамять вручную в «Мощности рисования» ниже';
+    t += ` · оперативной памяти ${hw.ram_gb || '?'} ГБ · ядер процессора ${hw.cpu || '?'}.`;
+    const rec = (st.local || []).filter(m => m.recommended).map(m => m.title);
+    if (rec.length) t += ` Для вашего компьютера рекомендуются: ${rec.join(', ')}.`;
+    box.textContent = t;
+    const now = $('#imgPowerNow'); now.hidden = false;
+    now.textContent = (pw.auto ? 'Сейчас «Авто» выбрала: ' : 'Сейчас выбрано: ') + (pw.now || '—') + (pw.unload_now ? ' · текстовая модель на время рисования выгружается из видеопамяти' : '');
   }
   function renderLimg(st) {
     const box = $('#limgList'); if (!box) return; box.textContent = '';
     (st.local || []).forEach(m => {
       const it = el('div', 'item model ' + (m.installed && m.selected ? 'ok' : '')); it.dataset.lid = m.id;
-      const t = el('div', 't'); t.append(el('b', '', `${m.title} · ${m.size_gb} ГБ`), el('span', 'wrap', m.desc));
+      const t = el('div', 't'); t.append(el('b', '', `${m.title} · ${m.size_gb} ГБ`), el('span', 'wrap', m.desc), el('span', 'wrap', `На вашем компьютере: ${m.fit_label} — ${m.eta}. Рисует так: ${m.plan}.`));
       const dl = st.dl && st.dl.id === m.id;
       if (dl) { const pb = el('div', 'pbar'); pb.append(el('i')); t.append(pb, el('span', 'plab', 'Подготовка…')); }
       it.append(t);
+      if (m.recommended) it.append(el('span', 'tag', 'Рекомендуется'));
+      if (m.fit === 'slow' || m.fit === 'heavy') it.append(el('span', 'tag warn', 'Медленно'));
       if (m.installed && m.selected) it.append(el('span', 'tag', 'Выбрана'));
       if (dl) { const b = el('button', 'btn', 'Отмена'); b.onclick = () => call('localimg_cancel'); it.append(b); }
       else if (m.installed) {
@@ -722,7 +747,9 @@
     lab.textContent = (ev.stage === 'engine' ? 'Движок: ' : 'Модель: ') + (ev.total ? `${fmtGb(ev.done)} из ${fmtGb(ev.total)} · ${pct.toFixed(0)}%` : fmtGb(ev.done));
   }
   async function loadImg() { renderImg(await call('images_state')); }
-  $('#imgSave').onclick = async () => { const st = await call('images_set', $('#imgProvider').value, $('#imgUrl').value, $('#imgModel').value, $('#imgKey').value, $('#imgDirector').checked, +$('#imgVariants').value, $('#imgAsk').checked, $('#imgVram').value); renderImg(st); flash($('#imgMsg'), 'Сохранено'); };
+  $('#imgSave').onclick = async () => { const st = await call('images_set', $('#imgProvider').value, $('#imgUrl').value, $('#imgModel').value, $('#imgKey').value, $('#imgDirector').checked, +$('#imgVariants').value, $('#imgAsk').checked, $('#imgPower').value, $('#imgQuality').value, +$('#imgVramGb').value, +$('#imgThreads').value || 0, $('#imgUnload').value); renderImg(st); flash($('#imgMsg'), 'Сохранено'); };
+  $('#imgHwRefresh').onclick = async () => { $('#imgHwRefresh').disabled = true; renderImg(await call('images_hw_refresh')); $('#imgHwRefresh').disabled = false; flash($('#imgMsg'), 'Видеокарта определена заново'); };
+  ['#imgPower', '#imgQuality', '#imgVramGb', '#imgThreads', '#imgUnload'].forEach(id => { $(id).onchange = () => $('#imgSave').onclick(); });   // мощность применяется сразу
   $('#imgKeyClear').onclick = async () => { renderImg(await call('images_clear_key')); flash($('#imgMsg'), 'Ключ удалён'); };
   $('#imgTest').onclick = async () => { await $('#imgSave').onclick(); $('#imgTest').disabled = true; $('#imgMsg').classList.remove('err'); $('#imgMsg').textContent = 'Рисую пробную картинку…'; call('images_test'); };
 

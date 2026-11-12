@@ -204,7 +204,48 @@
     <p class="muted small">Карина рисует по просьбе: «нарисуй аниме-девушку с белыми волосами», «сделай обои с горами». Текстовая модель сама не рисует: она пишет подробное описание, а картинку создаёт генератор. По умолчанию это бесплатный сервис Pollinations (нужен интернет, ключ не нужен). Если он недоступен из вашей страны или нужна работа без интернета, подключите свой сервер Stable Diffusion (AUTOMATIC1111 / Forge, запуск с ключом <code>--api</code>) или любой сервис с OpenAI-совместимым API.</p>
     <div class="eyebrow" style="margin-top:6px">Встроенные модели картинок</div>
     <p class="muted small">Рисует прямо на вашем компьютере: без интернета (после загрузки), без водяного знака и с любой выбранной текстовой моделью. Скачивается один раз: движок stable-diffusion.cpp и модели. Каждая скачанная модель — отдельный «художник» со своим стилем: при включённом режиссёре (ниже) текстовая модель пишет им описания и предлагает несколько вариантов, а «Выбрать» нужно только для режима одной картинки. Нужна видеокарта от 6–8 ГБ; на процессоре каждая картинка рисуется несколько минут.</p>
+    <div class="note" id="imgHw" hidden></div>
     <div id="limgList"></div>
+    <div class="eyebrow" style="margin-top:10px">Мощность рисования</div>
+    <p class="muted small">Сколько сил компьютера отдать художникам. «Авто» сама подберёт режим, размер картинки и число шагов под вашу видеокарту (как «Рекомендуется» у текстовых моделей). Если рисует слишком долго — выберите «Экономно» или укажите объём видеопамяти вручную. Размер и шаги сильнее всего влияют на время: картинка вдвое меньше по площади рисуется почти вдвое быстрее.</p>
+    <div class="note" id="imgPowerNow" hidden></div>
+    <div class="form">
+      <label>Режим
+        <select id="imgPower">
+          <option value="auto">Авто — подобрать по моей видеокарте (рекомендуется)</option>
+          <option value="max">Максимум — всё на видеокарте (нужно от 8–10 ГБ видеопамяти)</option>
+          <option value="balanced">Сбалансированно — часть в оперативной памяти (около 5–6 ГБ видеопамяти)</option>
+          <option value="low">Экономно — минимум видеопамяти (около 3–4 ГБ)</option>
+          <option value="cpu">Только процессор (очень медленно, зато работает везде)</option>
+        </select>
+      </label>
+      <label>Скорость или качество
+        <select id="imgQuality">
+          <option value="auto">Авто — по режиму</option>
+          <option value="fast">Быстро — меньше размер и шагов (картинка проще, но готова раньше)</option>
+          <option value="normal">Обычно</option>
+          <option value="high">Качественно — полный размер и все шаги (дольше)</option>
+        </select>
+      </label>
+      <label>Видеопамять
+        <select id="imgVramGb">
+          <option value="0">Определить автоматически</option>
+          <option value="2">2 ГБ</option><option value="3">3 ГБ</option><option value="4">4 ГБ</option><option value="6">6 ГБ</option>
+          <option value="8">8 ГБ</option><option value="10">10 ГБ</option><option value="12">12 ГБ</option><option value="16">16 ГБ</option><option value="24">24 ГБ и больше</option>
+        </select>
+      </label>
+      <label>Потоки процессора (0 — авто; работает, когда рисует процессор)
+        <input id="imgThreads" type="number" min="0" max="64" step="1" value="0" autocomplete="off">
+      </label>
+      <label>Текстовая модель на время рисования
+        <select id="imgUnload">
+          <option value="auto">Авто — выгружать из видеопамяти, если её немного (рекомендуется)</option>
+          <option value="yes">Всегда выгружать (освобождает видеопамять; следующий ответ в чате начнётся на несколько секунд позже)</option>
+          <option value="no">Не выгружать</option>
+        </select>
+      </label>
+      <div class="form-actions"><button class="btn" type="button" id="imgHwRefresh">Определить видеокарту заново</button></div>
+    </div>
     <div class="form">
       <label>Чем рисовать
         <select id="imgProvider">
@@ -219,13 +260,6 @@
       <label class="switch"><input type="checkbox" id="imgAsk"><span class="sw"></span><span>Спрашивать, сколько вариантов нарисовать (кнопки 1–4), когда просьба новая и число не названо</span></label>
       <label>Сколько вариантов рисовать (если не спрашивать)
         <select id="imgVariants"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option></select>
-      </label>
-      <label>Нагрузка на видеокарту (NoobAI, Pony)
-        <select id="imgVram">
-          <option value="fast">Быстро — всё на видеокарте (около 8 ГБ видеопамяти)</option>
-          <option value="balanced">Сбалансированно — часть в оперативной памяти (около 5–6 ГБ)</option>
-          <option value="low">Экономно — минимум видеопамяти (около 3–4 ГБ), но дольше</option>
-        </select>
       </label>
       <label>Адрес своего сервера<input id="imgUrl" placeholder="http://127.0.0.1:7860" autocomplete="off"></label>
       <label>Модель (для OpenAI-совместимого)<input id="imgModel" placeholder="необязательно" autocomplete="off"></label>
