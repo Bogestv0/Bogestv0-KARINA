@@ -225,9 +225,9 @@
     const endBlocks = () => { list = null; para = null; };
     while (i < lines.length) {
       const ln = lines[i];
-      if (/^```/.test(ln)) {
+      if (/^\s*```/.test(ln)) {
         endBlocks(); const code = []; i++;
-        while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
+        while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++].replace(/^ {0,3}/, ''));
         i++; const pre = el('pre'); pre.append(el('code', '', code.join('\n'))); box.append(pre); continue;
       }
       let m;
@@ -266,17 +266,64 @@
     } else { const pre = el('pre', 'ptext'); pre.append(el('code', '', String(r.text).slice(0, 60000))); box.append(pre); }
     return box;
   }
-  // кнопка «Просмотр» — раскрывает/скрывает предпросмотр под строкой; fetch() — функция, возвращающая {ok,result|error}
-  function previewToggle(host, msg, fetch) {
-    const b = el('button', 'btn', '👁 Просмотр'); let box = null;
-    b.onclick = async () => {
-      if (box) { box.remove(); box = null; b.textContent = '👁 Просмотр'; return; }
-      const r = await fetch();
-      if (!r || !r.ok) { msg.textContent = r ? r.error : 'Не получилось показать'; return; }
-      msg.textContent = ''; box = previewBox(r.result); host.append(box); b.textContent = '🙈 Скрыть';
-    };
-    return b;
+  // ---------- правая панель просмотра: эскизы, HTML-шаблоны, картинки — на всю высоту, с вкладками ----------
+  const NAV = '<script>document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[href]");if(!a)return;var h=a.getAttribute("href");if(!h||h.charAt(0)==="#"||/^javascript:/i.test(h))return;e.preventDefault();parent.postMessage({karinaNav:h},"*")},true);<\/script>';
+  let pnTabs = [], pnCur = -1;
+  const pnFetch = t => t.project ? call('project_preview', t.project, t.path) : call('file_preview_full', t.name);
+  function pnHtml(html) {
+    let h = String(html);
+    const inj = CSP + NAV;
+    if (/<head[^>]*>/i.test(h)) h = h.replace(/<head[^>]*>/i, m => m + inj);
+    else if (/<html[^>]*>/i.test(h)) h = h.replace(/<html[^>]*>/i, m => m + '<head>' + inj + '</head>');
+    else h = inj + h;
+    return h;
   }
+  function pnRenderTabs() {
+    const box = $('#pnTabs'); box.textContent = '';
+    if (pnTabs.length < 2) return;
+    pnTabs.forEach((t, i) => {
+      const b = el('div', 'pn-tab' + (i === pnCur ? ' on' : '')); b.append(el('span', '', t.title));
+      const x = el('b', '', '×'); x.title = 'Закрыть вкладку'; x.onclick = e => { e.stopPropagation(); pnClose(i); }; b.append(x);
+      b.onclick = () => pnShow(i); box.append(b);
+    });
+  }
+  async function pnShow(i, refetch) {
+    pnCur = i; const t = pnTabs[i], body = $('#pnBody'); pnRenderTabs();
+    $('#pnTitle').textContent = t.title; $('#pnSub').textContent = t.project ? 'проект · ' + t.project : 'файл';
+    if (!t.res || refetch) { body.textContent = ''; body.append(el('div', 'pn-empty', 'Загружаю…')); const r = await pnFetch(t); if (pnCur !== i) return; if (!r || !r.ok) { body.textContent = ''; body.append(el('div', 'pn-empty', (r && r.error) || 'Не получилось показать файл')); return; } t.res = r.result; }
+    body.textContent = ''; const r = t.res;
+    if (r.type === 'image') { const im = el('img', 'pimg'); im.src = r.src; im.alt = t.title; body.append(im); body.style.background = 'var(--surface-2)'; }
+    else if (r.type === 'html') { const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts'); f.referrerPolicy = 'no-referrer'; f.title = t.title; f.srcdoc = pnHtml(r.html); body.append(f); body.style.background = '#fff'; }
+    else { const pre = el('pre'); pre.textContent = String(r.text).slice(0, 200000); body.append(pre); body.style.background = 'var(--bg)'; }
+  }
+  function pnOpen(item) {
+    const k = (item.project || '') + '|' + (item.path || item.name);
+    let i = pnTabs.findIndex(t => t.key === k);
+    if (i < 0) { if (pnTabs.length >= 8) pnTabs.shift(); pnTabs.push({ ...item, key: k }); i = pnTabs.length - 1; }
+    $('#chPanel').hidden = false; $('#chLayout').classList.add('has-panel'); pnShow(i);
+  }
+  function pnClose(i) {
+    if (i == null) { pnTabs = []; pnCur = -1; } else { pnTabs.splice(i, 1); pnCur = Math.min(pnCur, pnTabs.length - 1); }
+    if (!pnTabs.length) { $('#chPanel').hidden = true; $('#chLayout').classList.remove('has-panel', 'wide'); $('#pnBody').textContent = ''; $('#pnTabs').textContent = ''; }
+    else pnShow(pnCur < 0 ? 0 : pnCur);
+  }
+  const pnRel = (base, h) => { const parts = base.split('/'); parts.pop(); for (const seg of h.split('?')[0].split('#')[0].split('/')) { if (seg === '..') parts.pop(); else if (seg && seg !== '.') parts.push(seg); } return parts.join('/'); };
+  // клик по ссылке внутри эскиза: открываем нужную страницу проекта в этой же панели
+  window.addEventListener('message', async e => {
+    const f = $('#pnBody iframe'); if (!f || e.source !== f.contentWindow) return;
+    const h = e.data && e.data.karinaNav; if (typeof h !== 'string') return;
+    const t = pnTabs[pnCur]; const note = m => { const n = el('div', 'pn-note', m); $('#pnBody').append(n); setTimeout(() => n.remove(), 3500); };
+    if (!t || !t.project || /^[a-z][a-z0-9+.-]*:|^\/\//i.test(h)) return note('Внешние ссылки в эскизе не открываются.');
+    const path = pnRel(t.path, h), r = await call('project_preview', t.project, path);
+    if (!r || !r.ok) return note('Страница «' + path + '» не найдена в проекте.');
+    t.path = path; t.title = path; t.key = t.project + '|' + path; t.res = r.result; pnShow(pnCur);
+  });
+  $('#pnClose').onclick = () => pnClose();
+  $('#pnWide').onclick = () => $('#chLayout').classList.toggle('wide');
+  $('#pnReload').onclick = () => { if (pnCur >= 0) pnShow(pnCur, true); };
+  $('#pnOpen').onclick = async () => { const t = pnTabs[pnCur]; if (!t) return; const r = t.project ? await call('project_open_file', t.project, t.path) : await call('file_open', t.name); if (r && !r.ok) { const n = el('div', 'pn-note', r.error); $('#pnBody').append(n); setTimeout(() => n.remove(), 3500); } };
+  function viewButton(item, msg) { const b = el('button', 'btn', '👁 Просмотр'); b.onclick = () => pnOpen(item); return b; }
+
   function attachFiles(row, files) {
     if (!files || !files.length || row.querySelector('.files')) return;
     const box = el('div', 'files');
@@ -286,11 +333,11 @@
       t.append(el('b', '', f.name), el('span', '', `${k[1]} · ${fmtSize(f.size)}` + (f.warning ? ' · ⚠ ' + f.warning : '')));
       const act = (name, label, primary) => { const b = el('button', 'btn' + (primary ? ' primary' : ''), label); b.onclick = async () => { const r = await call(name, f.name); msg.textContent = r && !r.ok ? r.error : ''; }; return b; };
       line.append(el('span', 'ficon', k[0]), t);
-      if (PREVIEWABLE.test(f.name) && f.kind !== 'image' && f.kind !== 'svg') line.append(previewToggle(card, msg, () => call('file_preview_full', f.name)));
+      if (PREVIEWABLE.test(f.name)) line.append(viewButton({ title: f.name, name: f.name }, msg));
       line.append(act('file_open', 'Открыть', true), act('file_reveal', 'В папке'));
       card.append(line, msg);
       if (f.kind === 'image' || f.kind === 'svg') {          // картинки показываем сразу
-        call('file_preview_full', f.name).then(r => { if (r && r.ok) card.insertBefore(previewBox(r.result), line); });
+        call('file_preview_full', f.name).then(r => { if (r && r.ok) { const pv = previewBox(r.result); pv.style.cursor = 'zoom-in'; pv.title = 'Открыть в панели просмотра'; pv.onclick = () => pnOpen({ title: f.name, name: f.name }); card.insertBefore(pv, line); } });
       }
       box.append(card);
     }
@@ -309,19 +356,26 @@
       const item = el('div', 'pfile'), line = el('div', 'fline'), t = el('div', 'ft'), m2 = el('div', 'fmsg');
       t.append(el('b', '', f.path), el('span', '', fmtSize(f.size)));
       line.append(el('span', 'ficon', /\.(html?|svg|png|jpe?g|webp|gif)$/i.test(f.path) ? '🎨' : '📄'), t);
-      let pv = null;
-      if (PREVIEWABLE.test(f.path)) { pv = previewToggle(item, m2, () => call('project_preview', pr.name, f.path)); line.append(pv); if (!first && /\.(html?|svg|png|jpe?g|webp|gif)$/i.test(f.path)) first = pv; }
+      if (PREVIEWABLE.test(f.path)) {
+        const it = { title: f.path, project: pr.name, path: f.path }; line.append(viewButton(it, m2));
+        if (!first && /\.(html?|svg|png|jpe?g|webp|gif)$/i.test(f.path)) first = it;
+      }
       const o = el('button', 'btn', 'Открыть'); o.onclick = async () => { const r = await call('project_open_file', pr.name, f.path); m2.textContent = r && !r.ok ? r.error : ''; };
       line.append(o); item.append(line, m2); box.append(item);
     }
     row.querySelector('.bubble').after(box);
-    if (autoPreview && first) first.click();
+    if (autoPreview && first) pnOpen(first);                  // готовый эскиз сразу показываем справа
   }
 
   // ---------- лента действий Кодера: что сказала → что записала / запустила → что получилось ----------
   let actNodes = [], actBox = null;
   const ACT_ICON = { write: '✏', read: '📖', find: '🔎', run: '▶', warn: '⚠', start: '📂' };
   function actNode(e) {
+    if (e.k === 'think') {
+      const d = el('div', 'a-think' + (e.live ? '' : ' done')); const h = el('div', 'th-h'); h.append(el('span', 'spin'), el('span', '', e.text || 'Думаю…')); d.append(h);
+      if (e.say) d.append(el('div', 'th-say', e.say)); if (e.doing) d.append(el('div', 'th-do', e.doing));
+      return d;
+    }
     if (e.k === 'say') { const d = el('div', 'a-say'); renderMd(d, e.text || ''); return d; }
     if (e.k === 'read' || e.k === 'warn' || e.k === 'start') return el('div', 'a-line' + (e.k === 'warn' ? ' warn' : ''), ACT_ICON[e.k] + ' ' + (e.text || ''));
     const hasBody = e.k === 'write' ? !!e.preview : !!e.output;
@@ -421,16 +475,16 @@
     if (ev.chat === chCur) setBusy(false);
     loadChatList(); scrollChat();
   }
-  $('#chNew').onclick = async () => { const c = await call('chat_new'); if (c) { chCur = c.id; showWelcome(); loadChatList(); $('#chText').focus(); } };
+  $('#chNew').onclick = async () => { const c = await call('chat_new'); if (c) { pnClose(); chCur = c.id; showWelcome(); loadChatList(); $('#chText').focus(); } };
   $('#chForm').addEventListener('submit', async e => {
     e.preventDefault(); const t = $('#chText'); const text = t.value.trim(); if (!text || chBusy || chUp) return;
-    t.value = ''; t.style.height = '';
+    t.value = ''; t.style.height = ''; t.style.overflowY = 'hidden';
     const wm = webMode(); const paths = chPaths.slice();
     const r = await call('chat_send', chCur || '', text, wm === 'always' ? true : wm === 'off' ? false : null, paths, chatMode());
     if (r && !r.ok) { t.value = text; setStep(r.error); } else if (r) { chPaths = []; chMeta = {}; renderAttach(); }
   });
   $('#chText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chForm').requestSubmit(); } });
-  $('#chText').addEventListener('input', e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight) + 'px'; });
+  $('#chText').addEventListener('input', e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(220, t.scrollHeight) + 'px'; t.style.overflowY = t.scrollHeight > 220 ? 'auto' : 'hidden'; });
   $('#chStop').onclick = () => call('chat_stop');
 
   // приложенные файлы, переключатель «Код» и разрешение запуска

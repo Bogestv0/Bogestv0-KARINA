@@ -95,33 +95,48 @@
 
 <!-- ============ ЧАТ ============ -->
 <section id="tab-chat" class="tab">
-  <div class="chat-layout">
+  <div class="chat-layout" id="chLayout">
     <aside class="card chat-side">
       <button class="btn primary" id="chNew">+ Новый чат</button>
       <div class="chat-list" id="chList"></div>
-      <button class="btn" id="chFolder" title="Открыть папку «Документы\Карина», куда сохраняются созданные файлы">📁 Папка с файлами</button>
     </aside>
     <div class="card chat-main" id="chMain">
       <div class="dropzone" id="chDrop" hidden><div><b>Отпустите, чтобы приложить</b><span>файлы, папки или архивы (zip) — Карина их прочитает и разберёт</span></div></div>
       <div class="chat-msgs" id="chMsgs"></div>
       <div class="chat-step" id="chStep" hidden></div>
       <form class="chat-input" id="chForm">
-        <div class="chat-tools">
-          <button class="btn" type="button" id="chBrain" title="Кто отвечает: локальная модель → Claude → авто (простое локально, сложное в Claude)">🧠 Мозг: локальный</button>
-          <button class="btn" type="button" id="chWeb" title="Поиск в интернете: авто (когда просьба этого требует) → всегда → выключен">🌐 Поиск: авто</button>
-          <button class="btn switch" type="button" id="chCode" role="switch" aria-checked="true" title="Кодер включён: приложите файлы, папку или архив (или просто опишите программу) — я сама прочитаю, напишу код, проверю запуском и отдам готовые файлы. Выключите, если нужен только обычный разговор.">💻 Код<i></i></button>
-          <button class="btn switch" type="button" id="chRun" role="switch" aria-checked="true" title="Запускать написанный код для проверки (python, pytest, node). Это не песочница: программа выполняется с вашими правами; сеть, подпроцессы и удаление файлов в коде запрещены.">▶ Проверка запуском<i></i></button>
-        </div>
         <div class="chat-attach" id="chAttach" hidden></div>
-        <div class="chat-row">
-          <button class="btn" type="button" id="chPick" title="Приложить файлы (можно и просто перетащить их в окно)">📎</button>
-          <button class="btn" type="button" id="chPickDir" title="Приложить папку целиком (можно и просто перетащить)">📂</button>
-          <textarea id="chText" rows="1" placeholder="Опишите задачу, перетащите сюда файлы, папку или zip… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
-          <button class="btn primary" type="submit" id="chSend">Отправить</button>
-          <button class="btn danger" type="button" id="chStop" hidden>Стоп</button>
+        <div class="composer">
+          <textarea id="chText" rows="1" placeholder="Напишите Карине…" aria-label="Сообщение"></textarea>
+          <div class="comp-bar">
+            <button class="ico" type="button" id="chPick" title="Приложить файлы (можно и просто перетащить их в окно)">📎</button>
+            <button class="ico" type="button" id="chPickDir" title="Приложить папку целиком (можно и просто перетащить)">📂</button>
+            <span class="comp-sep"></span>
+            <button class="tool" type="button" id="chBrain" title="Кто отвечает: локальная модель → Claude → авто (простое локально, сложное в Claude)">🧠 Мозг: локальный</button>
+            <button class="tool" type="button" id="chWeb" title="Поиск в интернете: авто (когда просьба этого требует) → всегда → выключен">🌐 Поиск: авто</button>
+            <button class="tool switch" type="button" id="chCode" role="switch" aria-checked="true" title="Кодер включён: приложите файлы, папку или архив (или просто опишите программу) — я сама прочитаю, напишу код, проверю запуском и отдам готовые файлы. Выключите, если нужен только обычный разговор.">💻 Код<i></i></button>
+            <button class="tool switch" type="button" id="chRun" role="switch" aria-checked="true" title="Запускать написанный код для проверки (python, pytest, node). Это не песочница: программа выполняется с вашими правами; сеть, подпроцессы и удаление файлов в коде запрещены.">▶ Проверка запуском<i></i></button>
+            <button class="tool" type="button" id="chFolder" title="Открыть папку «Документы\Карина», куда сохраняются созданные файлы">📁 Файлы</button>
+            <span class="grow"></span>
+            <button class="send" type="submit" id="chSend" title="Отправить (Enter)" aria-label="Отправить">➤</button>
+            <button class="send stop" type="button" id="chStop" hidden title="Остановить" aria-label="Остановить">■</button>
+          </div>
         </div>
       </form>
     </div>
+    <aside class="card chat-panel" id="chPanel" hidden>
+      <header class="pn-head">
+        <div class="pn-title"><b id="pnTitle">Просмотр</b><span id="pnSub"></span></div>
+        <div class="pn-actions">
+          <button type="button" id="pnReload" title="Показать заново">↻</button>
+          <button type="button" id="pnWide" title="Шире / уже">⤢</button>
+          <button type="button" id="pnOpen" title="Открыть файл программой">↗</button>
+          <button type="button" id="pnClose" title="Закрыть панель" aria-label="Закрыть">✕</button>
+        </div>
+      </header>
+      <div class="pn-tabs" id="pnTabs"></div>
+      <div class="pn-body" id="pnBody"></div>
+    </aside>
   </div>
 </section>
 

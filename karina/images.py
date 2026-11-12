@@ -80,12 +80,31 @@ def prompt_request(user_text: str, previous: str = "") -> list[dict]:
     sysmsg = (
         "You write prompts for text-to-image models (Stable Diffusion / Flux). The user's request may be in Russian. "
         "Reply with ONE line only: a detailed English prompt of comma-separated phrases (subject, appearance, clothing, pose, expression, setting, lighting, "
-        "art style, quality words like 'masterpiece, high detail'). Keep everything the user asked for and add nothing that contradicts it. "
-        "If they ask for anime, add 'anime style'. No explanations, no quotes, no markdown, no negative prompt, at most 70 words.")
+        "art style, quality words like 'masterpiece, high detail'). Start with the art style and the main subject, then every concrete detail the user named "
+        "(weapon, colors, wounds, clothing, setting) — never drop or soften them. Keep everything the user asked for and add nothing that contradicts it. "
+        "If they ask for anime, begin with 'anime illustration, 2D, cel shading, flat colors, detailed anime eyes, lineart'. No explanations, no quotes, no markdown, no negative prompt, at most 70 words.")
     user = user_text.strip()[:1500]
     if previous:
         user = f"Previous prompt: {previous[:700]}\nThe user now asks (change the previous prompt accordingly, keep what they did not ask to change): {user}"
     return [{"role": "system", "content": sysmsg}, {"role": "user", "content": user}]
+
+
+ANIME = re.compile(r"аниме|anime|манга|manga")
+ANIME_TAGS = "anime illustration, 2D, cel shading, flat colors, lineart, detailed anime eyes"
+
+
+def style_prompt(prompt: str, user_text: str) -> str:
+    """Страховка: просили аниме, а модель не написала про стиль — добавляем, иначе генератор рисует полуреалистичное лицо."""
+    if ANIME.search(norm(user_text)) and "anime" not in prompt.lower():
+        return ANIME_TAGS + ", " + prompt
+    if ANIME.search(norm(user_text)) and "2d" not in prompt.lower():
+        return ANIME_TAGS + ", " + prompt
+    return prompt
+
+
+def pick_models(text: str) -> tuple[str, ...]:
+    """Модели Pollinations по порядку: для аниме — специальная, затем обычная (если первой нет, берётся следующая)."""
+    return ("flux-anime", "flux") if ANIME.search(norm(text)) else ("flux",)
 
 
 def clean_prompt(raw: str, fallback: str) -> str:
@@ -178,20 +197,21 @@ def _join(base: str, path: str) -> str:
     return base + path
 
 
-def via_pollinations(prompt: str, size: tuple[int, int], seed: int, key: str = "", stop=None) -> tuple[bytes, str]:
-    q = urllib.parse.urlencode({"width": size[0], "height": size[1], "seed": seed, "nologo": "true", "model": "flux"})
+def via_pollinations(prompt: str, size: tuple[int, int], seed: int, key: str = "", stop=None, models: tuple[str, ...] = ("flux",)) -> tuple[bytes, str]:
     last: Exception | None = None
-    for tpl in POLLINATIONS_URLS:
-        url = tpl.format(prompt=urllib.parse.quote(prompt[:900], safe="")) + "?" + q
-        h = dict(UA)
-        if key:
-            h["Authorization"] = "Bearer " + key
-        try:
-            return _check(_http(urllib.request.Request(url, headers=h), stop=stop), "Pollinations")
-        except ImageError as e:
-            if str(e) == "остановлено":
-                raise
-            last = e
+    for model in models:
+        q = urllib.parse.urlencode({"width": size[0], "height": size[1], "seed": seed, "nologo": "true", "model": model})
+        for tpl in POLLINATIONS_URLS:
+            url = tpl.format(prompt=urllib.parse.quote(prompt[:900], safe="")) + "?" + q
+            h = dict(UA)
+            if key:
+                h["Authorization"] = "Bearer " + key          # с ключом (бесплатная регистрация на pollinations.ai) бесплатный водяной знак не ставится
+            try:
+                return _check(_http(urllib.request.Request(url, headers=h), stop=stop), "Pollinations")
+            except ImageError as e:
+                if str(e) == "остановлено":
+                    raise
+                last = e
     raise last or ImageError("Pollinations не ответил")
 
 
@@ -244,13 +264,14 @@ def provider_name(cfg) -> str:
     return p
 
 
-def generate(cfg, prompt: str, size: tuple[int, int] = (768, 768), seed: int | None = None, stop: threading.Event | None = None) -> tuple[bytes, str, str]:
+def generate(cfg, prompt: str, size: tuple[int, int] = (768, 768), seed: int | None = None, stop: threading.Event | None = None,
+             request: str = "") -> tuple[bytes, str, str]:
     """→ (байты картинки, расширение, кто нарисовал). Бросает ImageError с понятной причиной."""
     s = settings(cfg)
     seed = random.randint(1, 2**31 - 1) if seed is None else seed
     p = provider_name(cfg)
     if p == "pollinations":
-        data, ext = via_pollinations(prompt, size, seed, s["key"], stop)
+        data, ext = via_pollinations(prompt, size, seed, s["key"], stop, pick_models(request or prompt))
     elif p == "sd":
         data, ext = via_sd(prompt, size, seed, s["url"], stop)
     else:

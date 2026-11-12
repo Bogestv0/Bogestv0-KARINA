@@ -50,8 +50,12 @@ def light_attachments(paths: list[str]) -> bool:
     return total <= LIGHT_BYTES
 
 
+# короткое продолжение вроде «сделай файлы», «напиши это» — смысл берётся из предыдущих реплик
+CODE_FILES = re.compile(r"(?:\bфайл\w*|\bэто\b|\bвсе\b|\bготов\w*|\bпроект\w*|\bкод\b|\bбота?\b|\bтак\b)")
+
+
 def route(text: str, has_paths: bool, has_project: bool, mode: str = "auto", voice: bool = False, light: bool = False,
-          last_image: bool = False) -> str:
+          last_image: bool = False, context: str = "") -> str:
     """Куда пойдёт сообщение: "image" — картинка; "code" — агент пишет, запускает и проверяет код в папке проекта; "chat" — обычный ответ.
     «Код» включён (mode "auto") — агент берёт файлы, архивы и просьбы написать или оформить что-то: он сам читает проект по частям, правит, проверяет и отдаёт готовое.
     Только когда приложено немного обычных файлов и просят «посмотреть / объяснить» без изменений (light), хватает ответа в чате.
@@ -72,7 +76,13 @@ def route(text: str, has_paths: bool, has_project: bool, mode: str = "auto", voi
         return "code"                                  # продолжение работы над проектом этого диалога
     if has_project and READ_ONLY.search(t) and CODE_HINT.search(t) and not PLAIN_DOC.search(t):
         return "code"                                  # «посмотри, что в проекте / что не так с тестом» — агент видит файлы проекта
-    return "code" if verb and CODE_TARGET.search(t) and not PLAIN_DOC.search(t) else "chat"
+    if verb and not PLAIN_DOC.search(t):
+        if CODE_TARGET.search(t):
+            return "code"
+        c = norm(context)
+        if c and CODE_TARGET.search(c) and not PLAIN_DOC.search(t) and (CODE_FILES.search(t) or len(t.split()) <= 4):
+            return "code"                              # «сделай файлы» после разговора про бота или программу
+    return "chat"
 
 
 # Фразы, которые сразу идут в чат (раньше обычных команд: «найди и напиши…» иначе стало бы поиском в браузере).
@@ -280,11 +290,31 @@ class ChatService:
             log[i].update(kw)
             self.emit({"type": "chat_activity", "chat": cid, "id": reply["id"], "op": "update", "index": i, "entry": log[i]})
 
+        think = [None]                  # номер «живой» записи «думаю…» в ленте
+
+        def finish_think():
+            if think[0] is not None:
+                update(think[0], live=False)
+                think[0] = None
+
         def sink(ev: dict):
             if ev.get("type") == "coder_done":
+                finish_think()
                 done.update(ev)
                 return
             k, t = ev.get("kind"), ev.get("text", "")
+            if k == "think":
+                finish_think()
+                think[0] = len(log)
+                push({"k": "think", "text": t, "live": True, "say": "", "doing": ""})
+                step(t)
+                return
+            if k == "stream":
+                if think[0] is not None:
+                    update(think[0], say=ev.get("say", ""), doing=ev.get("doing", ""))
+                return
+            if k in ("say", "write", "read", "find", "run", "result", "warn"):
+                finish_think()
             if k == "say":
                 push({"k": "say", "text": t[:1500]})
             elif k == "write":
@@ -343,11 +373,12 @@ class ChatService:
             prompt = imagesmod.clean_prompt(raw, text)
         except (BrainUnavailable, EngineError) as e:
             note = f"ⓘ Модель сейчас не отвечает ({e}) — рисую по вашему тексту как есть, результат может быть хуже.\n\n"
+        prompt = imagesmod.style_prompt(prompt, text)
         if self._stop.is_set():
             return "*(остановлено)*", "", []
         step("Рисую картинку… (обычно до минуты)")
         try:
-            data, ext, who = imagesmod.generate(self.cfg, prompt, imagesmod.pick_size(text), stop=self._stop)
+            data, ext, who = imagesmod.generate(self.cfg, prompt, imagesmod.pick_size(text), stop=self._stop, request=text)
         except imagesmod.ImageError as e:
             if self._stop.is_set():
                 return "*(остановлено)*", "", []
@@ -409,7 +440,8 @@ class ChatService:
             umsg["files_in"] = [Path(x).name for x in paths][:20]
         chat["messages"].append(umsg)
         last_img = any(m.get("image_prompt") for m in chat["messages"][-3:-1])
-        way = route(text, bool(paths), bool(chat.get("project")) and self.coder is not None, mode, voice, codermod_light(paths), last_img)
+        recent = " ".join(m["text"][:400] for m in chat["messages"][-5:-1] if m.get("text"))
+        way = route(text, bool(paths), bool(chat.get("project")) and self.coder is not None, mode, voice, codermod_light(paths), last_img, recent)
         if way == "code" and self.coder is None:
             way = "chat"
         if chat["title"] == "Новый чат":
@@ -439,6 +471,7 @@ class ChatService:
             elif way == "code":
                 out_text, err_code, activity = self._code_turn(chat, reply, text, paths, step)
                 reply["text"] = out_text
+                activity = [a for a in activity if a.get("k") != "think"]          # «думаю…» нужно только пока идёт работа
                 if activity:
                     reply["activity"] = activity[-80:]
                 if err_code:

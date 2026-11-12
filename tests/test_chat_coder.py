@@ -47,6 +47,13 @@ class Route(unittest.TestCase):
         self.assertEqual(route("исправь main.py", True, True, mode="ask"), "chat")                   # «Код» выключен — только чат
         self.assertEqual(route("напиши программу для расчёта", False, False, voice=True), "chat")
 
+    def test_short_follow_up_uses_conversation(self):
+        ctx = "хочу телеграм бота, который заливает файлы на гитхаб через воркер"
+        self.assertEqual(route("сделай файлы", False, False, context=ctx), "code")
+        self.assertEqual(route("сделай файлы", False, False), "chat")                       # без контекста — не гадаем
+        self.assertEqual(route("сделай файлы", False, False, context="расскажи про погоду"), "chat")
+        self.assertEqual(route("напиши это", False, False, context=ctx), "code")
+
     def test_images(self):
         self.assertEqual(route("Сделай изображения аниме девушки с белыми волосами", False, False), "image")
         self.assertEqual(route("нарисуй кота", False, False, mode="ask"), "image")                    # картинки работают и при выключенном «Коде»
@@ -133,7 +140,7 @@ class InChat(unittest.TestCase):
         png = b"\x89PNG\r\n\x1a\n" + b"0" * 50
         orig = images.generate
         seen = {}
-        def fake(cfg, prompt, size=(768, 768), seed=None, stop=None):
+        def fake(cfg, prompt, size=(768, 768), seed=None, stop=None, request=""):
             seen["prompt"], seen["size"] = prompt, size
             return png, "png", "Тестовый сервис"
         images.generate = fake
@@ -141,7 +148,8 @@ class InChat(unittest.TestCase):
             svc, model, ev, tmp = make(["1girl, anime style, long white hair, masterpiece, high detail"])
             cid = svc.send(None, "Сделай изображения аниме девушки с белыми волосами", wait=True)
             reply = svc.store.get(cid)["messages"][1]
-            self.assertEqual(seen["prompt"], "1girl, anime style, long white hair, masterpiece, high detail")      # модель написала описание
+            self.assertTrue(seen["prompt"].startswith("anime illustration, 2D"))                                   # для аниме добавлен 2D-стиль
+            self.assertTrue(seen["prompt"].endswith("1girl, anime style, long white hair, masterpiece, high detail"))      # модель написала описание
             self.assertEqual(reply["files"][0]["kind"], "image")
             self.assertTrue((tmp / "Карина" / reply["files"][0]["name"]).read_bytes().startswith(b"\x89PNG"))
             self.assertIn("нарисовала", reply["text"]); self.assertEqual(reply["image_prompt"], seen["prompt"])
@@ -149,7 +157,7 @@ class InChat(unittest.TestCase):
             model.replies.append("1girl, anime, long white hair, forest background")
             svc.send(cid, "сделай фон лесом", wait=True)
             self.assertIn("long white hair, masterpiece", model.seen[-1][-1]["content"])
-            self.assertEqual(seen["prompt"], "1girl, anime, long white hair, forest background")
+            self.assertTrue(seen["prompt"].endswith("1girl, anime, long white hair, forest background"))
         finally:
             images.generate = orig
 

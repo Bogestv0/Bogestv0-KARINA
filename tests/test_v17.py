@@ -334,6 +334,23 @@ class ImageTests(unittest.TestCase):
         with self.assertRaises(images.ImageError):
             images.generate(self.cfg(provider="sd", url=self.srv.url), "x", stop=ev)
 
+    def test_anime_style_and_model(self):
+        self.assertTrue(images.style_prompt("girl, white hair, katana", "нарисуй аниме девочку").startswith("anime illustration"))
+        self.assertEqual(images.style_prompt("anime illustration, 2D, girl", "аниме"), "anime illustration, 2D, girl")
+        self.assertEqual(images.style_prompt("a cat", "нарисуй кота"), "a cat")
+        self.assertEqual(images.pick_models("фото аниме девочки"), ("flux-anime", "flux"))
+        self.assertEqual(images.pick_models("кот"), ("flux",))
+
+    def test_pollinations_falls_back_to_next_model(self):
+        old = images.POLLINATIONS_URLS
+        try:
+            images.POLLINATIONS_URLS = (self.srv.url + "/prompt/{prompt}",)
+            seen = len(self.srv.requests)
+            images.via_pollinations("x", (64, 64), 1, models=("flux-anime", "flux"))
+            self.assertIn("model=flux-anime", self.srv.requests[seen][0])
+        finally:
+            images.POLLINATIONS_URLS = old
+
     def test_prompt_helpers(self):
         self.assertEqual(images.clean_prompt("Prompt: `1girl, white hair, anime`\nlol", "x"), "1girl, white hair, anime lol")
         self.assertEqual(images.clean_prompt("", "кот на крыше"), "кот на крыше")
@@ -345,3 +362,50 @@ class ImageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveAndSyntax(unittest.TestCase):
+    def _svc(self, replies):
+        from test_coder import make
+        return make(replies)
+
+    def test_live_view(self):
+        v = coder.live_view("Сделаю страницу.\n[[ЗАПИСАТЬ: index.html]]\n<h1>a</h1>\n<p>b</p>\n")
+        self.assertEqual(v["say"], "Сделаю страницу.")
+        self.assertIn("Пишу index.html", v["doing"]); self.assertIn("строк: 3", v["doing"])
+        self.assertEqual(coder.live_view("Так.\n[[ЗАПУСТИТЬ: python a.py]]")["doing"], "▶ python a.py")
+        self.assertEqual(coder.live_view("[[ЗАПИСАТЬ: a.py]]\nx\n[[/ЗАПИСАТЬ]]")["doing"], "")        # файл закончен — уже не «пишет»
+
+    def test_think_and_stream_events(self):
+        svc, model, ev, tmp = self._svc(["Пишу.\n[[ЗАПИСАТЬ: a.py]]\nprint(1)\n[[/ЗАПИСАТЬ]]", "[[ГОТОВО]]ок[[/ГОТОВО]]"])
+        # «модель» присылает ответ кусками
+        orig = model.chat
+        def chat(messages, max_tokens=0, temperature=0, on_delta=None, stop=None, **kw):
+            r = orig(messages, max_tokens, temperature, on_delta, stop)
+            if on_delta:
+                on_delta(r)
+            return r
+        model.chat = chat
+        svc.start("задача", [], wait=True)
+        kinds = [e.get("kind") for e in ev if e["type"] == "coder"]
+        self.assertEqual(kinds.count("think"), 2)
+        self.assertIn("stream", kinds)
+        self.assertLess(kinds.index("think"), kinds.index("write"))
+
+    def test_syntax_error_sent_back_to_model(self):
+        svc, model, ev, tmp = self._svc(["[[ЗАПИСАТЬ: a.py]]\ndef f(:\n    pass\n[[/ЗАПИСАТЬ]]\n[[ГОТОВО]]готово[[/ГОТОВО]]",
+                                         "[[ЗАПИСАТЬ: a.py]]\ndef f():\n    pass\n[[/ЗАПИСАТЬ]]\n[[ГОТОВО]]исправила[[/ГОТОВО]]"], )
+        svc.start("задача", [], wait=True)
+        done = [e for e in ev if e["type"] == "coder_done"][0]
+        self.assertEqual(done["summary"], "исправила")
+        self.assertIn("синтаксические ошибки", model.seen[1][-1]["content"])
+        self.assertIn("a.py, строка 1", model.seen[1][-1]["content"])
+        self.assertIn("Синтаксис проверен автоматически", done["verdict"])                      # честный итог: не запускали, но синтаксис проверен
+        self.assertFalse(done["ok"])
+
+    def test_autocheck_reports_remaining_error(self):
+        bad = "[[ЗАПИСАТЬ: a.py]]\ndef f(:\n[[/ЗАПИСАТЬ]]\n[[ГОТОВО]]х[[/ГОТОВО]]"
+        svc, model, ev, tmp = self._svc([bad, bad, bad])
+        svc.start("задача", [], wait=True)
+        done = [e for e in ev if e["type"] == "coder_done"][0]
+        self.assertIn("нашла синтаксические ошибки", done["verdict"])

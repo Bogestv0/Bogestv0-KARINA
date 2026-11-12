@@ -91,6 +91,44 @@ def parse(text: str) -> dict:
     return {"say": say, "actions": [(k, a, b) for _, k, a, b in acts], "done": done}
 
 
+def live_view(partial: str) -> dict:
+    """Что показать в окне, пока модель ещё пишет ответ: её слова и что она пишет прямо сейчас (файл, команда)."""
+    say = parse(partial)["say"][-700:]
+    doing = ""
+    w = list(re.finditer(r"\[\[\s*(?:ЗАПИСАТЬ|WRITE)\s*:\s*([^\]\n]{1,200}?)\s*\]\]", partial, re.I))
+    if w and not re.search(r"\[\[\s*/\s*(?:ЗАПИСАТЬ|WRITE)", partial[w[-1].end():], re.I):
+        n = partial[w[-1].end():].count("\n")
+        doing = f"✏ Пишу {w[-1].group(1)} · строк: {n}"
+    else:
+        r = list(re.finditer(r"\[\[\s*(?:ЗАПУСТИТЬ|RUN|ЧИТАТЬ|READ|НАЙТИ|FIND)\s*:\s*([^\]\n]{1,120})", partial, re.I))
+        if r:
+            doing = "▶ " + r[-1].group(1).strip()
+    return {"say": say, "doing": doing}
+
+
+def syntax_errors(ws: "Workspace") -> list[str]:
+    """Автопроверка без запуска кода: синтаксис .py и .json в файлах, которые написала Карина (input/ не трогаем)."""
+    errs = []
+    for rel, size in ws.listing():
+        ext = rel.rpartition(".")[2].lower()
+        if rel.startswith("input/") or ext not in ("py", "json") or size > 1_000_000:
+            continue
+        text = read_text(ws.root / rel)
+        if text is None:
+            continue
+        try:
+            if ext == "py":
+                compile(text, rel, "exec", dont_inherit=True)
+            else:
+                import json
+                json.loads(text)
+        except SyntaxError as e:
+            errs.append(f"{rel}, строка {e.lineno}: {e.msg}")
+        except ValueError as e:
+            errs.append(f"{rel}: {e}")
+    return errs
+
+
 # ---------------------------------------------------------------- рабочая папка проекта
 def slug(text: str) -> str:
     s = re.sub(r"[^\w\- ]+", "", text or "", flags=re.U).strip().replace(" ", "_")
@@ -530,7 +568,8 @@ def system_prompt(can_run: bool, run_note: str = "") -> str:
         "6) файлы в input/ не меняй: исправленную полную версию клади в output/ с тем же относительным путём (например output/karina/chat.py), новые файлы — в src/, output/ и т. п.; "
         "7) не выдумывай, что проверка прошла — опирайся только на присланный вывод; 8) в одном ответе можно несколько блоков, они выполняются по порядку; "
         "9) если просят «посмотреть», «разобрать» или «объяснить» код — ничего не записывай: прочитай нужное и сразу заверши [[ГОТОВО]] с понятным разбором (что где, какие проблемы, что советуешь); "
-        "10) оформление, макет, шаблон, страница, интерфейс — делай одним файлом .html (стили внутри <style>, без внешних ссылок и шрифтов) или .svg: Карина покажет его прямо в окне; "
+        "10) оформление, макет, эскиз, шаблон, страница, личный кабинет, интерфейс — делай одним файлом .html (стили внутри <style>, без внешних ссылок и шрифтов) или .svg: Карина покажет его в панели справа на всю высоту. "
+        "Если в макете несколько разделов или вкладок (меню, кабинет, настройки) — сделай их рабочими: в одном .html переключай разделы на JavaScript по клику (без внешних библиотек), ссылки между разными .html файлами — относительные (<a href=\"profile.html\">); тогда по клику в окне открывается нужный раздел; "
         "11) закончив, обязательно напиши [[ГОТОВО]]."
     )
 
@@ -676,15 +715,22 @@ class CoderService:
             read_limit = max(2000, min(20_000, int(budget * 0.3)))                 # сколько символов файла отдаём за одно чтение
             msgs = [{"role": "user", "content": first_message(task, ws, copied, context, resumed, budget)}]
             sysmsg = {"role": "system", "content": system_prompt(can_run, run_note)}
-            nudged = False
+            nudged, fixes = False, 0
             if backend.state != "ready":
                 self._say("step", "Загружаю модель в память…")
             for step in range(1, st["max_steps"] + 1):
                 if self._stop.is_set():
                     break
-                self._say("step", f"Шаг {step} из {st['max_steps']}: думаю…")
+                self._say("think", f"Шаг {step} из {st['max_steps']}: думаю…", step=step, total=st["max_steps"])
                 msgs = self._trim(msgs, budget)
-                reply = backend.chat([sysmsg] + msgs, max_tokens=max_tokens, temperature=0.3, stop=self._stop)
+                last_emit = [0.0]
+
+                def on_delta(t: str):
+                    now = time.time()
+                    if now - last_emit[0] >= 0.35:
+                        last_emit[0] = now
+                        self._say("stream", "", **live_view(t))
+                reply = backend.chat([sysmsg] + msgs, max_tokens=max_tokens, temperature=0.3, on_delta=on_delta, stop=self._stop)
                 if self._stop.is_set():
                     break
                 p = parse(reply)
@@ -722,6 +768,13 @@ class CoderService:
                         self._say("warn", f"{kind}: {e}")
                         results.append(f"✖ Ошибка: {e}")
                 if p["done"] is not None:
+                    bad = syntax_errors(ws) if stats["writes"] else []
+                    if bad and fixes < 2 and step < st["max_steps"]:
+                        fixes += 1
+                        self._say("warn", "Автопроверка нашла синтаксические ошибки: " + "; ".join(bad[:3]))
+                        msgs.append({"role": "assistant", "content": reply.strip() or "(пусто)"})
+                        msgs.append({"role": "user", "content": "Перед завершением автоматическая проверка нашла синтаксические ошибки:\n" + "\n".join(bad[:8]) + "\nИсправь файлы и снова напиши [[ГОТОВО]]."})
+                        continue
                     summary = p["done"]
                     break
                 msgs.append({"role": "assistant", "content": reply.strip() or "(пусто)"})
@@ -742,8 +795,17 @@ class CoderService:
         if self._stop.is_set():
             summary = (summary + "\n\n*(остановлено)*").strip()
         # итог проверки считаем сами, а не со слов модели
+        syntax_note = ""
+        if stats["writes"] and not error:
+            try:
+                bad = syntax_errors(ws)
+                self._say("run", "Автопроверка синтаксиса (без запуска)", cmd="проверка синтаксиса Python/JSON")
+                self._say("result", "Синтаксис в порядке" if not bad else "Есть синтаксические ошибки", ok=not bad, code=0 if not bad else 1, output="\n".join(bad))
+                syntax_note = " Синтаксис проверен автоматически — ошибок нет." if not bad else " Автопроверка нашла синтаксические ошибки: " + "; ".join(bad[:3]) + "."
+            except Exception:
+                pass
         if stats["runs"] == 0:
-            verdict = "Код не запускался и не проверен." if stats["writes"] else "Файлы не создавались."
+            verdict = ("Код не запускался, работа не проверена." + syntax_note) if stats["writes"] else "Файлы не создавались."
         elif stats["dirty"]:
             verdict = "После последней проверки файлы менялись — итоговая версия не проверена."
         elif stats["last_run"] == 0:
