@@ -292,11 +292,15 @@ main:has(#tab-chat.on){overflow:hidden}
   .topbar{min-height:48px;gap:12px} .tabs button{padding:5px 10px;font-size:13px}
   .chat-msgs{padding:14px} .chat-input{padding:10px 12px 12px}
 }
-@media (max-width:900px){
+/* вкладок восемь: в одну строку с кнопками окна они помещаются только от ~1240px, иначе «закрыть» уезжает за край; поэтому переносим вкладки на вторую строку раньше */
+.winctl{flex:none}
+@media (max-width:1240px){
   .topbar{flex-wrap:wrap;row-gap:0;padding-left:14px}
-  .brand{height:48px} .chips{height:48px;align-items:center} .winctl{height:48px;align-self:flex-start}
+  .brand{height:48px} .chips{height:48px;align-items:center;margin-left:auto} .winctl{height:48px;align-self:flex-start}
   .tabs{order:10;flex:1 0 calc(100% - 14px);margin:0 14px 8px 0;overflow-x:auto}
   .tabs button{flex:1}
+}
+@media (max-width:900px){
   .chat-layout{grid-template-columns:minmax(0,1fr)} .chat-side{display:none}
 }
 @media (max-width:640px){.brand span{display:none}.cmd-grid{grid-template-columns:1fr}}
@@ -400,3 +404,13 @@ main:has(#tab-chat.on){overflow:hidden}
 .a-think .th-do{font:500 12.5px var(--f-mono);color:var(--muted)}
 .view-btn{align-self:flex-start}
 .work ~ .bubble.typing:empty{display:none}
+
+/* выделение и копирование текста в чате */
+.chat-msgs,.chat-msgs *,.pn-body pre,.a-out,.ptext{-webkit-user-select:text;user-select:text}
+.chat-msgs pre,.chat-msgs code,.chat-msgs p,.chat-msgs li{cursor:text}
+.chat-msgs summary,.chat-msgs button,.chat-msgs .a-tool>summary{-webkit-user-select:none;user-select:none;cursor:pointer}
+.codebox{margin:8px 0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
+.codehead{display:flex;align-items:center;justify-content:space-between;padding:4px 6px 4px 12px;background:var(--surface-2);border-bottom:1px solid var(--line);font:500 12px var(--f-mono);color:var(--muted)}
+.codecopy{padding:3px 10px;border-radius:7px;font:500 12px var(--f-body);color:var(--accent)}
+.codecopy:hover{background:var(--accent-soft)}
+.codebox pre{margin:0!important;border:0!important;border-radius:0!important;background:transparent!important}

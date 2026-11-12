@@ -17,6 +17,7 @@
     <button data-tab="models">Модели</button>
     <button data-tab="apps">Программы</button>
     <button data-tab="sound">Звук</button>
+    <button data-tab="profile">Профиль</button>
     <button data-tab="settings">Настройки</button>
   </nav>
   <div class="chips">
@@ -290,6 +291,53 @@
   </div>
 </section>
 
+<!-- ============ ПРОФИЛЬ ============ -->
+<section id="tab-profile" class="tab">
+  <div class="card">
+    <div class="eyebrow">Вход через Google</div>
+    <div id="gSigned" hidden>
+      <div class="row" style="align-items:center;gap:12px"><img id="gPic" alt="" width="44" height="44" style="border-radius:50%" referrerpolicy="no-referrer"><div><b id="gName"></b><div class="muted small" id="gMail"></div></div>
+        <button type="button" class="btn danger" id="gOut" style="margin-left:auto">Выйти</button></div>
+    </div>
+    <div id="gUnsigned">
+      <p class="muted small">Откроется браузер, вы выберете аккаунт Google, и Карина узнает ваше имя и почту. Пароль она не видит. Дату рождения и город Google не передаёт — их впишите ниже.</p>
+      <div class="row"><button type="button" class="btn" id="gIn">Войти через Google</button><button type="button" class="btn" id="gCancel" hidden>Отменить</button></div>
+    </div>
+    <div class="note" id="gMsg" hidden></div>
+    <details style="margin-top:10px"><summary class="muted small">Настройка входа (один раз): Client ID</summary>
+      <div class="form" style="margin-top:8px">
+        <label>Client ID<input id="gClient" placeholder="123456-abc.apps.googleusercontent.com" autocomplete="off"></label>
+        <label>Client secret (если Google его выдал)<input id="gSecret" type="password" autocomplete="off" placeholder="оставьте пустым, чтобы не менять"></label>
+        <div class="row"><button type="button" class="btn" id="gSave">Сохранить</button></div>
+        <ol class="muted small" style="margin:6px 0 0 18px;padding:0">
+          <li>Откройте console.cloud.google.com, создайте проект.</li>
+          <li>«API и сервисы» → «Экран согласия OAuth»: тип «Внешний», добавьте себя в «Тестовые пользователи».</li>
+          <li>«Учётные данные» → «Создать» → «Идентификатор клиента OAuth» → тип <b>«Приложение для компьютера»</b>.</li>
+          <li>Скопируйте Client ID (и Client secret) сюда.</li>
+        </ol>
+      </div>
+    </details>
+  </div>
+  <form class="card" id="profForm">
+    <div class="eyebrow">О вас</div>
+    <div class="form">
+      <label>Как к вам обращаться<input name="name" maxlength="40" placeholder="Михаил"></label>
+      <div class="row">
+        <label style="flex:1">День рождения<input name="birth_day" type="number" min="1" max="31" placeholder="день"></label>
+        <label style="flex:1">Месяц<select name="birth_month"><option value="0">—</option><option value="1">январь</option><option value="2">февраль</option><option value="3">март</option><option value="4">апрель</option><option value="5">май</option><option value="6">июнь</option><option value="7">июль</option><option value="8">август</option><option value="9">сентябрь</option><option value="10">октябрь</option><option value="11">ноябрь</option><option value="12">декабрь</option></select></label>
+        <label style="flex:1">Год<input name="birth_year" type="number" min="1900" max="2100" placeholder="год"></label>
+      </div>
+      <label>Город (для погоды)<input name="city" maxlength="60" placeholder="Красноярск"></label>
+      <label class="switch"><input type="checkbox" name="share_with_llm"><span class="sw"></span><span>Учитывать профиль в ответах нейросети (при включённом Claude/облаке эти данные передаются в запросе)</span></label>
+    </div>
+    <div class="eyebrow" style="margin-top:14px">Домашние животные</div>
+    <div class="list" id="petList"></div>
+    <div class="row"><button type="button" class="btn" id="petAdd">Добавить питомца</button></div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Сохранить профиль</button><span class="muted small" id="profMsg"></span></div>
+    <p class="muted small">Карина поздравит с днём рождения (вас и питомца), назовёт по имени, скажет погоду в вашем городе и будет знать клички: «как зовут мою собаку», «скажи погоду».</p>
+  </form>
+</section>
+
 <!-- ============ НАСТРОЙКИ ============ -->
 <section id="tab-settings" class="tab">
   <form id="setForm" class="settings">
@@ -335,8 +383,22 @@
             <option value="svetlana_cute">Светлана — милая (тонкий, живой)</option>
             <option value="dariya_soft">Дария — мягкая (ровный, естественный)</option>
             <option value="ava_calm">Ava — спокойная героиня (мягкий, ниже)</option>
+            <option value="dmitry">Дмитрий — мужской (Microsoft)</option>
+            <optgroup label="Silero — локально, без интернета, естественнее всего (нужно скачать)">
+              <option value="silero_xenia">Ксения — Silero (очень естественный)</option>
+              <option value="silero_kseniya">Ксения-2 — Silero (мягче)</option>
+              <option value="silero_baya">Байя — Silero (живая)</option>
+              <option value="silero_aidar">Айдар — Silero (мужской)</option>
+              <option value="silero_eugene">Евгений — Silero (мужской)</option>
+            </optgroup>
           </select>
         </label>
+        <div class="note" id="silBox">
+          <span id="silStatus" class="muted small"></span>
+          <div class="row" style="margin-top:8px"><button type="button" class="btn" id="silDl">Скачать голос Silero</button><button type="button" class="btn danger" id="silDel" hidden>Удалить</button></div>
+          <div class="pbar" id="silBar" hidden><i></i></div>
+          <p class="muted small" style="margin:8px 0 0">Работает на вашем компьютере, не роботизированный. Нужен пакет <b>torch</b> (один раз: <code>pip install torch</code>), поэтому работает при запуске из исходников (run.bat), а не в установленной exe-версии. Лицензия модели — для личного некоммерческого использования.</p>
+        </div>
         <label>Источник голоса
           <select name="engine">
             <option value="auto">Автоматически: онлайн-голос, а без интернета — системный</option>
@@ -359,6 +421,22 @@
         <label>Поисковик
           <select name="search_engine"><option value="google">Google</option><option value="yandex">Яндекс</option></select>
         </label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Микшер и VPN</div>
+      <p class="muted small">«Карина, сделай тише музыку», «убавь звук в игре», «заглуши донаты», «включи сцену звонок», «включи впн», «выключи впн».</p>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="mixer_enabled"><span class="sw"></span><span>Управлять микшером Bogestv0 MIXER</span></label>
+        <label>PIN удалённого пульта микшера <input type="password" name="mixer_pin" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="пусто — взять из настроек микшера"></label>
+        <label>Порт пульта (0 — взять из настроек микшера) <input type="number" name="mixer_port" min="0" max="65535"></label>
+        <label>Шаг «тише / громче», дБ <output id="outStep"></output><input type="range" name="mixer_step" min="1" max="9" step="0.5"></label>
+        <div class="row"><button type="button" class="btn" id="mixTest">Проверить связь с микшером</button></div>
+        <div class="note" id="mixOut" hidden></div>
+        <p class="muted small">В микшере один раз включите «Настройки → Удалённый пульт». PIN и порт Карина обычно находит сама.</p>
+        <label class="switch"><input type="checkbox" name="vpn_enabled"><span class="sw"></span><span>Управлять VPN в расширении браузера</span></label>
+        <div class="note" id="vpnOut"></div>
+        <p class="muted small">Нужно расширение Bogestv0 VPN версии 1.4.0 или новее: оно само подключается к Карине на этом компьютере.</p>
       </div>
     </div>
     <div class="card">

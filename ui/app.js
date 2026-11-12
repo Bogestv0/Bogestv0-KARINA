@@ -55,7 +55,7 @@
     $('#kvNet').textContent = st.online ? 'есть' : 'нет — работаю автономно';
     const names = { tiny: 'минимальная', base: 'базовая', small: 'хорошая', medium: 'высокая' };
     $('#kvStt').textContent = (names[st.model] || st.model) + ' · офлайн';
-    $('#kvVoice').textContent = st.voice === 'online' ? 'онлайн (нейросеть)' : st.voice === 'piper' ? 'офлайн (нейросеть «Ирина»)' : st.voice === 'offline' ? 'системный (офлайн)' : st.online ? 'онлайн' : 'системный';
+    $('#kvVoice').textContent = st.voice === 'online' ? 'онлайн (нейросеть)' : st.voice === 'silero' ? 'локально (нейросеть Silero)' : st.voice === 'piper' ? 'офлайн (нейросеть «Ирина»)' : st.voice === 'offline' ? 'системный (офлайн)' : st.online ? 'онлайн' : 'системный';
     $('#kvMics').textContent = st.mics_text || '—'; renderMicStatus(st.mics);
     const w = $('#ttsWarn'); w.hidden = !st.tts_warning; w.textContent = st.tts_warning || '';
     const p = $('#pluginWarn'); p.hidden = !(st.plugin_errors && st.plugin_errors.length); p.textContent = (st.plugin_errors || []).join('\n');
@@ -161,6 +161,9 @@
       else if (ev.type === 'brain_test') { const o = $('#brainTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Claude отвечает: «${ev.text}» (${ev.sec} с)` : ev.text; $('#brainTest').disabled = false; }
       else if (ev.type === 'voice_dl') voiceDlProgress(ev);
       else if (ev.type === 'voice_dl_done') voiceDlDone(ev);
+      else if (ev.type === 'google_done') googleDone(ev);
+      else if (ev.type === 'silero_dl') silProgress(ev);
+      else if (ev.type === 'silero_dl_done') silDone(ev);
       else if (ev.type === 'model_progress') modelProgress(ev);
       else if (ev.type === 'model_done') { if (ev.error && ev.error !== 'cancelled') flash($('#mdMsg'), ev.error, true); loadModels(); }
       else if (ev.type === 'engine') renderEngine(ev);
@@ -197,6 +200,14 @@
     if (r && r.ok) { f.reset(); flash($('#customMsg'), 'Добавлено'); loadCommands(); } else flash($('#customMsg'), (r && r.error) || 'Ошибка', true);
   });
 
+  // копирование: сначала через Python (буфер Windows), затем средствами браузера
+  async function copyText(text) {
+    try { if (await api.clipboard_set(text)) return true; } catch (_) {}
+    try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
+    try { const t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0'; document.body.append(t); t.select(); const ok = document.execCommand('copy'); t.remove(); return ok; } catch (_) { return false; }
+  }
+  function flashBtn(b, ok) { const old = b.dataset.l || b.textContent; b.dataset.l = old; b.textContent = ok ? '✔ Скопировано' : 'Не удалось'; clearTimeout(b._t); b._t = setTimeout(() => b.textContent = old, 1600); }
+
   // ---------- чат ----------
   let chCur = null, chOpenId = null, chBubble = null, chBusy = false;
   const scrollChat = () => { const m = $('#chMsgs'); m.scrollTop = m.scrollHeight; };
@@ -226,9 +237,11 @@
     while (i < lines.length) {
       const ln = lines[i];
       if (/^\s*```/.test(ln)) {
-        endBlocks(); const code = []; i++;
+        endBlocks(); const code = []; const lang = (/^\s*```\s*([\w+#.-]*)/.exec(ln) || [])[1] || ''; i++;
         while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++].replace(/^ {0,3}/, ''));
-        i++; const pre = el('pre'); pre.append(el('code', '', code.join('\n'))); box.append(pre); continue;
+        i++; const src = code.join('\n'); const wrap = el('div', 'codebox'); const hd = el('div', 'codehead');
+        const cp = el('button', 'codecopy', 'Копировать'); cp.type = 'button'; cp.onclick = async () => flashBtn(cp, await copyText(src));
+        hd.append(el('span', '', lang || 'код'), cp); const pre = el('pre'); pre.append(el('code', '', src)); wrap.append(hd, pre); box.append(wrap); continue;
       }
       let m;
       if ((m = /^(#{1,4})\s+(.*)$/.exec(ln))) { endBlocks(); const h = el('h' + Math.min(4, m[1].length + 2)); inline(h, m[2]); box.append(h); }
@@ -421,7 +434,7 @@
     row.append(b);
     if (role === 'assistant') {
       const meta = el('div', 'meta');
-      const c = el('button', 'link copy', 'Копировать'); c.onclick = () => { try { navigator.clipboard.writeText(b.innerText); c.textContent = 'Скопировано'; setTimeout(() => c.textContent = 'Копировать', 1500); } catch (_) {} };
+      const c = el('button', 'link copy', 'Копировать'); c.onclick = async () => flashBtn(c, await copyText(b.innerText));
       meta.append(c, el('span', 'who')); row.append(meta);
       renderActivity(row, activity, true); attachProject(row, project); attachFiles(row, files); attachSteps(row, steps); setWho(row, brain);
     }
@@ -845,6 +858,71 @@
   $('#offDl').onclick = async () => { $('#offDl').disabled = true; $('#offStatus').textContent = 'Ищу голос…'; if (!(await call('voice_offline_download'))) loadVoiceOffline(); };
   $('#offDel').onclick = async () => { const st = await call('voice_offline_delete'); if (st) voiceOfflineView(st); };
 
+  // ---------- профиль ----------
+  let kinds = {};
+  const pf = () => $('#profForm');
+  function petRow(p) {
+    const r = document.createElement('div'); r.className = 'row pet'; r.style.alignItems = 'center';
+    const opts = Object.entries(kinds).map(([k, v]) => `<option value="${k}"${k === (p.kind || 'dog') ? ' selected' : ''}>${v}</option>`).join('');
+    r.innerHTML = `<select class="pk" style="width:130px;flex:none">${opts}</select><input class="pn" maxlength="30" placeholder="Кличка" style="flex:1;width:auto;min-width:120px"><input class="pd" type="number" min="1" max="31" placeholder="день р." style="width:90px;flex:none"><select class="pm" style="width:120px;flex:none"><option value="0">месяц</option>${['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'].map((m, i) => `<option value="${i + 1}">${m}</option>`).join('')}</select><button type="button" class="btn danger pr">×</button>`;
+    $('.pn', r).value = p.name || ''; $('.pd', r).value = p.birth_day || ''; $('.pm', r).value = p.birth_month || 0;
+    $('.pr', r).onclick = () => r.remove();
+    return r;
+  }
+  function fillProfile(d) {
+    kinds = d.kinds; const p = d.profile, f = pf();
+    f.name.value = p.name; f.birth_day.value = p.birth_day || ''; f.birth_month.value = p.birth_month || 0; f.birth_year.value = p.birth_year || '';
+    f.city.value = p.city; f.share_with_llm.checked = p.share_with_llm !== false;
+    const l = $('#petList'); l.innerHTML = ''; (p.pets || []).forEach(x => l.appendChild(petRow(x)));
+    const g = p.google || {}, signed = !!g.email;
+    $('#gSigned').hidden = !signed; $('#gUnsigned').hidden = signed;
+    $('#gName').textContent = g.name || ''; $('#gMail').textContent = g.email || ''; if (g.picture) $('#gPic').src = g.picture; else $('#gPic').removeAttribute('src');
+    $('#gClient').value = d.google.client_id || ''; $('#gSecret').placeholder = d.google.has_secret ? 'сохранён (введите новый, чтобы заменить)' : 'оставьте пустым, если Google не выдал';
+    $('#gIn').hidden = !!d.signing_in; $('#gCancel').hidden = !d.signing_in;
+  }
+  async function loadProfile() { const d = await call('get_profile'); if (d) fillProfile(d); }
+  $('#petAdd').onclick = () => { if (!Object.keys(kinds).length) return; $('#petList').appendChild(petRow({ kind: 'dog' })); };
+  pf().addEventListener('submit', async e => {
+    e.preventDefault(); const f = e.target;
+    const pets = $$('#petList .pet').map(r => ({ kind: $('.pk', r).value, name: $('.pn', r).value.trim(), birth_day: Number($('.pd', r).value) || 0, birth_month: Number($('.pm', r).value) || 0 })).filter(x => x.name);
+    const d = await call('save_profile', { name: f.name.value, birth_day: Number(f.birth_day.value) || 0, birth_month: Number(f.birth_month.value) || 0, birth_year: Number(f.birth_year.value) || 0,
+      city: f.city.value, share_with_llm: f.share_with_llm.checked, pets });
+    if (d) { fillProfile(d); flash($('#profMsg'), 'Сохранено'); } else flash($('#profMsg'), 'Не удалось сохранить', true);
+  });
+  const gMsg = (t, bad) => { const o = $('#gMsg'); o.hidden = !t; o.className = 'note' + (bad ? ' bad' : ''); o.textContent = t || ''; };
+  $('#gSave').onclick = async () => { const d = await call('save_google_client', $('#gClient').value, $('#gSecret').value); if (d) { $('#gSecret').value = ''; fillProfile(d); gMsg('Сохранено. Теперь нажмите «Войти через Google».'); } };
+  $('#gIn').onclick = async () => { gMsg('Открываю браузер… выберите аккаунт Google.'); $('#gIn').hidden = true; $('#gCancel').hidden = false; if (!(await call('google_login'))) loadProfile(); };
+  $('#gCancel').onclick = () => call('google_cancel');
+  $('#gOut').onclick = async () => { const d = await call('google_logout'); if (d) { fillProfile(d); gMsg(''); } };
+  function googleDone(ev) { gMsg(ev.error || 'Готово: вы вошли.', !!ev.error); loadProfile(); }
+
+  // ---------- голос Silero ----------
+  function silView(st) {
+    $('#silStatus').textContent = st.downloading ? 'Скачиваю…' : st.ready ? `Скачан (${fmtMb(st.size)})${st.torch ? '. Всё готово.' : '. ' + (st.hint || 'Не хватает пакета torch.')}` : 'Не скачан: пока Карина говорит обычным голосом.';
+    $('#silDl').hidden = st.ready; $('#silDl').disabled = !!st.downloading; $('#silDel').hidden = !st.ready;
+    if (!st.downloading) $('#silBar').hidden = true;
+  }
+  async function loadSil() { const st = await call('silero_status'); if (st) silView(st); }
+  function silProgress(ev) {
+    const pb = $('#silBar'); pb.hidden = false; $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%';
+    $('#silStatus').textContent = ev.total ? `Скачано ${fmtMb(ev.done)} из ${fmtMb(ev.total)}` : 'Подключаюсь…';
+  }
+  function silDone(ev) { if (ev.error && ev.error !== 'cancelled') flash($('#setMsg'), ev.error, true); loadSil(); }
+  $('#silDl').onclick = async () => { $('#silDl').disabled = true; $('#silStatus').textContent = 'Подключаюсь…'; if (!(await call('silero_download'))) loadSil(); };
+  $('#silDel').onclick = async () => { const st = await call('silero_delete'); if (st) silView(st); };
+
+  // ---------- микшер и VPN ----------
+  async function loadVpnStatus() {
+    const r = await call('integrations_status'); if (!r) return;
+    const v = r.vpn; $('#vpnOut').className = 'note' + (v.browsers ? '' : ' bad');
+    $('#vpnOut').textContent = !v.enabled ? 'Управление VPN выключено.' : v.error ? `Связь не работает: ${v.error}.` : v.browsers ? `Расширение подключено (браузеров: ${v.browsers}).` : 'Расширение пока не подключено: откройте браузер с Bogestv0 VPN 1.4.0+ (оно проверяет раз в полминуты).';
+  }
+  $('#mixTest').onclick = async () => {
+    const o = $('#mixOut'); o.hidden = false; o.className = 'note'; o.textContent = 'Проверяю…'; $('#mixTest').disabled = true;
+    const r = await call('mixer_test'); $('#mixTest').disabled = false;
+    if (r) { o.className = 'note' + (r.ok ? '' : ' bad'); o.textContent = r.text; }
+  };
+
   // ---------- микрофоны (до 4) ----------
   const MAX_MICS = 4;
   let micDevs = [], outDevs = [], micState = [];
@@ -945,7 +1023,9 @@
     f.name.value = c.name; f.aliases.value = (c.name_aliases || []).join(', ');
     f.wake_required.checked = !!c.wake_required; f.followup_seconds.value = c.followup_seconds;
     f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold; f.assist.value = c.stt.assist || 'smart';
-    f.tts_enabled.checked = !!c.tts.enabled; f.engine.value = c.tts.engine; f.voice.value = c.tts.voice || 'svetlana_cute'; f.offline.value = c.tts.offline || 'auto'; f.background.checked = (c.ui || {}).background !== false; loadVoiceOffline(); f.rate.value = c.tts.rate;
+    f.tts_enabled.checked = !!c.tts.enabled; f.engine.value = c.tts.engine; f.voice.value = c.tts.voice || 'svetlana_cute'; f.offline.value = c.tts.offline || 'auto'; f.background.checked = (c.ui || {}).background !== false; loadVoiceOffline(); loadSil(); f.rate.value = c.tts.rate;
+    const mx = c.mixer || {}, vp = c.vpn || {};
+    f.mixer_enabled.checked = mx.enabled !== false; f.mixer_pin.value = mx.pin || ''; f.mixer_port.value = mx.port || 0; f.mixer_step.value = mx.step_db || 3; f.vpn_enabled.checked = vp.enabled !== false; loadVpnStatus();
     f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
     f.search_mode.value = (c.search || {}).mode || 'auto'; f.search_depth.value = (c.search || {}).depth || 'normal'; showWeb();
     $('#apiKey').placeholder = c.llm.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : 'sk-ant-…';
@@ -958,6 +1038,7 @@
     $('#outFollow').textContent = f.followup_seconds.value + ' с';
     $('#outVad').textContent = Number(f.vad_threshold.value).toFixed(3);
     $('#outRate').textContent = f.rate.value > 0 ? '+' + f.rate.value : f.rate.value;
+    $('#outStep').textContent = Number(f.mixer_step.value).toFixed(1) + ' дБ';
   }
   $('#setForm').addEventListener('input', sync);
   $('#setForm').addEventListener('change', e => { if (e.target.name === 'theme') applyTheme(e.target.value); });
@@ -971,6 +1052,8 @@
       stt: { model: f.model.value, mics, assist: f.assist.value, vad_threshold: Number(f.vad_threshold.value) },
       tts: { enabled: f.tts_enabled.checked, engine: f.engine.value, voice: f.voice.value, offline: f.offline.value, rate: Number(f.rate.value) },
       search: { mode: f.search_mode.value, depth: f.search_depth.value },
+      mixer: { enabled: f.mixer_enabled.checked, pin: f.mixer_pin.value.trim(), port: Number(f.mixer_port.value) || 0, step_db: Number(f.mixer_step.value) },
+      vpn: { enabled: f.vpn_enabled.checked },
       updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value, background: f.background.checked },
       llm: { enabled: f.llm_enabled.checked, api_key: $('#apiKey').value.trim() },
     };
@@ -990,7 +1073,7 @@
 
   async function init() {
     api = window.pywebview.api;
-    await refresh(); loadBrain(); loadAdmin();
+    await refresh(); loadBrain(); loadAdmin(); loadProfile();
     setTimeout(() => checkUpdate(false), 3000);
     setInterval(async () => { const s = await call('get_status'); if (s) renderStatus(s); loadBrain(); }, 5000);
     let t = null; try { t = localStorage.getItem('karina.tab'); } catch (_) {}
