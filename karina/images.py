@@ -327,10 +327,10 @@ def via_openai(prompt: str, size: tuple[int, int], url: str, key: str, model: st
     raise ImageError("сервер картинок не прислал изображение.")
 
 
-def imgdirector_vram(cfg) -> str:
-    from . import localimg
-    v = ((cfg.get("images", {}) or {}) if cfg is not None else {}).get("vram")
-    return v if v in localimg.VRAM_MODES else localimg.DEFAULT_VRAM
+def local_plan(cfg, model_id: str = "") -> dict:
+    """План рисования встроенной моделью (режим памяти, размер, шаги) по настройкам «Мощность рисования» и железу."""
+    from . import imgpower, localimg
+    return imgpower.plan(cfg, localimg.pick_installed(model_id))
 
 
 def settings(cfg) -> dict:
@@ -369,7 +369,7 @@ def provider_name(cfg, request: str = "") -> str:
 
 
 def generate(cfg, prompt: str, size: tuple[int, int] = (768, 768), seed: int | None = None, stop: threading.Event | None = None,
-             request: str = "") -> tuple[bytes, str, str]:
+             request: str = "", progress=None) -> tuple[bytes, str, str]:
     """→ (байты картинки, расширение, кто нарисовал). Бросает ImageError с понятной причиной."""
     s = settings(cfg)
     seed = random.randint(1, 2**31 - 1) if seed is None else seed
@@ -380,7 +380,7 @@ def generate(cfg, prompt: str, size: tuple[int, int] = (768, 768), seed: int | N
             if p == "local":
                 from . import localimg
                 try:
-                    data, ext = localimg.generate(prompt, size, seed, s["local_model"], "", stop, imgdirector_vram(cfg))
+                    data, ext = localimg.generate(prompt, size, seed, s["local_model"], "", stop, plan=local_plan(cfg, s["local_model"]), progress=progress)
                 except localimg.LocalImgError as e:
                     raise ImageError(str(e))
             elif p == "pollinations":

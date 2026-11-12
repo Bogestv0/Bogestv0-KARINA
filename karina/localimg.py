@@ -9,7 +9,7 @@
 from __future__ import annotations
 import json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request, zipfile
 from pathlib import Path
-from . import prompts
+from . import imgpower, prompts
 from .config import DATA
 
 IS_WIN = sys.platform == "win32"
@@ -67,8 +67,10 @@ CATALOG.extend([
 ])
 DEFAULT_ID = "flux2klein"
 ENGINE_MIN_FLUX2 = "2026-01-20"   # сборки stable-diffusion.cpp старше этой даты FLUX.2 не знают
-VRAM_MODES = ("fast", "balanced", "low")
-DEFAULT_VRAM = "balanced"    # fast — всё на видеокарте (быстрее всего, ~8 ГБ); balanced — веса в ОЗУ, пик ~5–6 ГБ; low — ещё и 8-бит сжатие, пик ~3–4 ГБ, но заметно дольше
+VRAM_MODES = ("fast", "balanced", "low", "cpu")
+DEFAULT_VRAM = "balanced"    # fast — всё на видеокарте (быстрее всего, ~8 ГБ); balanced — веса в ОЗУ, пик ~5–6 ГБ; low — ещё и 8-бит сжатие, пик ~3–4 ГБ, но заметно дольше; cpu — только процессор
+MODE_RANK = {"fast": 0, "balanced": 1, "low": 2}        # чем больше, тем меньше видеопамяти нужно
+OOM = re.compile(r"out of memory|outofdevicememory|outofhostmemory|failed to allocate|alloc\w* fail|cannot allocate|not enough memory|vk::|vkallocate", re.I)
 SAFE_NEG = prompts.SAFE_NEG   # обычные просьбы не должны случайно давать лишнего (prompts.py)
 
 
@@ -337,14 +339,96 @@ def sdxl_size(size: tuple[int, int]) -> tuple[int, int]:
     return (832, 1216) if h > w else (1216, 704)
 
 
-def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", negative: str = "", stop: threading.Event | None = None, vram: str = DEFAULT_VRAM) -> tuple[bytes, str]:
+# ---------- что получилось в прошлый раз (чтобы не повторять провальные попытки) ----------
+LEARN_DAYS = 7
+
+
+def _tuning_path() -> Path:
+    return MODELS_DIR / "tuning.json"
+
+
+def _recall(mid: str) -> str:
+    """Режим, который в прошлый раз сработал после неудач на этой модели (на ПК без запаса видеопамяти). Пусто — нет данных или они устарели."""
+    try:
+        rec = json.loads(_tuning_path().read_text("utf-8")).get(mid) or {}
+        return rec["mode"] if time.time() - float(rec.get("t", 0)) < LEARN_DAYS * 86400 and rec.get("mode") in (*MODE_RANK, "cpu") else ""
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+
+
+def _remember(mid: str, mode: str):
+    try:
+        d = json.loads(_tuning_path().read_text("utf-8")) if _tuning_path().exists() else {}
+    except (OSError, ValueError):
+        d = {}
+    d[mid] = {"mode": mode, "t": time.time()}
+    try:
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        _tuning_path().write_text(json.dumps(d), "utf-8")
+    except OSError:
+        pass
+
+
+def forget_tuning():
+    """Сбросить запомненное (после смены настроек мощности или видеокарты)."""
+    try:
+        _tuning_path().unlink()
+    except OSError:
+        pass
+
+
+LAST_RUN: dict = {}          # как нарисована последняя картинка: режим, размер, шаги, секунды (для сообщения в чате)
+
+
+def _gpu_extra(mode: str) -> list[str]:
+    """Флаги экономии видеопамяти. balanced: веса лежат в ОЗУ и подгружаются на видеокарту по частям (--offload-to-cpu), текстовый энкодер на процессоре
+    (--clip-on-cpu), экономное внимание (--diffusion-fa): пик ~5–6 ГБ. low: ещё и сжатие весов до 8 бит при загрузке (--type q8_0): пик ~3–4 ГБ."""
+    if mode == "fast":
+        return []
+    return ["--offload-to-cpu", "--clip-on-cpu", "--diffusion-fa"] + (["--type", "q8_0"] if mode == "low" else [])
+
+
+def _attempts(m: dict, mode: str) -> list[tuple[str, str]]:
+    """Порядок попыток (движок, режим). Выбранный режим → экономнее → «обычный» (если флаги экономии не поддерживаются) → процессор."""
+    if mode == "cpu":
+        return [("cpu", "cpu")]
+    modes = [mode] if m.get("kind") == "flux2" else [mode] + [x for x in MODE_RANK if MODE_RANK[x] > MODE_RANK[mode]] + (["fast"] if mode != "fast" else [])
+    return [("vulkan", x) for x in dict.fromkeys(modes)] + [("cpu", "cpu")]
+
+
+def _command(exe: Path, m: dict, paths: dict, prompt: str, neg: str, w: int, h: int, steps: int, seed: int, out: Path, flavor: str, mode: str, threads: int) -> list[str]:
+    if m.get("kind") == "flux2":      # FLUX.2 Klein: три файла, дистиллированная модель (шаги и cfg из каталога), негативного промпта нет
+        cmd = [str(exe), "--diffusion-model", str(paths["model"]), "--vae", str(paths["vae"]), "--llm", str(paths["llm"]),
+               "-p", prompt, "-W", str(w), "-H", str(h), "--steps", str(steps), "--cfg-scale", str(m["cfg"]),
+               "-s", str(seed), "--diffusion-fa", "--offload-to-cpu", "--vae-tiling"]
+    else:
+        cmd = [str(exe), "-m", str(paths["model"]), "-p", prompt, "-n", neg, "-W", str(w), "-H", str(h), "--steps", str(steps),
+               "--cfg-scale", str(m["cfg"]), "-s", str(seed), "--sampling-method", "euler_a", "--vae-tiling"]
+        if m.get("clip_skip"):
+            cmd[1:1] = ["--clip-skip", str(m["clip_skip"])]
+        if flavor == "vulkan":
+            cmd += _gpu_extra(mode)
+    if threads > 0 and flavor == "cpu":
+        cmd += ["-t", str(threads)]
+    return cmd + ["-o", str(out)]
+
+
+def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", negative: str = "", stop: threading.Event | None = None,
+             vram: str = DEFAULT_VRAM, plan: dict | None = None, progress=None) -> tuple[bytes, str]:
+    """Рисует картинку. plan — результат imgpower.plan (режим памяти, размер, шаги, потоки); без него работает только режим vram.
+    progress(шаг, всего, секунд на шаг) вызывается по мере рисования. Не вышло в одном режиме — пробует экономнее, в конце процессор."""
     m = pick_installed(model_id)
     if not m or not engine_ready():
         raise LocalImgError("встроенный генератор не установлен (Настройки → Модели → Картинки → «Скачать»).")
     if not engine_supports(m):
         raise LocalImgError("движок stable-diffusion.cpp устарел и не знает FLUX.2: удалите модель в «Настройки → Модели → Картинки» и скачайте её заново: движок обновится.")
-    w, h = sdxl_size(size)
-    flux = m.get("kind") == "flux2"
+    plan = plan or {"mode": vram if vram in VRAM_MODES else DEFAULT_VRAM}
+    mode = plan.get("mode") if plan.get("mode") in VRAM_MODES else DEFAULT_VRAM
+    if plan.get("auto") and mode != "cpu":                      # в «Авто» помним, что уже не помещалось
+        rec = _recall(m["id"])
+        if rec == "cpu" or (rec in MODE_RANK and MODE_RANK[rec] > MODE_RANK[mode]):
+            mode = rec
+    native = sdxl_size(size)
     base = prompt.rstrip(" ,.")
     if not m.get("quality"):
         full = base
@@ -356,32 +440,29 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
     paths = model_paths(m["id"]) or {}
     out = Path(tempfile.mkdtemp(prefix="karina-sd-")) / "out.png"
     errors = []
+    queue = _attempts(m, mode)
+    first = queue[0]
+    t0 = time.time()
     try:
-        for flavor in ("vulkan", "cpu"):
+        while queue:
+            flavor, md = queue.pop(0)
             exe = find_exe(flavor)
             if not exe:
                 continue
-            if flux:      # FLUX.2 Klein: три файла, дистиллированная модель (4 шага, cfg 1.0), негативного промпта нет
-                cmds = [[str(exe), "--diffusion-model", str(paths["model"]), "--vae", str(paths["vae"]), "--llm", str(paths["llm"]),
-                         "-p", full, "-W", str(w), "-H", str(h), "--steps", str(m["steps"]), "--cfg-scale", str(m["cfg"]),
-                         "-s", str(seed), "--diffusion-fa", "--offload-to-cpu", "--vae-tiling", "-o", str(out)]]
-            else:
-                cmd = [str(exe), "-m", str(paths["model"]), "-p", full, "-n", neg, "-W", str(w), "-H", str(h), "--steps", str(m["steps"]),
-                       "--cfg-scale", str(m["cfg"]), "-s", str(seed), "--sampling-method", "euler_a", "--vae-tiling", "-o", str(out)]
-                if m.get("clip_skip"):
-                    cmd[1:1] = ["--clip-skip", str(m["clip_skip"])]
-                cmds = [cmd]
-                if vram in ("balanced", "low") and flavor == "vulkan":
-                    # balanced: веса лежат в ОЗУ и подгружаются на видеокарту по частям (--offload-to-cpu), текстовый энкодер на процессоре (--clip-on-cpu),
-                    # внимание экономное (--diffusion-fa): пик видеопамяти ~5–6 ГБ. low: ещё и сжатие весов до 8 бит при каждой загрузке (--type q8_0):
-                    # пик ~3–4 ГБ, но каждая картинка заметно дольше. Не вышло — обычный режим.
-                    extra = ["--offload-to-cpu", "--clip-on-cpu", "--diffusion-fa"] + (["--type", "q8_0"] if vram == "low" else [])
-                    cmds.insert(0, cmd[:-2] + extra + cmd[-2:])
-            for cmd in cmds:
-                res = _run(cmd, out, stop)
-                if res is not None:
-                    return res, "png"
-                errors.append(f"{flavor}: {_LAST_TAIL[0]}")
+            w, h, steps = imgpower.shape(m, native, plan, cpu=flavor == "cpu")
+            cmd = _command(exe, m, paths, full, neg, w, h, steps, seed, out, flavor, md, int(plan.get("threads") or 0))
+            res = _run(cmd, out, stop, progress)
+            if res is not None:
+                LAST_RUN.clear()
+                LAST_RUN.update(flavor=flavor, mode=md, w=w, h=h, steps=steps, sec=round(time.time() - t0))
+                if plan.get("auto") and (flavor, md) != first:
+                    _remember(m["id"], "cpu" if flavor == "cpu" else md)
+                return res, "png"
+            tail = _LAST_TAIL[0]
+            errors.append(f"{'видеокарта' if flavor == 'vulkan' else 'процессор'}: {tail}")
+            if flavor == "vulkan" and OOM.search(tail) and md in MODE_RANK:
+                # не хватило памяти: «обычный» режим (ему нужно больше) пробовать бессмысленно — только экономнее
+                queue = [q for q in queue if not (q[0] == "vulkan" and MODE_RANK.get(q[1], 9) < MODE_RANK[md])]
         raise LocalImgError("встроенный генератор не смог нарисовать (" + "; ".join(errors or ["нет движка"]) + ").")
     finally:
         shutil.rmtree(out.parent, ignore_errors=True)
@@ -390,7 +471,20 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
 _LAST_TAIL = [""]
 
 
-def _run(cmd: list[str], out: Path, stop) -> bytes | None:
+_PROG = re.compile(r"(\d+)\s*/\s*(\d+)\s*-\s*([\d.]+)\s*(s/it|it/s)")
+
+
+def parse_progress(line: str) -> tuple[int, int, float] | None:
+    """Строка прогресса sd.cpp («|=====>   | 7/20 - 3.40s/it») → (шаг, всего, секунд на шаг)."""
+    m = _PROG.search(line)
+    if not m:
+        return None
+    v = float(m.group(3))
+    per = v if m.group(4) == "s/it" else (1.0 / v if v else 0.0)
+    return int(m.group(1)), int(m.group(2)), per
+
+
+def _run(cmd: list[str], out: Path, stop, progress=None) -> bytes | None:
     """Запускает движок. Готовая картинка — байты; ошибка — None (последняя строка вывода в _LAST_TAIL)."""
     flags = 0x08000000 if IS_WIN else 0                       # CREATE_NO_WINDOW
     if out.exists():
@@ -400,20 +494,51 @@ def _run(cmd: list[str], out: Path, stop) -> bytes | None:
     except OSError as e:
         _LAST_TAIL[0] = str(e)
         return None
-    box: dict = {}
-    t = threading.Thread(target=lambda: box.update(out=p.communicate()[0]), daemon=True)
+    lines: list[str] = []
+
+    def pump():
+        buf = b""
+        try:
+            while True:
+                chunk = p.stdout.read1(4096) if hasattr(p.stdout, "read1") else p.stdout.read(1)
+                if not chunk:
+                    break
+                buf += chunk
+                parts = re.split(rb"[\r\n]", buf)
+                buf = parts.pop()
+                for raw in parts:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line:
+                        continue
+                    pr = parse_progress(line)
+                    if pr:
+                        if progress:
+                            try:
+                                progress(*pr)
+                            except Exception:
+                                pass
+                    else:
+                        lines.append(line)
+                        del lines[:-40]
+        except (OSError, ValueError):
+            pass
+    t = threading.Thread(target=pump, daemon=True)
     t.start()
     t0 = time.time()
-    while t.is_alive():
-        t.join(0.3)
+    while p.poll() is None:
+        time.sleep(0.3)
         if stop is not None and stop.is_set():
             p.kill()
             raise LocalImgError("остановлено")
         if time.time() - t0 > 1800:
             p.kill()
             raise LocalImgError("генератор рисует слишком долго (больше 30 минут).")
+    t.join(2)
+    try:
+        p.stdout.close()
+    except OSError:
+        pass
     if p.returncode == 0 and out.exists() and out.stat().st_size > 1000:
         return out.read_bytes()
-    tail = (box.get("out") or b"").decode("utf-8", "replace").strip().splitlines()[-1:] or [f"код {p.returncode}"]
-    _LAST_TAIL[0] = tail[0][:160]                            # видеокарта не потянула — следующая попытка
+    _LAST_TAIL[0] = (lines[-1] if lines else f"код {p.returncode}")[:160]      # видеокарта не потянула — следующая попытка
     return None

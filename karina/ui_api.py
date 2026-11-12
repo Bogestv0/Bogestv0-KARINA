@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, queue, subprocess, sys, threading, time
 from .diag import trace
-from . import actions, claude as claudemod, files as filesmod, images as imagesmod, imgdirector, localimg, net, models, updater, __version__
+from . import actions, claude as claudemod, files as filesmod, images as imagesmod, imgdirector, imgpower, localimg, net, models, updater, __version__
 from .uploads import Uploads
 from . import audio as audiomod
 from .audio import Listener
@@ -829,12 +829,30 @@ class Api:
         s = imagesmod.settings(self.cfg)
         dl = self._downloads.get("img:dl")
         inst = set(localimg.installed_ids())
-        local = [{"id": m["id"], "title": m["title"], "size_gb": m["size_gb"], "desc": m["desc"], "installed": m["id"] in inst,
-                  "selected": m["id"] == (s["local_model"] or localimg.DEFAULT_ID)} for m in localimg.CATALOG]
+        c = self.cfg.get("images", {}) or {}
+        pl = imgpower.plan(self.cfg)
+        hw = pl["hw"]
+        local = []
+        for m in localimg.CATALOG:
+            f = imgpower.fit(m, hw)
+            local.append({"id": m["id"], "title": m["title"], "size_gb": m["size_gb"], "desc": m["desc"], "installed": m["id"] in inst,
+                          "selected": m["id"] == (s["local_model"] or localimg.DEFAULT_ID), "fit": f["level"], "fit_label": f["label"],
+                          "eta": f["eta"], "recommended": f["recommended"], "plan": imgpower.describe(imgpower.plan(self.cfg, m), m)})
         return {"provider": s["provider"], "url": s["url"], "model": s["model"], "has_key": bool(s["key"]), "active": imagesmod.provider_name(self.cfg, "аниме"),
                 "local": local, "local_ready": localimg.ready(), "local_model": s["local_model"] or localimg.DEFAULT_ID,
-                "director": imgdirector.settings(self.cfg)["director"], "variants": imgdirector.settings(self.cfg)["variants"], "ask_count": imgdirector.settings(self.cfg)["ask_count"], "vram": imagesmod.imgdirector_vram(self.cfg),
+                "director": imgdirector.settings(self.cfg)["director"], "variants": imgdirector.settings(self.cfg)["variants"], "ask_count": imgdirector.settings(self.cfg)["ask_count"],
+                "power": {"power": pl["power"], "quality": c.get("quality") if c.get("quality") in imgpower.QUALITIES else "auto", "vram_gb": float(c.get("vram_gb") or 0),
+                          "threads": int(c.get("threads") or 0), "unload_llm": c.get("unload_llm") if c.get("unload_llm") in imgpower.UNLOAD_MODES else "auto",
+                          "now": pl["label"], "auto": pl["auto"], "tier": pl["tier"], "unload_now": pl["unload_llm"]},
+                "hw": {"gpu": hw.get("gpu", ""), "vram_gb": hw.get("vram_gb", 0), "detected": hw.get("detected", False), "integrated": hw.get("integrated", False),
+                       "source": hw.get("source", "auto"), "ram_gb": hw.get("ram_gb", 0), "cpu": hw.get("cpu", 0), "gpus": hw.get("gpus", [])},
                 "dl": dl and {"done": dl["done"], "total": dl["total"], "stage": dl["stage"], "id": dl["id"]}}
+
+    def images_hw_refresh(self):
+        """Заново определить видеокарту (например, после установки драйвера или другой карты) и забыть запомненные неудачи."""
+        imgpower.hardware(self.cfg, refresh=True)
+        localimg.forget_tuning()
+        return self.images_state()
 
     def localimg_download(self, mid: str):
         if "img:dl" in self._downloads or not localimg.by_id(mid):
@@ -874,16 +892,29 @@ class Api:
             self.cfg.update({"images": {"local_model": mid}})
         return self.images_state()
 
-    def images_set(self, provider: str = "auto", url: str = "", model: str = "", key: str = "", director: bool = True, variants: int = 4, ask_count: bool = True, vram: str = "balanced"):
+    def images_set(self, provider: str = "auto", url: str = "", model: str = "", key: str = "", director: bool = True, variants: int = 4, ask_count: bool = True,
+                   power: str = "auto", quality: str = "auto", vram_gb: float = 0, threads: int = 0, unload_llm: str = "auto"):
         try:
             n = max(1, min(imgdirector.MAX_VARIANTS, int(variants)))
         except (TypeError, ValueError):
             n = imgdirector.DEFAULT_VARIANTS
+        try:
+            gb = max(0.0, min(256.0, float(vram_gb or 0)))
+        except (TypeError, ValueError):
+            gb = 0.0
+        try:
+            th = max(0, min(256, int(threads or 0)))
+        except (TypeError, ValueError):
+            th = 0
         patch = {"provider": provider if provider in imagesmod.PROVIDERS else "auto", "url": (url or "").strip()[:300], "model": (model or "").strip()[:120],
                  "director": bool(director), "variants": n, "ask_count": bool(ask_count),
-                 "vram": vram if vram in localimg.VRAM_MODES else localimg.DEFAULT_VRAM}
+                 "power": power if power in imgpower.POWER_MODES else "auto", "quality": quality if quality in imgpower.QUALITIES else "auto",
+                 "vram_gb": gb, "threads": th, "unload_llm": unload_llm if unload_llm in imgpower.UNLOAD_MODES else "auto"}
         if key:
             patch["key"] = key.strip()[:300]          # пустое поле = «оставить ключ как был»
+        old = self.cfg.get("images", {}) or {}
+        if any(old.get(k) != patch[k] for k in ("power", "quality", "vram_gb")):
+            localimg.forget_tuning()                  # настройки мощности поменялись — запомненные неудачи уже не актуальны
         self.cfg.update({"images": patch})
         return self.images_state()
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import datetime, json, random, re, threading, time, uuid
 from pathlib import Path
-from . import coder as codermod, files as filesmod, images as imagesmod, imgdirector, localimg, net, prompts, research, websearch
+from . import coder as codermod, files as filesmod, images as imagesmod, imgdirector, imgpower, localimg, net, prompts, research, websearch
 from .brain import Brain, BrainUnavailable
 from .config import DATA
 from .engine import EngineError
@@ -425,6 +425,8 @@ class ChatService:
         llm_first = brief.get("best") in pool
         if llm_first:
             order = [brief["best"]] + [m for m in order if m != brief["best"]]
+        pl = imgpower.plan(self.cfg)
+        order, fast_note = imgpower.prefer_fast(order, pl, localimg.by_id)           # слабая видеокарта: сначала быстрая модель
         rng = random.Random()
         reason = ""
         if intent.kind == "edit":
@@ -439,6 +441,11 @@ class ChatService:
             variants = imgdirector.plan_new(intent, order, rng)
             if pool_note:
                 notes.append("ⓘ " + pool_note)
+            if fast_note:
+                notes.append("ⓘ " + fast_note)
+            elif pl["auto"] and pl["mode"] in ("low", "cpu") and not any(imgpower.is_fast(localimg.by_id(m)) for m in ids):
+                notes.append("ⓘ Видеопамяти на этом ПК мало, и модели SDXL (Pony, NoobAI) рисуют долго. FLUX.2 Klein рисует в несколько раз быстрее — "
+                             "«Настройки → Модели → Картинки → FLUX.2 Klein → Скачать».")
         miss = imgdirector.missing_models(text, ids) if intent.kind != "more" else []
         if miss:
             notes.append("ⓘ Модель " + ", ".join(imgdirector.title(m) for m in miss) + " не скачана («Настройки → Модели → Картинки») — рисуют скачанные.")
@@ -455,14 +462,17 @@ class ChatService:
         made: list[dict] = []
         done: list[dict] = []
         errors: list[str] = []
+        self._free_vram(step, pl)
+        timing: list[str] = []
         for v in variants:
             if self._stop.is_set():
                 break
             label = imgdirector.title(v.model)
-            step(f"Рисую вариант {v.n} из {total}: {label}… (обычно до минуты)")
+            vpl = imagesmod.local_plan(self.cfg, v.model)
+            step(f"Рисую вариант {v.n} из {total}: {label}… ({imgpower.eta_text(vpl, localimg.by_id(v.model))})")
             self.emit({"type": "chat_image", "chat": cid, "id": rid, "n": v.n, "status": "start", "label": label})
             try:
-                data, ext = localimg.generate(v.prompt, size, v.seed, v.model, v.negative, self._stop, imagesmod.imgdirector_vram(self.cfg))
+                data, ext = localimg.generate(v.prompt, size, v.seed, v.model, v.negative, self._stop, plan=vpl, progress=self._progress(cid, rid, v.n, total, label))
                 f = self.files.create_bytes(f"{stem} - {v.n} {v.model}.{ext}", data)
             except Exception as e:           # не вышло у одной модели — остальные всё равно рисуем
                 if self._stop.is_set() or str(e) == "остановлено":
@@ -474,6 +484,7 @@ class ChatService:
             f.update(variant=v.n, model=v.model, label=label)
             made.append(f)
             done.append({"n": v.n, "model": v.model, "title": label, "seed": v.seed, "prompt": v.prompt, "file": f["name"]})
+            timing.append(self._timing(v.n, vpl))
             self.emit({"type": "chat_image", "chat": cid, "id": rid, "n": v.n, "status": "done", "label": label, "file": f})
 
         # 4. ни одна встроенная модель не нарисовала: запасной путь (свой сервер / Pollinations), как раньше
@@ -509,6 +520,8 @@ class ChatService:
         reply["brain"] = ((reply.get("brain") or "") + " · " if reply.get("brain") else "") + "рисуют: " + ", ".join(dict.fromkeys(d["title"] for d in done))
         out = ["".join(n + "\n\n" for n in notes) + lead,
                f"**Описание тегами:** {brief['tags'][:420]}\n**Описание текстом:** {brief['scene'][:420]}"]
+        if timing:
+            out.append("⏱ " + "; ".join(timing))
         if errors:
             out.append("⚠ Не получились: " + "; ".join(errors))
         if self._stop.is_set():
@@ -516,6 +529,41 @@ class ChatService:
         out.append("Картинки сохранены в папке «Документы\\Карина». Можно попросить: «поверни её вполоборота», «на втором варианте сделай волосы длиннее», "
                    "«пусть она машет рукой» (выберу подходящую модель), «во всех моделях — ночью» или «ещё варианты».")
         return "\n\n".join(out), "", made
+
+    def _free_vram(self, step, plan: dict) -> None:
+        """Текстовая модель (например, Qwen 9B) лежит в видеопамяти и отнимает её у художника: на 3–8 ГБ карте он тогда не помещается и падает
+        в медленный режим. Выгружаем её на время рисования; следующий ответ в чате загрузит её сама (несколько секунд)."""
+        eng = self.engine
+        if not plan.get("unload_llm") or getattr(eng, "flavor", "") != "vulkan" or getattr(eng, "state", "") not in ("ready", "starting"):
+            return
+        step("Освобождаю видеопамять: текстовая модель на время рисования выгружается…")
+        try:
+            eng.stop()
+        except Exception:
+            pass
+
+    def _progress(self, cid: str, rid: str, n: int, total: int, label: str):
+        """Обратный вызов для localimg: шаг N из M и сколько осталось (плитка варианта + строка состояния). Не чаще раза в секунду."""
+        last = [0.0]
+
+        def prog(i: int, steps: int, per: float):
+            now = time.time()
+            if i < steps and now - last[0] < 1.0:
+                return
+            last[0] = now
+            eta = max(0, int((steps - i) * per)) if per else 0
+            self.emit({"type": "chat_image", "chat": cid, "id": rid, "n": n, "status": "progress", "label": label, "step": i, "steps": steps, "eta": eta})
+            self.emit({"type": "chat_step", "chat": cid, "text": f"Вариант {n} из {total}: {label} — шаг {i} из {steps}" + (f", осталось около {imgpower.fmt_sec(eta)}" if eta else "")})
+        return prog
+
+    @staticmethod
+    def _timing(n: int, plan: dict) -> str:
+        r = localimg.LAST_RUN
+        if not r:
+            return f"вариант {n}"
+        how = "на процессоре" if r.get("flavor") == "cpu" else f"{imgpower.MODE_LABEL.get(plan['mode'], plan['mode'])}"
+        slip = " — видеопамяти не хватило, рисовала процессором" if r.get("flavor") == "cpu" and plan["mode"] != "cpu" else ""
+        return f"вариант {n} — {imgpower.fmt_sec(r.get('sec', 0))} ({how}, {r.get('w')}×{r.get('h')}, {r.get('steps')} шагов){slip}"
 
     def _image_single_turn(self, chat: dict, reply: dict, text: str, step) -> tuple[str, str, list[dict]]:
         """Прежний путь: модель пишет описание, один генератор (встроенный, свой сервер или Pollinations) рисует одну картинку."""
@@ -534,9 +582,15 @@ class ChatService:
         prompt = imagesmod.finish_prompt(imagesmod.style_prompt(prompt, text), text)
         if self._stop.is_set():
             return "*(остановлено)*", "", []
-        step("Рисую картинку… (обычно до минуты)")
+        spl = imagesmod.local_plan(self.cfg, imagesmod.settings(self.cfg)["local_model"])
+        if localimg.ready() and imagesmod.chain(self.cfg, text)[0] == "local":
+            self._free_vram(step, spl)
+            step(f"Рисую картинку… ({imgpower.eta_text(spl, localimg.pick_installed(imagesmod.settings(self.cfg)['local_model']))})")
+        else:
+            step("Рисую картинку…")
         try:
-            data, ext, who = imagesmod.generate(self.cfg, prompt, imagesmod.pick_size(text), stop=self._stop, request=text)
+            data, ext, who = imagesmod.generate(self.cfg, prompt, imagesmod.pick_size(text), stop=self._stop, request=text,
+                                                progress=self._progress(chat["id"], reply["id"], 1, 1, "картинка"))
         except imagesmod.ImageError as e:
             if self._stop.is_set():
                 return "*(остановлено)*", "", []

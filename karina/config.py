@@ -42,7 +42,10 @@ DEFAULTS: dict = {
     "coder": {"run": True, "max_steps": 16},
     # картинки по запросу: provider — auto (свой сервер, если указан адрес, иначе Pollinations) | pollinations | sd (AUTOMATIC1111 / Forge) | openai (свой сервер с OpenAI API);
     # url — адрес своего сервера (например http://127.0.0.1:7860), key — ключ (если нужен), model — имя модели (для openai)
-    "images": {"provider": "auto", "url": "", "key": "", "model": "", "local_model": "", "director": True, "variants": 4, "ask_count": True, "vram": "balanced"},
+    # мощность рисования (встроенные модели): power — auto (по видеокарте) | max | balanced | low | cpu; quality — auto | fast | normal | high;
+    # vram_gb — объём видеопамяти вручную (0 = определить самой); threads — потоки процессора (0 = авто); unload_llm — выгружать текстовую модель из видеопамяти на время рисования: auto | yes | no
+    "images": {"provider": "auto", "url": "", "key": "", "model": "", "local_model": "", "director": True, "variants": 4, "ask_count": True,
+               "power": "auto", "quality": "auto", "vram_gb": 0, "threads": 0, "unload_llm": "auto"},
     # бесплатные облачные модели (свои ключи): strategy — failover (по порядку, при исчерпании лимита — следующий) | spread (по кругу);
     # order — порядок провайдеров; providers — {id: {"enabled","key","model","url","name"}} (см. cloud.PRESETS)
     "cloud": {"strategy": "failover", "order": [], "providers": {}},
