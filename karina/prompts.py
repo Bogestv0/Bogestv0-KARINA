@@ -238,8 +238,21 @@ IMAGE_WRITER_SYSTEM = (
 IMAGE_WRITER_EDIT = ("Previous prompt: {previous}\nThe user now asks (change the previous prompt accordingly, keep what they did not ask to change): {request}")
 
 # --- 7.2 Теги стиля (images.py) ----------------------------------------------------------------------------------
-ANIME_TAGS = "anime illustration, 2D, cel shading, flat colors, lineart, detailed anime eyes"
-ANIME_TAIL = "anime screencap, official art, clean sharp lineart, vibrant colors, soft cel shadows, best quality, very aesthetic"
+# ФИРМЕННАЯ РИСОВКА Карины для любого аниме: кадр из современного TV-аниме (чёткий тёмный контур, плоская заливка с резкими краями теней,
+# яркие полосы бликов на волосах, бирюзовые глаза с бликами, румянец, фоны с настоящей перспективой). Теги ниже добавляются ко ВСЕМ аниме-картинкам
+# и ко всем моделям — меняйте здесь, если хотите другой стиль.
+STYLE_CORE = ["anime screencap", "anime coloring", "2D", "flat color", "cel shading", "clean lineart", "shiny hair", "detailed anime eyes"]
+STYLE_TAIL_TAGS = ["detailed background", "soft cel shadows", "vibrant colors", "best quality", "very aesthetic"]
+ANIME_TAGS = ", ".join(STYLE_CORE)
+ANIME_TAIL = ", ".join(STYLE_TAIL_TAGS)
+
+# Теги поз и ракурсов: в описании ставятся сразу после «1girl» и усиливаются (tag:1.25), чтобы модель не забывала позу.
+POSE_TAGS = ["lying", "on back", "on side", "on stomach", "sitting", "kneeling", "all fours", "seiza", "squatting", "standing", "leaning forward", "from behind",
+             "from above", "from below", "from side", "profile", "three-quarter view", "looking back", "arms up", "arm up", "arms behind head", "arms behind back",
+             "hand on own cheek", "head rest", "crossed legs", "legs up", "knees up", "stretching", "jumping", "running", "walking", "waving", "wink", "one eye closed",
+             "hugging", "carrying", "princess carry", "straddling", "reclining", "curled up", "fetal position", "on couch", "on bed", "on floor"]
+POSE_WEIGHT = 1.25
+STYLE_NEGATIVE = "3d, realistic, photo, photorealistic, semi-realistic, render, doll, plastic skin, western cartoon, sketch, painterly, oil painting, soft focus"
 
 # Стили: (признак в просьбе, теги, убрать ли «плоский» аниме-стиль)
 STYLES = [
@@ -265,7 +278,7 @@ _NEGATIVE_ANIME_BASE = "3d, realistic, photo, photorealistic, semi-realistic, re
 NEGATIVE = join_tags(_NEGATIVE_BASE, NEGATIVE_ALL)
 NEGATIVE_ANIME = join_tags(NEGATIVE, _NEGATIVE_ANIME_BASE, NEGATIVE_ANIME_EXTRA)
 # Для встроенных SDXL-моделей при аниме (поверх их собственного негатива, imgdirector.py):
-ANIME_EXTRA_NEG = join_tags("3d, realistic, photo, photorealistic, semi-realistic, render, doll, plastic skin", NEGATIVE_ANIME_EXTRA)
+ANIME_EXTRA_NEG = join_tags("3d, realistic, photo, photorealistic, semi-realistic, render, doll, plastic skin, western cartoon, sketch, painterly, oil painting", NEGATIVE_ANIME_EXTRA)
 # Добавляется ко всем картинкам встроенного генератора: обычные просьбы не должны случайно давать лишнего.
 SAFE_NEG = "nsfw"
 
@@ -278,6 +291,7 @@ ARTIST_HINTS = {
     "flux2klein": "understands plain English sentences; best for photos and realism, backgrounds, lighting, objects, text on images and precise instructions; it also draws anime.",
     "animagine4": "anime model with danbooru tags: clean look of TV anime screenshots, good faces and hands.",
     "illustrious1": "anime model with danbooru tags: many art styles and characters.",
+    "messillustrious": "Karina's signature anime style (modern TV-anime screencap: clean dark lineart, flat cel shading, glossy hair highlights, detailed backgrounds). Danbooru tags.",
 }
 ARTIST_HINT_GENERIC = "general image model."
 
@@ -292,15 +306,19 @@ DIRECTOR_BEST_FLUX = "photos, realism, background, lighting, objects, text → f
 DIRECTOR_SYSTEM = (
     "You are the art director of an image studio. You never draw: you write prompts for the studio's image models, and the best-suited model then paints.\n"
     "Available models:\n{models}\n"
-    "Reply with EXACTLY these four lines and nothing else (no markdown, no quotes, no explanations):\n"
-    "TAGS: comma-separated English danbooru-style tags: 1girl/1boy, hair colour and style, eye colour, expression, clothing, pose, camera angle, setting, lighting, art style. At most 60 tags.\n"
+    "Reply with EXACTLY these five lines and nothing else (no markdown, no quotes, no explanations):\n"
+    "TAGS: comma-separated English danbooru-style tags: 1girl/1boy, hair colour and style, eye colour, expression, clothing, POSE, camera angle, setting/background, lighting. At most 60 tags.\n"
     "SCENE: the same picture in 1-3 plain English sentences (subject, appearance, clothing, pose, setting, lighting, style).\n"
+    "RU: a short Russian summary for the user in this exact form: Персонаж: ...; Поза: ...; Одежда: ...; Фон: ...; Кадр: ...  (each part 2-8 words; write «не указано» if the user did not say).\n"
     "BEST: one of {ids}. {best_rule}\n"
     "WHY: one short sentence in Russian saying why that model fits.\n"
-    "Rules: the user may write in Russian. Keep EVERY concrete detail the user named (colours, clothing, weapon, setting, mood) and add nothing that contradicts it. "
-    "If the user asks for anime, begin TAGS with 'anime illustration, 2D, cel shading, flat colors, lineart' and never use the words realistic, photo, 3D, render. "
-    "Hands cause artifacts: unless the user asks for a pose with hands or an object in hands, frame the character as 'portrait, upper body' and keep hands out of frame; "
-    "do not invent held objects. "
+    "Rules: the user may write in Russian. Keep EVERY concrete detail the user named (colours, clothing, POSE, setting, mood) and add nothing that contradicts it — the pose the user asked for is the most important thing. "
+    "Do not write style or quality tags (the studio adds the house style itself). "
+    "Pose cheat-sheet: 'лежит' → 'lying'; 'на спине' → 'on back'; 'на боку' → 'on side'; 'на животе' → 'on stomach'; 'сидит' → 'sitting'; 'на коленях' → 'kneeling'; "
+    "'на четвереньках' → 'all fours'; 'стоит' → 'standing'; 'присела' → 'squatting'; 'обнимает колени' → 'knees up, hugging own legs'; 'подняла руки' → 'arms up'; 'руки за головой' → 'arms behind head'; "
+    "'подмигивает' → 'one eye closed, wink'; 'на диване' → 'on couch'; 'на кровати' → 'on bed'; 'вид сзади' → 'from behind'; 'вид сверху' → 'from above'; 'вид снизу' → 'from below'. "
+    "Always name the background (for example 'indoors, living room, couch, window, sunlight') instead of leaving it empty. "
+    "Hands cause artifacts: unless the user asks for a pose with hands or an object in hands, keep hands simple; do not invent held objects. "
     "Turning the character: 'turn around' → 'from behind, looking back'; 'turn to the side' → 'profile, from side'; 'half-turn' → 'three-quarter view'; "
     "'look away' → 'facing away'; camera angle → 'from above' / 'from below'. At most 70 words in SCENE.")
 DIRECTOR_USER_NEW = "Request: {request}"
@@ -317,6 +335,7 @@ MODEL_QUALITY = {
     "flux2klein": "",
     "ponyxl": "score_9, score_8_up, score_7_up, score_6_up, source_anime",
     "noobai": "masterpiece, best quality, newest, absurdres, highres, very aesthetic",
+    "messillustrious": "masterpiece, best quality, amazing quality, very aesthetic, absurdres, newest",
 }
 _MODEL_NEGATIVE = {
     "animagine4": "lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, fewer digits, cropped, worst quality, low quality, low score, bad score, average score, signature, watermark, username, blurry",
@@ -324,6 +343,7 @@ _MODEL_NEGATIVE = {
     "flux2klein": "",
     "ponyxl": "score_6, score_5, score_4, source_pony, source_furry, source_cartoon, bad anatomy, bad hands, extra fingers, missing fingers, text, watermark, signature, blurry, lowres",
     "noobai": "worst quality, old, early, low quality, lowres, bad anatomy, bad hands, extra digits, fewer digits, jpeg artifacts, signature, watermark, username, blurry, artist name, text",
+    "messillustrious": "lowres, worst quality, low quality, bad anatomy, bad hands, extra digits, fewer digits, jpeg artifacts, signature, watermark, username, blurry, artist name, text",
 }
 # Итоговый негатив модели: свой + ваш NEGATIVE_BY_MODEL. Пустой остаётся пустым (FLUX).
 MODEL_NEGATIVE = {k: join_tags(v, NEGATIVE_BY_MODEL.get(k, [])) if v else "" for k, v in _MODEL_NEGATIVE.items()}

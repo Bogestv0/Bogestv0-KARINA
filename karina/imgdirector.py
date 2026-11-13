@@ -23,6 +23,8 @@ MAX_VARIANTS = 6
 # Профили художников: на каком «языке» им писать и в чём они сильны.
 # dialect: "tags" — теги danbooru; "text" — обычные предложения.  hint — подсказка текстовой модели.
 ARTISTS: dict[str, dict] = {
+    "messillustrious": {"dialect": "tags", "anime": True, "real": False, "pose": 0.4, "why": "рисует в фирменном стиле Карины — как кадры современного аниме",
+                        "hint": prompts.ARTIST_HINTS["messillustrious"]},
     "noobai": {"dialect": "tags", "anime": True, "real": False, "pose": 0.5, "why": "лучше всего рисует персонажей, лица, причёски и одежду в аниме-стиле",
                "hint": prompts.ARTIST_HINTS["noobai"]},
     "ponyxl": {"dialect": "tags", "anime": True, "real": False, "pose": 2.0, "why": "лучше всего слушается просьб про позы, действия и сложные сцены",
@@ -36,8 +38,8 @@ ARTISTS: dict[str, dict] = {
 }
 GENERIC = {"dialect": "text", "anime": False, "real": False, "pose": 0.0, "why": "универсальная модель", "hint": prompts.ARTIST_HINT_GENERIC}
 # при равных баллах: для аниме первым идёт NoobAI, для остального — FLUX.2 Klein
-ORDER_ANIME = ("noobai", "ponyxl", "animagine4", "illustrious1", "flux2klein")
-ORDER_OTHER = ("flux2klein", "ponyxl", "noobai", "animagine4", "illustrious1")
+ORDER_ANIME = ("messillustrious", "noobai", "ponyxl", "animagine4", "illustrious1", "flux2klein")
+ORDER_OTHER = ("flux2klein", "messillustrious", "noobai", "ponyxl", "animagine4", "illustrious1")
 
 ANIME_EXTRA_NEG = prompts.ANIME_EXTRA_NEG      # см. prompts.py, раздел 7.3
 
@@ -112,9 +114,9 @@ _ORD = {"перв": 1, "втор": 2, "трет": 3, "четверт": 4, "пя�
 _REF_NUM = re.compile(r"\b(?:вариант\w*|картинк\w*|изображени\w*|фото|рисун\w*|номер)\s*(?:номер\s*|№\s*|#\s*)?([1-6])\b|\b([1-6]) (?:й|м|го|ом|ой) (?:вариант\w*|картинк\w*)\b|\b([1-6]) вариант\b|\b(?:на|в|во|у) ([1-6]) вариант\w*")
 _REF_ORD = re.compile(r"\b(перв|втор|трет|четверт|пят|шест)\w*\s+(?:вариант\w*|картинк\w*|изображени\w*|фото)\b|\b(?:на|в|во|у) (перв|втор|трет|четверт|пят|шест)(?:ом|ой|ем|ьем|ьей)\b")
 _EVERYONE = re.compile(r"\b(?:во всех|у всех|на всех|для всех|ко всем|по всем|через все|всеми|все модели|всех моделей|каждой модел\w*|каждый художник\w*|всех художник\w*|всех вариант\w*)\b")
-_MODEL_LAT = {"noobai": r"noob\w*", "ponyxl": r"pony\w*", "flux2klein": r"flux\w*|klein\w*", "animagine4": r"animagine\w*", "illustrious1": r"illustrious\w*"}
+_MODEL_LAT = {"messillustrious": r"mess\w*", "noobai": r"noob\w*", "ponyxl": r"pony\w*", "flux2klein": r"flux\w*|klein\w*", "animagine4": r"animagine\w*", "illustrious1": r"illustrious\w*"}
 # русские написания узнаём только после предлога («через пони», «моделью флюкс»): иначе «нарисуй пони» — это лошадка, а не модель
-_MODEL_CYR = {"noobai": r"нуб\w*|нооб\w*", "ponyxl": r"пони", "flux2klein": r"флюкс\w*|флакс\w*|клейн\w*", "animagine4": r"анимаджин\w*", "illustrious1": r"иллюстриус\w*"}
+_MODEL_CYR = {"messillustrious": r"мес+\w*", "noobai": r"нуб\w*|нооб\w*", "ponyxl": r"пони", "flux2klein": r"флюкс\w*|флакс\w*|клейн\w*", "animagine4": r"анимаджин\w*", "illustrious1": r"иллюстриус\w*"}
 _MODEL_PREP = r"(?:через|с помощью|моделью|в модели|модели|используй|используя)\s+(?:модел\w+\s+)?"
 _PURE_MORE = re.compile(r"^(?:а )?(?:еще|другой|другие|другую|другое|перерисуй|повтори|переделай|снова|давай)"
                        r"(?: (?:один|разок|раз|вариант\w*|картинк\w*|набор|все|заново|такой же|\d|два|три|четыре|пять|шесть))*$")
@@ -229,9 +231,10 @@ def _seed(rng: random.Random) -> int:
 
 
 def plan_new(intent: Intent, order: list[str], rng: random.Random | None = None) -> list[Variant]:
-    """Новая картинка: варианты раздаются по кругу — у каждого художника свой стиль, лучшие идут первыми, при нехватке моделей повторяются с другим seed."""
+    """Новая картинка: все варианты рисует ОДИН художник (тот, что в фирменном стиле), у каждого свой seed — стиль не «прыгает» от варианта к варианту.
+    Если пользователь сам назвал модели, варианты раздаются по ним по кругу."""
     rng = rng or random.Random()
-    models = intent.models or order
+    models = intent.models or order[:1]
     return [Variant(i + 1, models[i % len(models)], _seed(rng)) for i in range(intent.count)]
 
 
@@ -292,8 +295,8 @@ def brief_request(user_text: str, ids: list[str], prev_brief: dict | None = None
     return [{"role": "system", "content": sysmsg}, {"role": "user", "content": user}]
 
 
-_LABEL = re.compile(r"^[\s>*_#-]*(TAGS|SCENE|BEST|WHY)[\s*_]*[:：][\s*_]*(.*)$", re.I | re.M)
-_ID_WORDS = {"noobai": "noob", "ponyxl": "pony", "flux2klein": "flux", "animagine4": "animagine", "illustrious1": "illustrious"}
+_LABEL = re.compile(r"^[\s>*_#-]*(TAGS|SCENE|RU|BEST|WHY)[\s*_]*[:：][\s*_]*(.*)$", re.I | re.M)
+_ID_WORDS = {"messillustrious": "mess", "noobai": "noob", "ponyxl": "pony", "flux2klein": "flux", "animagine4": "animagine", "illustrious1": "illustrious"}
 
 
 def _strip(raw: str) -> str:
@@ -322,7 +325,7 @@ def parse_brief(raw: str, fallback: str, ids: list[str] | None = None) -> dict:
         if mid.lower() in v or _ID_WORDS.get(mid, mid) in v:
             best = mid
             break
-    return {"tags": tags, "scene": scene, "best": best, "why": _one_line(got.get("WHY", ""), 200), "ok": ok}
+    return {"tags": tags, "scene": scene, "best": best, "why": _one_line(got.get("WHY", ""), 200), "ok": ok, "ru": _one_line(got.get("RU", ""), 400)}
 
 
 def fallback_brief(user_text: str) -> dict:
@@ -330,22 +333,49 @@ def fallback_brief(user_text: str) -> dict:
     text = user_text.strip()[:700]
     if imagesmod.ANIME.search(norm(text)) and imagesmod.has_cyrillic(text):
         tags = imagesmod.ru_prompt(text)
-        return {"tags": tags, "scene": tags, "best": "", "why": "", "ok": False}
-    return {"tags": text, "scene": text, "best": "", "why": "", "ok": False}
+        return {"tags": tags, "scene": tags, "best": "", "why": "", "ok": False, "ru": ""}
+    return {"tags": text, "scene": text, "best": "", "why": "", "ok": False, "ru": ""}
 
 
 # ---------------------------------------------------------------- готовое описание для каждого художника
-def prompt_for(mid: str, brief: dict, style_text: str) -> str:
-    """Описание на «языке» художника: теги — для моделей danbooru, предложения — для FLUX; стиль и хвост из исходной просьбы."""
-    base = brief["tags"] if artist(mid)["dialect"] == "tags" else brief["scene"]
-    return imagesmod.finish_prompt(imagesmod.style_prompt(base, style_text), style_text)
+_COUNT_TAG = re.compile(r"^(?:\d+(?:girls?|boys?|others?)|solo|multiple (?:girls|boys))$")
 
 
-def negative_for(mid: str, style_text: str) -> str:
+def _core(tag: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"^\(+|\)+$|:\d+(?:\.\d+)?\)*$", "", tag.strip())).strip().lower()
+
+
+def emphasize(tags: str, weight: float = prompts.POSE_WEIGHT) -> str:
+    """Поза и ракурс — самое важное в просьбе и то, что модели чаще всего «забывают»: выносим их вперёд (сразу после «1girl») и усиливаем (lying:1.25)."""
+    pose_set = {p.lower() for p in prompts.POSE_TAGS}
+    subject, pose, rest = [], [], []
+    for t in (x.strip() for x in tags.split(",")):
+        if not t:
+            continue
+        c = _core(t)
+        if _COUNT_TAG.match(c):
+            subject.append(t)
+        elif c in pose_set:
+            pose.append(t if ":" in t else f"({c}:{weight:g})")
+        else:
+            rest.append(t)
+    return ", ".join(dict.fromkeys(subject + pose + rest))
+
+
+def prompt_for(mid: str, brief: dict, style_text: str, force_style: bool = False) -> str:
+    """Описание на «языке» художника: теги — для моделей danbooru (поза усилена), предложения — для FLUX; фирменный стиль добавляется всегда."""
+    tags = artist(mid)["dialect"] == "tags"
+    base = emphasize(brief["tags"]) if tags else brief["scene"]
+    if tags:
+        base = imagesmod.style_prompt(base, style_text, force_style)
+    return imagesmod.finish_prompt(base, style_text, force_style and tags)
+
+
+def negative_for(mid: str, style_text: str, force: bool = False) -> str:
     """Негативный промпт именно этого художника (у FLUX его нет); для аниме — ещё и против «кукольной» рисовки."""
     m = localimg.by_id(mid) or {}
     neg = m.get("negative", "")
-    if neg and imagesmod.ANIME.search(norm(style_text)) and artist(mid)["dialect"] == "tags":
+    if neg and (force or imagesmod.ANIME.search(norm(style_text))) and artist(mid)["dialect"] == "tags":
         neg += ", " + ANIME_EXTRA_NEG
     return neg
 

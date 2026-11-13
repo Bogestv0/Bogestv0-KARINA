@@ -79,9 +79,27 @@ def wants_image(text: str) -> bool:
     return False
 
 
+_WALLPAPER = re.compile(r"обои|обоев|рабоч\w+ стол\w*|wallpaper|на весь экран|полноэкранн\w*|full ?hd|fullhd|\b1920\b|\b2560\b|\b3840\b|\b4k\b|\b2k\b|монитор\w*|широкоформатн\w*")
+
+
+def is_wallpaper(text: str) -> bool:
+    """Просят большую широкую картинку (обои на рабочий стол): рисуется в родном широком размере, затем увеличивается."""
+    return bool(_WALLPAPER.search(norm(text)))
+
+
+def wallpaper_target(text: str) -> tuple[int, int]:
+    """Итоговый размер обоев: 1920×1080 по умолчанию, «2k» — 2560×1440, «4k» — 3840×2160."""
+    t = norm(text)
+    if re.search(r"\b4k\b|\b3840\b|\b2160\b|ultra ?hd", t):
+        return 3840, 2160
+    if re.search(r"\b2k\b|\b2560\b|\b1440\b|qhd", t):
+        return 2560, 1440
+    return 1920, 1080
+
+
 def pick_size(text: str, default: int = 768) -> tuple[int, int]:
     t = norm(text)
-    if re.search(r"обои|горизонтал|широк|16 ?[:х x] ?9|баннер|пейзаж|панорам", t):
+    if is_wallpaper(t) or re.search(r"горизонтал|широк|16 ?[:х x] ?9|баннер|пейзаж|панорам", t):
         return 1024, 576
     if re.search(r"аватар|юзерпик|userpic", t):
         return 1024, 1024                                         # аватарка — квадрат
@@ -108,17 +126,22 @@ NEGATIVE, NEGATIVE_ANIME = prompts.NEGATIVE, prompts.NEGATIVE_ANIME
 STYLES, PRESETS = prompts.STYLES, prompts.PRESETS
 
 
-def style_prompt(prompt: str, user_text: str) -> str:
-    """Страховка: просили аниме, а модель не написала про стиль — добавляем, иначе генератор рисует полуреалистичное лицо."""
-    if ANIME.search(norm(user_text)) and "anime" not in prompt.lower():
-        return ANIME_TAGS + ", " + prompt
-    if ANIME.search(norm(user_text)) and "2d" not in prompt.lower():
-        return ANIME_TAGS + ", " + prompt
-    return prompt
+def _have(prompt: str) -> set[str]:
+    return {re.sub(r"\s+", " ", t).strip().lower() for t in re.sub(r"[()]|:\d+(?:\.\d+)?", "", prompt).split(",") if t.strip()}
 
 
-def finish_prompt(prompt: str, user_text: str) -> str:
-    """Стили/пресеты из просьбы + хвост из «качественных» слов для аниме (чёткий 2D-рисунок вместо размытого полуреалистичного лица)."""
+def style_prompt(prompt: str, user_text: str, force: bool = False) -> str:
+    """Фирменный стиль Карины: теги стиля (anime screencap, cel shading, clean lineart …) добавляются в начало, если их там ещё нет.
+    Делается всегда, а не «по настроению модели», иначе стиль «плывёт» от картинки к картинке. force — стиль нужен, хотя слова «аниме» в просьбе нет."""
+    if not (force or ANIME.search(norm(user_text))):
+        return prompt
+    have = _have(prompt)
+    missing = [t for t in prompts.STYLE_CORE if t.lower() not in have]
+    return ", ".join(missing + [prompt]) if missing else prompt
+
+
+def finish_prompt(prompt: str, user_text: str, force: bool = False) -> str:
+    """Стили/пресеты из просьбы + хвост стиля для аниме (фоны, мягкие тени ячеек, яркие цвета)."""
     t = norm(user_text)
     extra, flat_off = [], False
     for pat, tags, drop in STYLES:
@@ -129,13 +152,16 @@ def finish_prompt(prompt: str, user_text: str) -> str:
         if re.search(pat, t) and tags.split(",")[0] not in prompt.lower():
             extra.append(tags)
     if flat_off:
-        prompt = re.sub(r"(?:cel shading|flat colors|2D),?\s*", "", prompt)
+        prompt = re.sub(r"(?:anime screencap|anime coloring|cel shading|flat colors?|2D|clean lineart|shiny hair),?\s*", "", prompt)
     out = prompt.rstrip(" ,.")
     if extra:
         out += ", " + ", ".join(extra)
-    if ANIME.search(t) and "screencap" not in out.lower() and not flat_off:
-        out += ", " + ANIME_TAIL
-    return out[:900]
+    if (force or ANIME.search(t)) and not flat_off:
+        have = _have(out)
+        tail = [x for x in prompts.STYLE_TAIL_TAGS if x.lower() not in have]
+        if tail:
+            out += ", " + ", ".join(tail)
+    return out[:1100]
 
 
 def negative_for(text: str) -> str:

@@ -65,7 +65,27 @@ CATALOG.extend([
      "negative": prompts.MODEL_NEGATIVE["noobai"],
      "desc": "NoobAI XL: сильная danbooru-модель (на базе Illustrious), знает тысячи персонажей и стилей, чистые линии и цвета. Версия 1.1 (обычная, не v-pred)."},
 ])
+# Mess Illustrious Anime Mix — основа фирменного стиля Карины (кадры современного TV-аниме). На Hugging Face он лежит в формате diffusers
+# (unet + vae + два текстовых энкодера), поэтому скачиваются четыре файла. Если у вас есть один файл Mess_Illustrious_Anime_Mix.safetensors
+# (например, с civitai.com/models/1884871), положите его в папку моделей картинок («Открыть папку данных» → models → image): Карина найдёт его сама.
+MESS_REPO = "John6666/mess-illustrious-anime-mix-v10-sdxl"
+CATALOG.insert(1, {
+    "id": "messillustrious", "title": "Mess Illustrious Anime Mix", "kind": "sdxl", "general": False, "style": True,
+    "civitai": 1884871, "civitai_file": r"(?i)^Mess_Illustrious_Anime_Mix.*\.safetensors$",
+    "local_glob": r"(?i)^mess[-_ ]?illustrious[-_ ]?anime[-_ ]?mix.*\.safetensors$",
+    "size_gb": 6.9, "vram": 8, "steps": 28, "cfg": 5.0,
+    "quality": prompts.MODEL_QUALITY["messillustrious"], "negative": prompts.MODEL_NEGATIVE["messillustrious"],
+    "parts": [
+        {"role": "model", "repos": (MESS_REPO,), "dir": "unet", "file": r"^diffusion_pytorch_model\.safetensors$", "save_as": "mess-unet.safetensors"},
+        {"role": "vae", "repos": (MESS_REPO,), "dir": "vae", "file": r"^diffusion_pytorch_model\.safetensors$", "save_as": "mess-vae.safetensors"},
+        {"role": "clip_l", "repos": (MESS_REPO,), "dir": "text_encoder", "file": r"^model\.safetensors$", "save_as": "mess-clip-l.safetensors"},
+        {"role": "clip_g", "repos": (MESS_REPO,), "dir": "text_encoder_2", "file": r"^model\.safetensors$", "save_as": "mess-clip-g.safetensors"},
+    ],
+    "desc": "Фирменный стиль Карины: аниме как в кадрах современных сериалов — чёткий контур, плоская заливка с резкими тенями, яркие блики на волосах, фоны с перспективой. "
+            "Рисует базовую картинку в этом стиле. Лицензия faipl-1.0-sd (личное использование).",
+})
 DEFAULT_ID = "flux2klein"
+STYLE_ID = "messillustrious"
 ENGINE_MIN_FLUX2 = "2026-01-20"   # сборки stable-diffusion.cpp старше этой даты FLUX.2 не знают
 VRAM_MODES = ("fast", "balanced", "low", "cpu")
 DEFAULT_VRAM = "balanced"    # fast — всё на видеокарте (быстрее всего, ~8 ГБ); balanced — веса в ОЗУ, пик ~5–6 ГБ; low — ещё и 8-бит сжатие, пик ~3–4 ГБ, но заметно дольше; cpu — только процессор
@@ -109,21 +129,41 @@ def parts_of(m: dict) -> list[dict]:
     return m.get("parts") or [{"role": "model", "repos": m.get("repos") or (m["repo"],), "file": m["file"]}]
 
 
+def local_file(m: dict) -> Path | None:
+    """Файл модели, который пользователь положил в папку моделей сам (по шаблону local_glob из каталога): MODELS_DIR или MODELS_DIR/custom."""
+    pat = m.get("local_glob")
+    if not pat:
+        return None
+    for d in (MODELS_DIR, MODELS_DIR / "custom"):
+        try:
+            for f in sorted(d.iterdir()):
+                if f.is_file() and re.search(pat, f.name) and f.stat().st_size > 10_000_000:
+                    return f
+        except OSError:
+            continue
+    return None
+
+
 def model_paths(mid: str) -> dict[str, Path] | None:
-    """Все файлы модели по ролям (model / vae / llm). None, если чего-то не хватает."""
+    """Все файлы модели по ролям (model / vae / llm / clip_l / clip_g). None, если чего-то не хватает.
+    Запись {"model": файл, "single": true} — модель одним файлом (скачана с civitai или положена вручную)."""
     m = by_id(mid)
     rec = _read().get(mid)
-    if not m or not rec:
+    if not m:
         return None
+    if not rec:
+        f = local_file(m)
+        return {"model": f} if f else None
     if isinstance(rec, str):
         rec = {"model": rec}
     out = {}
-    for part in parts_of(m):
-        name = rec.get(part["role"])
+    roles = ["model"] if rec.get("single") else [part["role"] for part in parts_of(m)]
+    for role in roles:
+        name = rec.get(role)
         p = MODELS_DIR / name if name else None
         if not p or not p.exists():
             return None
-        out[part["role"]] = p
+        out[role] = p
     return out
 
 
@@ -303,6 +343,16 @@ def download(mid: str, progress=None, cancel: threading.Event | None = None) -> 
     cancel = cancel or threading.Event()
     prog = progress or (lambda *a: None)
     fetch_engine(prog, cancel, m)
+    if m.get("civitai") and not local_file(m):
+        try:
+            return _download_civitai(m, prog, cancel)
+        except Cancelled:
+            raise
+        except Exception:
+            pass                       # civitai не отдал файл (нужен вход?) — берём части с Hugging Face
+    if local_file(m):
+        prog(1, 1, "done")
+        return local_file(m)
     parts = parts_of(m)
     multi = len(parts) > 1
     prog(0, 0, "search")
@@ -311,7 +361,7 @@ def download(mid: str, progress=None, cancel: threading.Event | None = None) -> 
     base = 0
     names: dict[str, str] = {}
     for part, info in zip(parts, infos):
-        fname = info["path"].rsplit("/", 1)[-1]
+        fname = part.get("save_as") or info["path"].rsplit("/", 1)[-1]
         rel = f"{mid}/{fname}" if multi else info["path"]
         final = MODELS_DIR / rel
         final.parent.mkdir(parents=True, exist_ok=True)
@@ -330,13 +380,38 @@ def download(mid: str, progress=None, cancel: threading.Event | None = None) -> 
     return MODELS_DIR / names["model"]
 
 
+def _download_civitai(m: dict, prog, cancel: threading.Event) -> Path:
+    """Модель одним файлом с civitai.com (без входа это работает не для всех моделей; не вышло — вызывающий берёт запасной путь)."""
+    mid = m["id"]
+    prog(0, 0, "search")
+    info = json.loads(_open(f"https://civitai.com/api/v1/models/{m['civitai']}", timeout=30).read().decode("utf-8"))
+    versions = info.get("modelVersions") or []
+    if not versions:
+        raise LocalImgError("civitai не вернул версий модели.")
+    f = next((x for x in versions[0].get("files", []) if re.search(m["civitai_file"], x.get("name", "")) and x.get("downloadUrl")), None)
+    if not f:
+        raise LocalImgError("на civitai нет подходящего файла.")
+    final = MODELS_DIR / f["name"]
+    final.parent.mkdir(parents=True, exist_ok=True)
+    total = int(float(f.get("sizeKB") or 0) * 1024)
+    part_file = final.with_name(final.name + ".part")
+    if not (final.exists() and total and abs(final.stat().st_size - total) < 4096):
+        _stream(f["downloadUrl"], part_file, total, prog, cancel, "download")
+        part_file.replace(final)
+    d = _read()
+    d[mid] = {"model": f["name"], "single": True}
+    _write(d)
+    prog(1, 1, "done")
+    return final
+
+
 # ---------- рисование ----------
 def sdxl_size(size: tuple[int, int]) -> tuple[int, int]:
     """SDXL лучше всего рисует на «родных» размерах: другие дают двойные головы и кривые руки."""
     w, h = size
     if w == h:
         return 1024, 1024
-    return (832, 1216) if h > w else (1216, 704)
+    return (832, 1216) if h > w else (1344, 768)
 
 
 # ---------- что получилось в прошлый раз (чтобы не повторять провальные попытки) ----------
@@ -396,16 +471,54 @@ def _attempts(m: dict, mode: str) -> list[tuple[str, str]]:
     return [("vulkan", x) for x in dict.fromkeys(modes)] + [("cpu", "cpu")]
 
 
-def _command(exe: Path, m: dict, paths: dict, prompt: str, neg: str, w: int, h: int, steps: int, seed: int, out: Path, flavor: str, mode: str, threads: int) -> list[str]:
+_HELP: dict[str, str] = {}
+
+
+def _help_text(exe: Path) -> str:
+    """Справка движка (sd-cli --help): названия флагов у разных сборок отличаются, поэтому смотрим, что он понимает."""
+    key = str(exe)
+    if key not in _HELP:
+        try:
+            r = subprocess.run([key, "--help"], capture_output=True, text=True, timeout=20, creationflags=0x08000000 if IS_WIN else 0)
+            _HELP[key] = (r.stdout or "") + (r.stderr or "")
+        except (OSError, subprocess.SubprocessError):
+            _HELP[key] = ""
+    return _HELP[key]
+
+
+def _flag(exe: Path, names: tuple[str, ...], default: str) -> str:
+    h = _help_text(exe)
+    for n in names:
+        if re.search(r"(?<![\w-])" + re.escape(n) + r"(?![\w-])", h):
+            return n
+    return default
+
+
+def _base_args(m: dict, paths: dict) -> list[str]:
+    """Как подать модели файлы: FLUX.2 — три файла; SDXL из частей (unet + vae + два энкодера) или одним файлом."""
+    if m.get("kind") == "flux2":
+        return ["--diffusion-model", str(paths["model"]), "--vae", str(paths["vae"]), "--llm", str(paths["llm"])]
+    if all(k in paths for k in ("clip_l", "clip_g")):
+        a = ["--diffusion-model", str(paths["model"]), "--clip_l", str(paths["clip_l"]), "--clip_g", str(paths["clip_g"])]
+        return a + (["--vae", str(paths["vae"])] if "vae" in paths else [])
+    return ["-m", str(paths["model"])]
+
+
+def _command(exe: Path, m: dict, paths: dict, prompt: str, neg: str, w: int, h: int, steps: int, seed: int, out: Path, flavor: str, mode: str, threads: int,
+             init: Path | None = None, strength: float = 0.6) -> list[str]:
     if m.get("kind") == "flux2":      # FLUX.2 Klein: три файла, дистиллированная модель (шаги и cfg из каталога), негативного промпта нет
-        cmd = [str(exe), "--diffusion-model", str(paths["model"]), "--vae", str(paths["vae"]), "--llm", str(paths["llm"]),
+        cmd = [str(exe), *_base_args(m, paths),
                "-p", prompt, "-W", str(w), "-H", str(h), "--steps", str(steps), "--cfg-scale", str(m["cfg"]),
                "-s", str(seed), "--diffusion-fa", "--offload-to-cpu", "--vae-tiling"]
+        if init:                       # правка картинки: FLUX.2 принимает её как «эталон» (reference), а не как шумную основу
+            cmd += [_flag(exe, ("-r", "--ref-image"), "-r"), str(init)]
     else:
-        cmd = [str(exe), "-m", str(paths["model"]), "-p", prompt, "-n", neg, "-W", str(w), "-H", str(h), "--steps", str(steps),
+        cmd = [str(exe), *_base_args(m, paths), "-p", prompt, "-n", neg, "-W", str(w), "-H", str(h), "--steps", str(steps),
                "--cfg-scale", str(m["cfg"]), "-s", str(seed), "--sampling-method", "euler_a", "--vae-tiling"]
         if m.get("clip_skip"):
             cmd[1:1] = ["--clip-skip", str(m["clip_skip"])]
+        if init:                       # img2img: берём картинку за основу и перерисовываем с силой strength (0 — как есть, 1 — с нуля)
+            cmd += [_flag(exe, ("--init-img", "-i", "--img2img"), "--init-img"), str(init), "--strength", f"{max(0.05, min(0.98, strength)):.2f}"]
         if flavor == "vulkan":
             cmd += _gpu_extra(mode)
     if threads > 0 and flavor == "cpu":
@@ -414,9 +527,11 @@ def _command(exe: Path, m: dict, paths: dict, prompt: str, neg: str, w: int, h: 
 
 
 def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", negative: str = "", stop: threading.Event | None = None,
-             vram: str = DEFAULT_VRAM, plan: dict | None = None, progress=None) -> tuple[bytes, str]:
+             vram: str = DEFAULT_VRAM, plan: dict | None = None, progress=None, init_image: bytes | None = None, strength: float = 0.6,
+             exact_size: bool = False, no_cpu: bool = False) -> tuple[bytes, str]:
     """Рисует картинку. plan — результат imgpower.plan (режим памяти, размер, шаги, потоки); без него работает только режим vram.
-    progress(шаг, всего, секунд на шаг) вызывается по мере рисования. Не вышло в одном режиме — пробует экономнее, в конце процессор."""
+    progress(шаг, всего, секунд на шаг) вызывается по мере рисования. Не вышло в одном режиме — пробует экономнее, в конце процессор.
+    init_image — картинка-основа (img2img / правка), strength — насколько сильно её менять; exact_size — размер уже подобран вызывающим (кратен 64), не подменять «родным"""
     m = pick_installed(model_id)
     if not m or not engine_ready():
         raise LocalImgError("встроенный генератор не установлен (Настройки → Модели → Картинки → «Скачать»).")
@@ -428,7 +543,7 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
         rec = _recall(m["id"])
         if rec == "cpu" or (rec in MODE_RANK and MODE_RANK[rec] > MODE_RANK[mode]):
             mode = rec
-    native = sdxl_size(size)
+    native = tuple(size) if exact_size else sdxl_size(size)
     base = prompt.rstrip(" ,.")
     if not m.get("quality"):
         full = base
@@ -439,8 +554,12 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
     neg = prompts.unique_tags(prompts.join_tags(SAFE_NEG, negative or m["negative"], prompts.extra_negative(m["id"])))   # + ваши негативы из prompts.py
     paths = model_paths(m["id"]) or {}
     out = Path(tempfile.mkdtemp(prefix="karina-sd-")) / "out.png"
+    init_path = None
+    if init_image:
+        init_path = out.parent / "init.png"
+        init_path.write_bytes(init_image)
     errors = []
-    queue = _attempts(m, mode)
+    queue = [q for q in _attempts(m, mode) if not (no_cpu and q[0] == "cpu")]      # no_cpu: тяжёлый второй проход на процессоре не пробуем
     first = queue[0]
     t0 = time.time()
     try:
@@ -450,7 +569,7 @@ def generate(prompt: str, size: tuple[int, int], seed: int, model_id: str = "", 
             if not exe:
                 continue
             w, h, steps = imgpower.shape(m, native, plan, cpu=flavor == "cpu")
-            cmd = _command(exe, m, paths, full, neg, w, h, steps, seed, out, flavor, md, int(plan.get("threads") or 0))
+            cmd = _command(exe, m, paths, full, neg, w, h, steps, seed, out, flavor, md, int(plan.get("threads") or 0), init_path, strength)
             res = _run(cmd, out, stop, progress)
             if res is not None:
                 LAST_RUN.clear()
