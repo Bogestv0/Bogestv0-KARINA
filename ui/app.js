@@ -538,7 +538,7 @@
     const c = await call('chat_get', id); if (!c) return;
     chCur = id; chBubble = null; $('#chMsgs').textContent = '';
     if (!c.messages.length) showWelcome();
-    c.messages.forEach((m, i) => addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain, m.files_in, m.project, m.activity, i === c.messages.length - 1 && c.pending_image ? m.choices : null));
+    c.messages.forEach((m, i) => addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain, m.files_in, m.project, m.activity, i === c.messages.length - 1 ? (m.choices || null) : null));
     loadChatList(); scrollChat();
   }
   async function openChatTab() {

@@ -148,7 +148,7 @@ class InChat(unittest.TestCase):
             svc, model, ev, tmp = make(["1girl, anime style, long white hair, masterpiece, high detail"])
             cid = svc.send(None, "Сделай изображения аниме девушки с белыми волосами", wait=True)
             reply = svc.store.get(cid)["messages"][1]
-            self.assertTrue(seen["prompt"].startswith("anime illustration, 2D"))                                   # для аниме добавлен 2D-стиль
+            self.assertTrue(seen["prompt"].startswith("anime screencap, anime coloring, 2D"))                                   # для аниме добавлен 2D-стиль
             self.assertIn("1girl, anime style, long white hair, masterpiece, high detail", seen["prompt"])                 # модель написала описание (дальше идёт хвост качества)
             self.assertEqual(reply["files"][0]["kind"], "image")
             self.assertTrue((tmp / "Карина" / reply["files"][0]["name"]).read_bytes().startswith(b"\x89PNG"))

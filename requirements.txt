@@ -8,6 +8,7 @@ pyperclip>=1.8.2
 pycaw>=20240210
 comtypes>=1.4.2
 pillow>=10.0
+onnxruntime>=1.17   # проверка нарисованной картинки (тегер): поза, цвета, одежда; без него Карина рисует один круг
 pywebview>=5.0
 python-docx>=1.1.0
 openpyxl>=3.1.2

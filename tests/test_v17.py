@@ -335,8 +335,10 @@ class ImageTests(unittest.TestCase):
             images.generate(self.cfg(provider="sd", url=self.srv.url), "x", stop=ev)
 
     def test_anime_style_and_model(self):
-        self.assertTrue(images.style_prompt("girl, white hair, katana", "нарисуй аниме девочку").startswith("anime illustration"))
-        self.assertEqual(images.style_prompt("anime illustration, 2D, girl", "аниме"), "anime illustration, 2D, girl")
+        self.assertTrue(images.style_prompt("girl, white hair, katana", "нарисуй аниме девочку").startswith("anime screencap, anime coloring, 2D"))
+        out = images.style_prompt("anime screencap, 2D, girl", "аниме")                       # уже названные теги стиля не дублируются
+        self.assertEqual(out.count("anime screencap"), 1); self.assertEqual(out.count("2D"), 1); self.assertTrue(out.endswith("girl"))
+        self.assertTrue(images.style_prompt("girl", "нарисуй девочку", True).startswith("anime screencap"))   # force: стиль всегда
         self.assertEqual(images.style_prompt("a cat", "нарисуй кота"), "a cat")
         self.assertEqual(images.pick_models("фото аниме девочки"), ("flux-anime", "flux"))
         self.assertEqual(images.pick_models("кот"), ("flux",))

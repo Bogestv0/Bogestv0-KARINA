@@ -9,7 +9,15 @@ from karina.files import FileService
 from test_chat_coder import FakeBrain
 from test_coder import Scripted
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 60
+def _png() -> bytes:
+    import io
+    from PIL import Image
+    out = io.BytesIO()
+    Image.new("RGB", (64, 64), (200, 120, 90)).save(out, "PNG")
+    return out.getvalue()
+
+
+PNG = _png()
 IDS = ["noobai", "ponyxl", "flux2klein"]
 BRIEF = ("TAGS: anime illustration, 2D, 1girl, long white hair, blue eyes, school uniform, portrait, upper body\n"
          "SCENE: An anime girl with long white hair and blue eyes in a school uniform, upper body portrait.\n"
@@ -53,10 +61,12 @@ class Rank(unittest.TestCase):
         self.assertEqual(d.pool_for("нарисуй аниме", IDS)[0], IDS)
         self.assertEqual(d.pool_for("сделай фото кота", ["noobai"])[0], ["noobai"])               # реалистичной модели нет — рисуют те, что есть
 
-    def test_four_variants_cycle_through_styles(self):
+    def test_all_variants_use_one_style(self):
         v = d.plan_new(d.Intent(count=4), ["noobai", "ponyxl", "flux2klein"], random.Random(1))
-        self.assertEqual([x.model for x in v], ["noobai", "ponyxl", "flux2klein", "noobai"])
-        self.assertEqual(len({x.seed for x in v}), 4)                                              # у повторов другой seed
+        self.assertEqual([x.model for x in v], ["noobai"] * 4)                       # фирменный стиль один на все варианты
+        self.assertEqual(len({x.seed for x in v}), 4)                                # у повторов другой seed
+        v = d.plan_new(d.Intent(count=2, models=["ponyxl", "noobai"]), ["noobai", "ponyxl"], random.Random(1))
+        self.assertEqual([x.model for x in v], ["ponyxl", "noobai"])                 # а если модели названы вручную — по кругу по ним
         v = d.plan_new(d.Intent(count=4), ["ponyxl"], random.Random(1))
         self.assertEqual([x.model for x in v], ["ponyxl"] * 4)
 
@@ -78,7 +88,9 @@ class Brief(unittest.TestCase):
         b = d.parse_brief(BRIEF, "x", IDS)
         self.assertTrue(b["ok"]); self.assertEqual(b["best"], "noobai")
         self.assertTrue(b["tags"].startswith("anime illustration")); self.assertTrue(b["scene"].startswith("An anime girl"))
-        self.assertIn("лица", b["why"])
+        self.assertIn("лица", b["why"]); self.assertEqual(b["ru"], "")
+        b = d.parse_brief("TAGS: 1girl\nSCENE: A girl.\nRU: Персонаж: девушка; Поза: лежит\nBEST: noobai\nWHY: x", "x", IDS)
+        self.assertEqual(b["ru"], "Персонаж: девушка; Поза: лежит")
         b = d.parse_brief("<think>думаю…</think>\n**TAGS:** a, b, c, d\n**SCENE:** A nice picture.\n**BEST:** Pony XL", "x", IDS)
         self.assertEqual((b["tags"], b["best"]), ("a, b, c, d", "ponyxl"))
         b = d.parse_brief("1girl, white hair, forest", "x", IDS)                                    # без формата — весь ответ как описание
@@ -109,29 +121,33 @@ class StudioKit:
     """Чат целиком: настоящий ChatService, подменены только модель текста и сама рисовалка."""
 
     GPU = {"detected": True, "gpu": "Test GPU 24GB", "vram_gb": 24.0, "integrated": False, "gpus": []}      # тесты не зависят от железа, на котором запущены
+    INSTALLED = IDS
 
     def setUp(self):
         self.orig = (localimg.installed_ids, localimg.engine_ready, localimg.engine_supports, localimg.generate, images.generate, imgpower._HW)
         imgpower._HW = dict(self.GPU)
         self.calls, self.broken = [], set()
-        localimg.installed_ids = lambda: list(IDS)
+        localimg.installed_ids = lambda: list(self.INSTALLED)
         localimg.engine_ready = lambda: True
         localimg.engine_supports = lambda m: True
 
-        def fake(prompt, size, seed, model_id="", negative="", stop=None, vram="", plan=None, progress=None):
-            self.calls.append({"prompt": prompt, "size": size, "seed": seed, "model": model_id, "neg": negative})
+        def fake(prompt, size, seed, model_id="", negative="", stop=None, vram="", plan=None, progress=None, init_image=None, strength=0.6, exact_size=False, no_cpu=False):
+            self.calls.append({"prompt": prompt, "size": size, "seed": seed, "model": model_id, "neg": negative, "init": init_image is not None, "strength": strength,
+                               "plan": plan})
             if model_id in self.broken:
                 raise localimg.LocalImgError("видеокарте не хватило памяти")
+            if progress:
+                progress(1, 2, 1.0)
             return PNG, "png"
         localimg.generate = fake
 
     def tearDown(self):
         localimg.installed_ids, localimg.engine_ready, localimg.engine_supports, localimg.generate, images.generate, imgpower._HW = self.orig
 
-    def make(self, replies, ask=False):
+    def make(self, replies, ask=False, **images_cfg):
         tmp = Path(tempfile.mkdtemp())
         cfg = Config(tmp / "c.json")
-        cfg.update({"coder": {"run": False}, "search": {"mode": "off"}, "images": {"ask_count": ask}})
+        cfg.update({"coder": {"run": False}, "search": {"mode": "off"}, "images": dict({"ask_count": ask}, **images_cfg)})
         model = Scripted(replies)
         ev = []
         svc = ChatService(cfg, model, ev.append, store=ChatStore(tmp / "chats"), brain=FakeBrain(model), files=FileService(tmp / "Карина"))
@@ -139,81 +155,7 @@ class StudioKit:
 
 
 class Studio(StudioKit, unittest.TestCase):
-    def test_four_variants_in_styles_of_different_models(self):
-        svc, model, ev, tmp = self.make([BRIEF])
-        cid = svc.send(None, "Сделай изображения аниме девушки с белыми волосами", wait=True)
-        reply = svc.store.get(cid)["messages"][1]
-        self.assertEqual([c["model"] for c in self.calls], ["noobai", "ponyxl", "flux2klein", "noobai"])        # NoobAI назван лучшим → первый и четвёртый
-        self.assertEqual(len(reply["files"]), 4)
-        self.assertEqual([f["variant"] for f in reply["files"]], [1, 2, 3, 4])
-        self.assertEqual([f["label"] for f in reply["files"]][:3], ["NoobAI XL 1.1", "Pony Diffusion V6 XL", "FLUX.2 Klein 4B"])
-        for f in reply["files"]:
-            self.assertTrue((tmp / "Карина" / f["name"]).read_bytes().startswith(b"\x89PNG"))
-        tags_models = [c for c in self.calls if c["model"] != "flux2klein"]
-        self.assertTrue(all("1girl, long white hair" in c["prompt"] for c in tags_models))                       # NoobAI и Pony получили теги
-        flux = [c for c in self.calls if c["model"] == "flux2klein"][0]
-        self.assertIn("An anime girl with long white hair", flux["prompt"]); self.assertNotIn("1girl", flux["prompt"])    # FLUX — предложения
-        self.assertEqual(self.calls[0]["size"], (768, 1024))
-        types = [e["type"] for e in ev]
-        self.assertEqual(types[0], "chat_start"); self.assertEqual(types[-1], "chat_done")
-        self.assertIn("chat_image_plan", types)
-        done = [e for e in ev if e["type"] == "chat_image" and e["status"] == "done"]
-        self.assertEqual([e["n"] for e in done], [1, 2, 3, 4])                                                   # каждый вариант уходит в окно по готовности
-        self.assertIn("4 варианта", reply["text"]); self.assertIn("Описание тегами", reply["text"])
-        self.assertEqual(len(reply["image_set"]["variants"]), 4); self.assertTrue(reply["image_prompt"])
-        self.assertIn("NoobAI", reply["brain"])
-
-    def test_variant_count_from_request_and_settings(self):
-        svc, model, ev, tmp = self.make([BRIEF])
-        svc.send(None, "нарисуй аниме девушку, 2 варианта", wait=True)
-        self.assertEqual(len(self.calls), 2)
-        self.calls.clear()
-        svc2, model2, ev2, tmp2 = self.make([BRIEF])
-        svc2.cfg.update({"images": {"variants": 3}})
-        svc2.send(None, "нарисуй аниме девушку", wait=True)
-        self.assertEqual([c["model"] for c in self.calls], ["noobai", "ponyxl", "flux2klein"])
-
-    def test_edit_goes_to_best_model_and_keeps_character(self):
-        svc, model, ev, tmp = self.make([BRIEF])
-        cid = svc.send(None, "нарисуй аниме девушку с белыми волосами", wait=True)
-        first = svc.store.get(cid)["messages"][1]["image_set"]
-        pony_seed = next(v["seed"] for v in first["variants"] if v["model"] == "ponyxl")
-        self.calls.clear()
-        model.replies.append("TAGS: anime illustration, 2D, 1girl, long white hair, blue eyes, school uniform, from side, profile, waving\n"
-                             "SCENE: An anime girl with long white hair waves, seen from the side.\nBEST: ponyxl\nWHY: Pony лучше всех справляется с позами")
-        svc.send(cid, "поверни её боком и пусть машет рукой", wait=True)
-        self.assertIn("Change requested: поверни её боком", model.seen[-1][1]["content"])
-        self.assertIn("TAGS: anime illustration, 2D, 1girl, long white hair", model.seen[-1][1]["content"])      # модель видит прежнее описание
-        self.assertEqual([(c["model"], c["seed"]) for c in self.calls], [("ponyxl", pony_seed)])                 # одна модель, прежний seed
-        self.assertIn("from side", self.calls[0]["prompt"]); self.assertEqual(self.calls[0]["size"], (768, 1024))
-        reply = svc.store.get(cid)["messages"][3]
-        self.assertEqual(len(reply["files"]), 1); self.assertIn("поправила", reply["text"]); self.assertIn("Pony Diffusion V6 XL", reply["text"])
-        self.assertIn("аниме", reply["image_set"]["request"])                                                    # стиль первой просьбы не потерян
-
-    def test_edit_on_chosen_variant_and_on_everyone(self):
-        svc, model, ev, tmp = self.make([BRIEF])
-        cid = svc.send(None, "нарисуй аниме девушку", wait=True)
-        first = svc.store.get(cid)["messages"][1]["image_set"]
-        self.calls.clear()
-        model.replies.append("TAGS: 1girl, long white hair, smile\nSCENE: A smiling anime girl.\nBEST: noobai\nWHY: x")
-        svc.send(cid, "на третьем варианте пусть улыбается", wait=True)
-        self.assertEqual([(c["model"], c["seed"]) for c in self.calls], [("flux2klein", first["variants"][2]["seed"])])
-        self.calls.clear()
-        model.replies.append("TAGS: 1girl, long white hair, night, moon\nSCENE: An anime girl at night.\nBEST: flux2klein\nWHY: x")
-        svc.send(cid, "во всех моделях сделай ночь", wait=True)
-        self.assertEqual(sorted(c["model"] for c in self.calls), sorted(IDS))                                    # обратился ко всем
-        self.assertEqual(len(svc.store.get(cid)["messages"][-1]["files"]), 3)
-
-    def test_more_reuses_description_without_asking_the_model(self):
-        svc, model, ev, tmp = self.make([BRIEF])
-        cid = svc.send(None, "нарисуй аниме девушку", wait=True)
-        asked = len(model.seen)
-        self.calls.clear()
-        svc.send(cid, "ещё вариант", wait=True)
-        self.assertEqual(len(model.seen), asked)                                                                 # текстовую модель не трогали
-        self.assertEqual([c["model"] for c in self.calls], ["noobai", "ponyxl", "flux2klein", "noobai"])
-        first_seeds = {v["seed"] for v in svc.store.get(cid)["messages"][1]["image_set"]["variants"]}
-        self.assertFalse(first_seeds & {c["seed"] for c in self.calls})                                          # новые seed — новые картинки
+    """Путь для фото и реализма (FLUX.2) и запасные пути: внешний сервис, режиссёр выключен, всё упало."""
 
     def test_photo_is_drawn_only_by_flux(self):
         svc, model, ev, tmp = self.make(["TAGS: cat, roof\nSCENE: A photo of a cat on a roof at sunset.\nBEST: flux2klein\nWHY: фото"])
@@ -221,16 +163,7 @@ class Studio(StudioKit, unittest.TestCase):
         self.assertEqual({c["model"] for c in self.calls}, {"flux2klein"})
         self.assertEqual(len(self.calls), 4)
         self.assertIn("Для фото подходит только", svc.store.get(cid)["messages"][1]["text"])
-
-    def test_one_model_fails_others_still_draw(self):
-        self.broken = {"ponyxl"}
-        svc, model, ev, tmp = self.make([BRIEF])
-        cid = svc.send(None, "нарисуй аниме девушку", wait=True)
-        reply = svc.store.get(cid)["messages"][1]
-        self.assertEqual([f["variant"] for f in reply["files"]], [1, 3, 4])
-        self.assertIn("вариант 2 (Pony Diffusion V6 XL): видеокарте не хватило памяти", reply["text"])
-        self.assertTrue(any(e["type"] == "chat_image" and e["status"] == "fail" and e["n"] == 2 for e in ev))
-        self.assertFalse(svc.busy)
+        self.assertNotIn("draft", svc.store.get(cid))                               # фото: прежний путь, подтверждения нет
 
     def test_all_fail_falls_back_to_online_generator(self):
         self.broken = set(IDS)
@@ -240,30 +173,11 @@ class Studio(StudioKit, unittest.TestCase):
             seen["provider"] = cfg.get("images")["provider"]
             return PNG, "png", "Pollinations"
         images.generate = online
-        svc, model, ev, tmp = self.make([BRIEF])
-        cid = svc.send(None, "нарисуй аниме девушку", wait=True)
+        svc, model, ev, tmp = self.make(["TAGS: cat, roof\nSCENE: A photo of a cat.\nBEST: flux2klein\nWHY: x"])
+        cid = svc.send(None, "сделай фото кота", wait=True)
         reply = svc.store.get(cid)["messages"][1]
-        self.assertEqual(seen["provider"], "pollinations")                                                       # не те же модели ещё раз
+        self.assertEqual(seen["provider"], "pollinations")
         self.assertEqual(len(reply["files"]), 1); self.assertIn("запасной генератор", reply["text"])
-
-    def test_all_fail_without_fallback_explains(self):
-        self.broken = set(IDS)
-
-        def offline(*a, **k): raise images.ImageError("нет связи")
-        images.generate = offline
-        svc, model, ev, tmp = self.make([BRIEF])
-        cid = svc.send(None, "нарисуй аниме девушку", wait=True)
-        reply = svc.store.get(cid)["messages"][1]
-        self.assertIn("Не получилось нарисовать", reply["text"]); self.assertIn("видеокарте не хватило памяти", reply["text"])
-        self.assertNotIn("files", reply); self.assertFalse(svc.busy)
-
-    def test_text_model_down_still_draws(self):
-        svc, model, ev, tmp = self.make([])                                                                       # у «модели» нет реплик → ошибка
-        model.chat = lambda *a, **k: (_ for _ in ()).throw(chat.EngineError("модель не загружена"))
-        cid = svc.send(None, "нарисуй аниме девушку с белыми волосами", wait=True)
-        reply = svc.store.get(cid)["messages"][1]
-        self.assertEqual(len(reply["files"]), 4); self.assertIn("не отвечает", reply["text"])
-        self.assertIn("white hair", self.calls[0]["prompt"])                                                      # теги собраны по словам запроса
 
     def test_external_provider_keeps_old_single_picture_path(self):
         svc, model, ev, tmp = self.make(["anime girl, white hair"])
@@ -281,121 +195,23 @@ class Studio(StudioKit, unittest.TestCase):
         self.assertEqual(self.calls, [])                                                                          # режиссёр выключен — прежний путь
 
 
-class AskCount(Studio):
-    """«Сколько вариантов?»: новая просьба ждёт ответа 1–4; число запускает рисование, любое другое сообщение вопрос отменяет."""
+class AskCount(StudioKit, unittest.TestCase):
+    """Для фото по-прежнему «Сколько вариантов?»: новая просьба ждёт ответа 1–4 (у аниме вместо этого подтверждение — см. test_imgflow)."""
 
     def test_asks_then_draws_chosen_number(self):
-        svc, model, ev, tmp = self.make([BRIEF], ask=True)
-        cid = svc.send(None, "Сделай изображения аниме девушки с белыми волосами", wait=True)
+        svc, model, ev, tmp = self.make(["TAGS: cat\nSCENE: A cat photo.\nBEST: flux2klein\nWHY: x"], ask=True)
+        cid = svc.send(None, "Сделай фотографию кота", wait=True)
         c = svc.store.get(cid)
-        self.assertEqual(self.calls, [])                                                    # ничего не рисовалось
+        self.assertEqual(self.calls, [])
         self.assertEqual(c["messages"][1]["choices"], ["1", "2", "3", "4"])
-        self.assertIn("Сколько вариантов", c["messages"][1]["text"])
-        self.assertIn("pending_image", c)
-        self.assertEqual([e for e in ev if e["type"] == "chat_done"][-1]["choices"], ["1", "2", "3", "4"])
         svc.send(cid, "2", wait=True)
-        c = svc.store.get(cid)
         self.assertEqual(len(self.calls), 2)
-        self.assertEqual(len(c["messages"][3]["files"]), 2)
-        self.assertNotIn("pending_image", c)
-        self.assertIn("white hair", self.calls[0]["prompt"])                                 # описание — по исходной просьбе, а не по «2»
-
-    def test_word_answer_and_other_text_cancels(self):
-        svc, model, ev, tmp = self.make([BRIEF], ask=True)
-        cid = svc.send(None, "нарисуй аниме девушку", wait=True)
-        svc.send(cid, "три", wait=True)
-        self.assertEqual(len(self.calls), 3)
-        cid2 = svc.send(None, "нарисуй аниме девушку", wait=True)
-        svc.send(cid2, "кстати, как дела?", wait=True)
-        self.assertEqual(len(self.calls), 3)                                                # отмена: ничего нового не нарисовано
-        self.assertNotIn("pending_image", svc.store.get(cid2))
-
-    def test_no_question_when_count_named_or_edit_or_disabled(self):
-        svc, model, ev, tmp = self.make([BRIEF, BRIEF], ask=True)
-        cid = svc.send(None, "нарисуй аниме девушку, 2 варианта", wait=True)
-        self.assertEqual(len(self.calls), 2)                                                # число названо — не спрашиваем
-        svc.send(cid, "сделай волосы длиннее", wait=True)
-        self.assertNotIn("pending_image", svc.store.get(cid))                               # правка — не спрашиваем
-        svc2, *_ = self.make([BRIEF], ask=False)
-        n = len(self.calls)
-        svc2.send(None, "нарисуй аниме девушку", wait=True)
-        self.assertEqual(len(self.calls) - n, 4)                                            # вопрос отключён — как раньше
 
     def test_parse_answer(self):
         for t, n in (("3", 3), ("Три", 3), ("2 варианта", 2), (" 1. ", 1), ("одну", 1)):
             self.assertEqual(d.parse_answer(t), n, t)
         for t in ("0", "5", "нарисуй кота", "", "я хочу 3 кота"):
             self.assertIsNone(d.parse_answer(t), t)
-
-
-class WeakPc(StudioKit, unittest.TestCase):
-    """Видеокарта 4 ГБ (как у автора жалобы «рисует 10 минут»): быстрая модель первой, текстовая модель выгружается, виден прогресс."""
-    GPU = {"detected": True, "gpu": "GTX 1650", "vram_gb": 4.0, "integrated": False, "gpus": []}
-
-    def make(self, replies, ask=False):
-        svc, model, ev, tmp = super().make(replies, ask)
-        model.stopped = 0
-        model.flavor, model.state = "vulkan", "ready"
-
-        def stop():
-            model.stopped += 1
-            model.state = "stopped"
-        model.stop = stop
-        return svc, model, ev, tmp
-
-    def test_fast_model_first_text_model_unloaded_and_note(self):
-        svc, model, ev, tmp = self.make([BRIEF])
-        cid = svc.send(None, "нарисуй аниме девушку, 3 варианта", wait=True)
-        self.assertEqual(self.calls[0]["model"], "flux2klein")                                       # быстрая модель рисует первой
-        self.assertEqual(sorted(c["model"] for c in self.calls), sorted(IDS))
-        self.assertEqual(model.stopped, 1)                                                           # Qwen выгружен перед рисованием
-        reply = svc.store.get(cid)["messages"][1]
-        self.assertIn("сначала рисует быстрая модель", reply["text"])
-        self.assertEqual([f["variant"] for f in reply["files"]], [1, 2, 3])
-
-    def test_named_model_is_respected(self):
-        svc, model, ev, tmp = self.make([BRIEF])
-        svc.send(None, "нарисуй аниме девушку через pony, 1 вариант", wait=True)
-        self.assertEqual([c["model"] for c in self.calls], ["ponyxl"])
-
-    def test_plan_reaches_generator_and_progress_events_flow(self):
-        got = {}
-
-        def fake(prompt, size, seed, model_id="", negative="", stop=None, vram="", plan=None, progress=None):
-            got["plan"] = plan
-            progress(3, 20, 2.0)
-            progress(20, 20, 2.0)
-            self.calls.append({"model": model_id})
-            return PNG, "png"
-        localimg.generate = fake
-        svc, model, ev, tmp = self.make([BRIEF])
-        svc.send(None, "нарисуй аниме девушку, 1 вариант", wait=True)
-        self.assertEqual((got["plan"]["mode"], got["plan"]["quality"]), ("low", "fast"))
-        prog = [e for e in ev if e["type"] == "chat_image" and e["status"] == "progress"]
-        self.assertEqual((prog[0]["step"], prog[0]["steps"], prog[0]["eta"]), (3, 20, 34))
-        self.assertTrue(any(e["type"] == "chat_step" and "шаг 3 из 20" in e["text"] for e in ev))
-
-    def test_no_fast_model_installed_suggests_klein(self):
-        localimg.installed_ids = lambda: ["noobai", "ponyxl"]
-        svc, model, ev, tmp = self.make([BRIEF])
-        cid = svc.send(None, "нарисуй аниме девушку, 2 варианта", wait=True)
-        self.assertIn("FLUX.2 Klein рисует в несколько раз быстрее", svc.store.get(cid)["messages"][1]["text"])
-
-    def test_manual_max_power_keeps_order_and_does_not_unload(self):
-        svc, model, ev, tmp = self.make([BRIEF])
-        svc.cfg.update({"images": {"power": "max", "unload_llm": "no"}})
-        svc.send(None, "нарисуй аниме девушку, 3 варианта", wait=True)
-        self.assertEqual([c["model"] for c in self.calls], ["noobai", "ponyxl", "flux2klein"])
-        self.assertEqual(model.stopped, 0)
-
-
-class StrongPc(StudioKit, unittest.TestCase):
-    def test_strong_pc_keeps_llm_loaded(self):
-        svc, model, ev, tmp = self.make([BRIEF])
-        model.flavor, model.state, model.stopped = "vulkan", "ready", 0
-        model.stop = lambda: setattr(model, "stopped", model.stopped + 1)
-        svc.send(None, "нарисуй аниме девушку, 2 варианта", wait=True)
-        self.assertEqual(model.stopped, 0)
 
 
 if __name__ == "__main__":
