@@ -6,17 +6,14 @@ from karina import imgcheck, imgdirector as d, imgflow, localimg, prompts
 from test_imgdirector import PNG, StudioKit
 
 IDS = ["messillustrious", "noobai", "ponyxl", "flux2klein"]
-BRIEF = ("TAGS: 1girl, long white hair, blue eyes, casual clothes, lying, on couch, indoors, living room, window, sunlight\n"
-         "SCENE: An anime girl with long white hair lies on a couch in a living room.\n"
-         "RU: Персонаж: девушка с длинными белыми волосами; Поза: лежит на диване; Одежда: повседневная; Фон: гостиная с окном; Кадр: сверху\n"
-         "BEST: messillustrious\nWHY: фирменный стиль")
-REVISED = ("TAGS: 1girl, very long white hair, blue eyes, casual clothes, lying, on couch, indoors, living room, window, sunlight\n"
-           "SCENE: An anime girl with very long white hair lies on a couch.\n"
-           "RU: Персонаж: девушка с очень длинными белыми волосами; Поза: лежит на диване\n"
-           "BEST: messillustrious\nWHY: x")
-TURN = ("TAGS: 1girl, long white hair, blue eyes, sitting, on couch, from side, profile, indoors\n"
-        "SCENE: An anime girl sits on a couch, seen from the side.\n"
-        "RU: Персонаж: та же девушка; Поза: сидит боком\nBEST: noobai\nWHY: x")
+BRIEF = ("LOOK: девушка с длинными белыми волосами и синими глазами | 1girl, long white hair, blue eyes\n"
+         "OUTFIT: повседневная одежда | casual clothes\n"
+         "POSE: лежит на диване | lying, on couch\n"
+         "SCENE: гостиная с окном, солнечный свет | indoors, living room, window, sunlight\n"
+         "EXTRA: -")
+REVISED = ("LOOK: очень длинные белые волосы | very long white hair\n"
+           "OUTFIT: -\nPOSE: -\nSCENE: -\nEXTRA: -")
+TURN = ("LOOK: -\nOUTFIT: -\nPOSE: сидит боком | sitting, from side, profile\nSCENE: -\nEXTRA: -")
 
 
 class Pure(unittest.TestCase):
@@ -195,10 +192,40 @@ class Flow(StudioKit, unittest.TestCase):
         svc.send(cid, "сделай волосы очень длинными, 2 варианта", wait=True)
         c = svc.store.get(cid)
         self.assertEqual(self.calls, [])
-        self.assertIn("Change requested: сделай волосы очень длинными", model.seen[-1][1]["content"])
-        self.assertIn("очень длинными", c["messages"][5]["text"]); self.assertIn("Вариантов:** 2", c["messages"][5]["text"])
+        self.assertIn("Change requested: сделай волосы очень длинными", model.seen[-1][1]["content"]); self.assertIn("Одежда: повседневная одежда", c["messages"][5]["text"].replace("**", ""))
+        self.assertIn("очень длинные", c["messages"][5]["text"]); self.assertIn("Вариантов:** 2", c["messages"][5]["text"])
         svc.send(cid, "да", wait=True)
         self.assertEqual(len(self.calls), 2); self.assertIn("very long white hair", self.calls[0]["prompt"])
+
+    def test_pick_models_by_buttons_single_model(self):
+        svc, model, ev, tmp = self.make([BRIEF])
+        cid = svc.send(None, "нарисуй аниме девушку, лежит на диване, 1 вариант", wait=True)
+        svc.send(cid, imgflow.BTN_MODELS, wait=True)
+        ch = svc.store.get(cid)["messages"][3]["choices"]
+        self.assertTrue(all(x.startswith(imgflow.PICK_BASE) for x in ch)); self.assertIn(imgflow.PICK_BASE + "NoobAI XL 1.1", ch)
+        svc.send(cid, imgflow.PICK_BASE + "NoobAI XL 1.1", wait=True)
+        ch = svc.store.get(cid)["messages"][5]["choices"]
+        self.assertIn(imgflow.PICK_POSE + "та же модель", ch)
+        svc.send(cid, imgflow.PICK_POSE + "та же модель", wait=True)
+        m = svc.store.get(cid)["messages"][7]
+        self.assertIn("одна модель, без цепочки", m["text"]); self.assertEqual(m["choices"], imgflow.DRAFT_BUTTONS)
+        svc.send(cid, imgflow.BTN_DRAW, wait=True)
+        self.assertEqual([x["model"] for x in self.calls], ["noobai"])
+        self.assertEqual(svc.store.get(cid)["draw"]["models"]["base"], "noobai")           # выбор запоминается и для следующих правок
+
+    def test_live_state_for_returning_to_tab(self):
+        svc, model, ev, tmp = self.make([BRIEF])
+        svc.emit({"type": "chat_start", "chat": "c1", "reply_id": "r1", "user": {}, "title": "t"})
+        svc.emit({"type": "chat_image_plan", "chat": "c1", "id": "r1", "items": [{"n": 1, "label": "Mess"}]})
+        svc.emit({"type": "chat_image", "chat": "c1", "id": "r1", "n": 1, "status": "progress", "step": 3, "steps": 20})
+        svc._busy.acquire()
+        try:
+            lv = svc.live_state("c1")
+            self.assertEqual(lv["plan"][0]["n"], 1); self.assertEqual(lv["tiles"]["1"]["step"], 3); self.assertIsNone(svc.live_state("other"))
+        finally:
+            svc._busy.release()
+        svc.emit({"type": "chat_done", "chat": "c1"})
+        self.assertIsNone(svc.live)
 
     def test_cancel_draft(self):
         svc, model, ev, tmp = self.make([BRIEF])
@@ -271,7 +298,7 @@ class Flow(StudioKit, unittest.TestCase):
         self.assertEqual(self.calls, []); self.assertNotIn("draft", svc.store.get(cid))        # обычный ответ, а не рисование
 
     def test_continue_and_new_buttons(self):
-        svc, model, ev, tmp = self.make([BRIEF, "TAGS: 1girl, black hair, standing\nSCENE: A girl.\nRU: Персонаж: девушка; Поза: стоит\nBEST: noobai\nWHY: x"])
+        svc, model, ev, tmp = self.make([BRIEF, "LOOK: девушка с чёрными волосами | 1girl, black hair\nOUTFIT: -\nPOSE: стоит | standing\nSCENE: -\nEXTRA: -"])
         cid = self.draw_first(svc)
         svc.send(cid, imgflow.BTN_CONTINUE, wait=True)
         self.assertIn("Что поменять", svc.store.get(cid)["messages"][-1]["text"]); self.assertTrue(svc.store.get(cid)["draw"]["active"])
@@ -329,3 +356,56 @@ class Flow(StudioKit, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CountPhrases(unittest.TestCase):
+    def test_variants(self):
+        from karina import imgflow
+        for t, n in [("Вариантов: 1", 1), ("вариантов 2", 2), ("один эскиз", 1), ("только один", 1), ("3 варианта", 3), ("Вариантов = три", 3)]:
+            self.assertEqual(imgflow.count_from(t, 4), (n, True), t)
+        self.assertEqual(imgflow.count_from("нарисуй кошку", 1), (1, False))
+        self.assertEqual(imgflow.count_from("1", 4), (4, False))
+        self.assertEqual(imgflow.count_from("1", 4, bare=True), (1, True))
+
+
+class EditDraft(unittest.TestCase):
+    def test_edit_shows_change_and_count(self):
+        from karina import imgflow
+        t = imgflow.draft_text({"ru": "", "tags": "1girl"}, "кошка", "edit", "Mess", (832, 1216), 1, 3, "on", change="сделай волосы длиннее")
+        self.assertIn("Что меняю:** сделай волосы длиннее", t)
+        self.assertIn("Вариантов:** 1", t)
+        self.assertIn("один лучший результат", t)
+
+
+class Slots(unittest.TestCase):
+    def test_edit_keeps_untouched_slots(self):
+        from karina import imgslots
+        card = imgslots.merge({}, imgslots.parse(BRIEF), "x", False)
+        card = imgslots.merge(card, imgslots.parse("LOOK: -\nSCENE: комната в фиолетовых тонах, компьютер с двумя мониторами | purple_theme, 2monitors, computer, indoors\nOUTFIT: -"),
+                              "поменяй фон: комната в фиолетовых тонах, компьютер с двумя мониторами", True)
+        self.assertEqual(card["outfit"]["tags"], "casual clothes")                         # одежда не сбросилась
+        self.assertIn("2monitors", imgslots.compose(card))
+        self.assertIn("lying", imgslots.compose(card))
+        self.assertNotIn("living room", imgslots.compose(card))
+
+    def test_unmentioned_slot_ignored(self):
+        from karina import imgslots
+        card = imgslots.merge({}, imgslots.parse(BRIEF), "x", False)
+        card = imgslots.merge(card, imgslots.parse("OUTFIT: красное платье | red dress\nSCENE: ночной город | night, city"), "поменяй фон на ночной город", True)
+        self.assertEqual(card["outfit"]["tags"], "casual clothes")
+        self.assertIn("night", card["scene"]["tags"])
+
+    def test_look_keeps_count_tag(self):
+        from karina import imgslots
+        card = imgslots.merge({}, imgslots.parse(BRIEF), "x", False)
+        card = imgslots.merge(card, imgslots.parse("LOOK: рыжие волосы | red hair"), "сделай рыжие волосы", True)
+        self.assertTrue(imgslots.compose(card).startswith("1girl"))
+
+    def test_models_from_text_and_buttons(self):
+        ids = ["messillustrious", "noobai", "ponyxl"]
+        self.assertEqual(imgflow.models_from_text("основу рисует Mess, позу — Pony", ids), {"base": "messillustrious", "pose": "ponyxl"})
+        self.assertEqual(imgflow.models_from_text("рисуй только моделью NoobAI", ids), {"base": "noobai", "pose": "same"})
+        self.assertEqual(imgflow.models_from_text("сделай волосы длиннее", ids), {})
+        self.assertEqual(imgflow.classify("🧩 Модели", True), "models")
+        self.assertEqual(imgflow.classify("Рисует основу: Mess Illustrious Anime Mix", True), "pick_base:mess illustrious anime mix")
+        self.assertEqual(imgflow.model_by_name("Mess Illustrious Anime Mix", ids), "messillustrious")

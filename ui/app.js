@@ -539,6 +539,16 @@
     chCur = id; chBubble = null; $('#chMsgs').textContent = '';
     if (!c.messages.length) showWelcome();
     c.messages.forEach((m, i) => addMsg(m.role, m.text, m.id, m.steps, m.files, m.brain, m.files_in, m.project, m.activity, i === c.messages.length - 1 ? (m.choices || null) : null));
+    const lv = await call('chat_live', id);            // ответ ещё идёт: вернуть пузырь, плитки картинок и строку состояния
+    if (lv && chCur === id) {
+      actNodes = []; actBox = null;
+      chBubble = addMsg('assistant', '', lv.id); chBubble.classList.add('typing');
+      if (lv.text) renderMd(chBubble, lv.text);
+      const row = chBubble.parentElement;
+      if (lv.plan && lv.plan.length) imgPlan(row, lv.plan);
+      Object.values(lv.tiles || {}).forEach(t => imgEvent(row, t));
+      setBusy(true); setStep(lv.step || 'Работаю…');
+    }
     loadChatList(); scrollChat();
   }
   async function openChatTab() {
