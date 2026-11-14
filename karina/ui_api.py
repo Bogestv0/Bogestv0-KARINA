@@ -423,6 +423,10 @@ class Api:
     def chat_get(self, cid: str):
         return self.assistant.chat.store.get(cid)
 
+    def chat_live(self, cid: str):
+        """Идущий сейчас ответ этого чата (чтобы после смены вкладки окно снова показало ход рисования)."""
+        return self.assistant.chat.live_state(cid)
+
     def chat_delete(self, cid: str):
         return self.assistant.chat.store.delete(cid)
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import datetime, json, random, re, threading, time, uuid
 from pathlib import Path
-from . import coder as codermod, files as filesmod, images as imagesmod, imgcheck, imgdirector, imgflow, imgpower, localimg, net, prompts, research, websearch
+from . import coder as codermod, files as filesmod, images as imagesmod, imgcheck, imgdirector, imgflow, imgpower, imgslots, localimg, net, prompts, research, websearch
 from .brain import Brain, BrainUnavailable
 from .config import DATA
 from .engine import EngineError
@@ -233,7 +233,9 @@ class _NoLocalCfg:
 class ChatService:
     def __init__(self, cfg, engine, emit, speak=None, store: ChatStore | None = None, brain: Brain | None = None,
                  files: filesmod.FileService | None = None, coder=None):
-        self.cfg, self.engine, self.emit, self.speak = cfg, engine, emit, speak
+        self.cfg, self.engine, self.speak = cfg, engine, speak
+        self._emit_raw = emit
+        self.live: dict | None = None            # идущий сейчас ответ: нужен, чтобы при возврате на вкладку чата плитки и ход рисования не пропадали
         self.coder = coder
         self.store = store or ChatStore()
         self.brain = brain or Brain(cfg, engine)
@@ -241,6 +243,31 @@ class ChatService:
         self._busy = threading.Lock()
         self._stop = threading.Event()
         self.current: str | None = None
+
+    def emit(self, ev: dict):
+        """Передаёт событие окну и запоминает состояние идущего ответа (шаг, текст, плитки картинок)."""
+        try:
+            t = ev.get("type")
+            if t == "chat_start":
+                self.live = {"chat": ev.get("chat"), "id": ev.get("reply_id"), "step": "Думаю…", "text": "", "plan": [], "tiles": {}}
+            elif self.live and ev.get("chat") == self.live["chat"]:
+                if t == "chat_step":
+                    self.live["step"] = ev.get("text", "")
+                elif t == "chat_delta":
+                    self.live["text"] = ev.get("text", "")
+                elif t == "chat_image_plan":
+                    self.live["plan"] = list(ev.get("items") or [])
+                elif t == "chat_image":
+                    self.live["tiles"][str(ev.get("n"))] = {k: v for k, v in ev.items() if k != "type"}
+                elif t == "chat_done":
+                    self.live = None
+        except Exception:
+            pass
+        self._emit_raw(ev)
+
+    def live_state(self, cid: str):
+        lv = self.live
+        return json.loads(json.dumps(lv)) if lv and lv.get("chat") == cid and self.busy else None
 
     # ---------- диалоги ----------
     def voice_chat_id(self) -> str:
@@ -388,7 +415,7 @@ class ChatService:
         ids = imgdirector.available(self.cfg)
         if ids:
             if self._anime_applies(text):
-                tags_ids, roles = self._anime_ids()
+                tags_ids, roles = self._anime_ids(chat)
                 fl = self._flow_cfg()
                 draft = chat.get("draft") if confirmed else None
                 if draft is None:
@@ -581,6 +608,31 @@ class ChatService:
     _RESTYLE = re.compile(r"в (?:аниме )?стил\w*|аниме стил\w*|рисовк\w*|перерисуй|как в аниме|в аниме")
     _POSEWORDS = re.compile(r"поз[аыуео]\w*|повер\w+|сид\w+|леж\w+|стоя\w*|на спин\w*|на бок\w*|на живот\w*|на колен\w*|четвереньк\w*|ракурс\w*|вид (?:сзади|сверху|снизу)|руки|руку|ногу|ноги")
 
+    def _make_slots(self, text: str, prev_brief: dict | None, edit: bool, reply: dict, notes: list[str], step) -> dict:
+        """Описание по слотам (imgslots): ваши слова дословно + теги; в правке меняются только названные слоты, остальные остаются как были."""
+        step("Разбираю, что где нарисовать…")
+        card = imgslots.card_from(prev_brief) if edit else {}
+        upd: dict = {}
+        answered = False
+        try:
+            choice = self.brain.choose(text)
+            reply["brain"] = choice.label
+            raw = choice.backend.chat(imgslots.request(text, card, edit), max_tokens=700, temperature=0.3, stop=self._stop)
+            upd = imgslots.parse(raw)
+            answered = bool(imgslots._LINE.search(raw or ""))            # модель ответила по формату: «-» во всех слотах значит «менять нечего»
+        except (BrainUnavailable, EngineError) as e:
+            notes.append(f"ⓘ Модель сейчас не отвечает ({e}) — " + ("правку отнесла к нужному разделу по словам, остальное не трогала." if edit else "собрала описание по вашим словам сама, результат может быть хуже."))
+        if not upd and not (answered and edit):
+            upd = imgslots.fallback(text, card, edit)
+        card = imgslots.merge(card, upd, text, edit)
+        for k, c in card.items():                                           # слабая модель ответила по-русски — теги переводим словарём
+            if c.get("tags") and imagesmod.has_cyrillic(c["tags"]):
+                c["tags"] = imgslots.fallback(c.get("ru", ""), None, False)["look"][1]
+        brief = imgslots.to_brief(card)
+        if not brief["tags"]:
+            brief = dict(imgdirector.fallback_brief(text), slots=card, ru=brief["ru"])
+        return brief
+
     def _make_brief(self, text: str, ids: list[str], prev_brief: dict | None, edit: bool, reply: dict, notes: list[str], step) -> dict:
         """Описание картинки от текстовой модели (теги + предложения + короткий русский пересказ для подтверждения)."""
         step("Продумываю картинку…")
@@ -598,10 +650,33 @@ class ChatService:
             brief["tags"] = fb["tags"]
         return brief
 
-    def _anime_ids(self) -> tuple[list[str], dict]:
-        """(аниме-модели, роли «стилист / позировщик»). Пусто — аниме-моделей SDXL нет, работает прежний путь."""
+    def _anime_ids(self, chat: dict | None = None) -> tuple[list[str], dict]:
+        """(аниме-модели, роли «основа / поза»). Пусто — аниме-моделей SDXL нет, работает прежний путь.
+        Если вы выбрали модели кнопками («Модели»), они главнее автоматического выбора; «поза: та же» — рисует одна модель без цепочки."""
         ids = [m for m in imgdirector.available(self.cfg) if imgdirector.artist(m)["dialect"] == "tags"]
-        return ids, imgflow.roles(ids)
+        roles = imgflow.roles(ids)
+        pick = ((chat or {}).get("draw") or {}).get("models") or {}
+        if roles and pick:
+            if pick.get("base") in ids:
+                roles["style"] = pick["base"]
+                if not pick.get("pose"):
+                    roles["pose"] = imgflow.pick(imgflow.POSE_ORDER, [m for m in ids if m != pick["base"]]) or pick["base"]
+            if pick.get("pose") == "same":
+                roles["pose"] = roles["style"]
+                roles["single"] = True
+            elif pick.get("pose") in ids:
+                roles["pose"] = pick["pose"]
+        return ids, roles
+
+    @staticmethod
+    def _has_content(text: str, mods: dict) -> bool:
+        """В правке черновика есть что менять в картинке, а не только «2 варианта», «обои 4k» или «рисуй моделью Mess»."""
+        rest = re.sub(r"[^а-яёa-z ]", " ", norm(text))
+        rest = re.sub(r"\b(?:вариант\w*|эскиз\w*|картин\w*|обои|обоев|формат\w*|размер\w*|один|одну|одно|два|две|три|четыре|пять|шесть|только|пожалуйста|сделай|k|p)\b", " ", rest)
+        if not mods:
+            return bool(rest.split())
+        rest = re.sub(r"\b(?:модел\w*|основ\w*|рису\w*|мен\w*|делает|поз\w*|mess|noobai|noob|pony|пони|месс|illustrious|animagine|а|и|на|в|с)\b", " ", rest)
+        return len(rest.split()) >= 2
 
     def _anime_applies(self, text: str, prev: dict | None = None) -> bool:
         """Рисовать в фирменном аниме-стиле (с подтверждением и кругами), а не прежним путём: есть аниме-модель и просят не фото/реализм."""
@@ -619,20 +694,57 @@ class ChatService:
             chat.pop("draft", None)
             return ("Закрыла режим рисования. Теперь я снова обычный помощник: отвечаю, ищу в интернете, пишу код и файлы. "
                     "Чтобы вернуться к картинкам, напишите «нарисуй …»."), []
+        keep = {"models": (chat.get("draw") or {}).get("models")} if (chat.get("draw") or {}).get("models") else {}
         if ctl == "continue":
-            chat["draw"] = {"active": True}
+            chat["draw"] = dict(keep, active=True)
             return ("Что поменять? Например: «поверни её вполоборота», «пусть сидит на диване», «сделай волосы длиннее», «ночью», "
                     "«на втором варианте улыбается», «ещё варианты» или приложите свою картинку и напишите, что с ней сделать."), []
         if ctl == "new":
-            chat["draw"] = {"active": True, "fresh": True}
+            chat["draw"] = dict(keep, active=True, fresh=True)
             chat.pop("draft", None)
             return "Опишите новый рисунок: кто, что делает (поза), как одета и где. Например: «девушка с белыми волосами лежит на диване в комнате». Размер: «обои», «аватар».", []
+        if ctl == "models" or ctl.startswith("pick_"):
+            return self._models_menu(chat, ctl)
         if ctl == "edit_ask":
             return ("Напишите, что поменять в описании: поза, одежда, фон, цвета, число вариантов («2 варианта»), формат («обои 4k»). "
                     "Я перепишу описание и покажу снова."), list(imgflow.DRAFT_BUTTONS)
         chat.pop("draft", None)                                                  # cancel
-        chat["draw"] = {"active": had_pic}
+        chat["draw"] = dict(keep, active=had_pic)
         return "Хорошо, не рисую. Напишите, когда захотите.", (list(imgflow.DONE_BUTTONS) if had_pic else [])
+
+    def _models_menu(self, chat: dict, ctl: str) -> tuple[str, list[str]]:
+        """Кнопки выбора моделей: сначала «кто рисует основу» (внешность, одежда, фон, детали), потом «кто меняет позу». Выбор запоминается на весь рисунок."""
+        ids, roles = self._anime_ids(chat)
+        titles = {m: imgdirector.title(m) for m in ids}
+        draw = chat.setdefault("draw", {"active": True})
+        pick = draw.setdefault("models", {})
+        if ctl == "models":
+            pick.clear()
+            return ("**Кто рисует основу?** Основа — внешность, одежда, фон и детали. Нажмите модель (сейчас по умолчанию: " + titles.get(roles["style"], "—") + ").",
+                    [imgflow.PICK_BASE + titles[m] for m in ids] + [imgflow.PICK_BASE + "авто"])
+        what, _, name = ctl.partition(":")
+        if what == "pick_base":
+            mid = imgflow.model_by_name(name, ids, titles)
+            if mid:
+                pick["base"] = mid
+            else:
+                pick.pop("base", None)
+            _, roles = self._anime_ids(chat)
+            return ("**Кто меняет позу?** Эта модель перерисует позу поверх основы; «та же модель» — рисует только одна, без передачи другой.",
+                    [imgflow.PICK_POSE + titles[m] for m in ids if m != roles["style"]] + [imgflow.PICK_POSE + "та же модель", imgflow.PICK_POSE + "авто"])
+        mid = imgflow.model_by_name(name, ids, titles)
+        if "та же" in name or "одна" in name:
+            pick["pose"] = "same"
+        elif mid:
+            pick["pose"] = mid
+        else:
+            pick.pop("pose", None)
+        _, roles = self._anime_ids(chat)
+        d = chat.get("draft")
+        head = "Выбрано: основа — **" + titles.get(roles["style"], "—") + "**, поза — **" + (titles.get(roles["pose"], "—") if not roles.get("single") else "та же модель, без цепочки") + "**.\n\n"
+        if d:
+            return head + self._draft_message(d, roles, ids, self._flow_cfg()), list(imgflow.DRAFT_BUTTONS)
+        return head + "Теперь опишите, что рисовать.", []
 
     def _anime_prepare(self, chat: dict, reply: dict, text: str, step, ids: list[str], roles: dict, paths: list[str]) -> str:
         """Готовит описание и показывает его на подтверждение (ничего не рисует). → текст ответа (кнопки «Рисовать / Изменить / Отмена»)."""
@@ -677,20 +789,23 @@ class ChatService:
             brief = dict(prev_brief, best="", why="")
             brief.setdefault("ru", "")
         else:
-            brief = self._make_brief(text, ids, prev_brief, edit, reply, notes, step)
+            brief = self._make_slots(text, prev_brief, edit, reply, notes, step)
         if self._stop.is_set():
             return "*(остановлено)*"
 
         # число вариантов, размер, обои
-        dflt = imgdirector.settings(self.cfg)["variants"]
+        dflt = max(1, min(imgdirector.MAX_VARIANTS, int((self.cfg.get("images") or {}).get("draw_variants") or 1)))   # рисование: по умолчанию один эскиз
+        said, named_n = imgflow.count_from(text, dflt, imgdirector.MAX_VARIANTS)
+        if named_n and not intent.explicit_count:
+            intent.count, intent.explicit_count = said, True
         if kind in ("new", "more"):
             count = intent.count if intent.explicit_count else (len(prev.get("variants", [])) if kind == "more" and prev else dflt)
             if kind == "more":
                 kind, targets = "new", []                  # «ещё варианты»: новые картинки по прежнему описанию, а не правка старых
         elif kind == "upload":
             count = intent.count if intent.explicit_count else 1
-        else:
-            count = len(targets) or 1
+        else:                                              # правка: по умолчанию одна картинка (или столько, сколько выбрано), число можно назвать
+            count = intent.count if intent.explicit_count else (len(targets) or 1)
         count = max(1, min(imgdirector.MAX_VARIANTS, count))
         wall = imagesmod.wallpaper_target(style_text) if imagesmod.is_wallpaper(text) or (edit and (prev or {}).get("wallpaper")) else None
         if kind == "new":
@@ -710,27 +825,38 @@ class ChatService:
             size = localimg.sdxl_size((1024, 576))
         draft = {"request": text, "style_text": style_text, "kind": kind, "sched": sched, "brief": brief, "count": count, "targets": targets,
                  "size": list(size), "wallpaper": list(wall) if wall else None, "upload": ups[0] if ups else "",
-                 "stem": ((prev or {}).get("stem") if edit else None) or imagesmod.file_stem(text), "notes": notes}
+                 "stem": ((prev or {}).get("stem") if edit else None) or imagesmod.file_stem(text), "notes": notes,
+                 "change": text.strip()[:300] if kind in ("edit", "upload") else ""}
         chat["draft"] = draft
         reply["choices"] = list(imgflow.DRAFT_BUTTONS)
         return self._draft_message(draft, roles, ids, fl)
 
     def _draft_message(self, d: dict, roles: dict, ids: list[str], fl: dict) -> str:
         models = imgdirector.title(roles["style"]) + (f" + {imgdirector.title(roles['pose'])} (поза)" if roles["pose"] != roles["style"] else "")
+        if roles.get("single"):
+            models += " — одна модель, без цепочки"
         return imgflow.draft_text(d["brief"], d["request"], d["kind"], models, tuple(d["size"]), d["count"], fl["rounds"],
-                                  self._check_state(fl), tuple(d["wallpaper"]) if d.get("wallpaper") else None, bool(d.get("upload")), "", d.get("notes"))
+                                  self._check_state(fl), tuple(d["wallpaper"]) if d.get("wallpaper") else None, bool(d.get("upload")), "", d.get("notes"),
+                                  d.get("change", ""))
 
     def _anime_revise(self, chat: dict, reply: dict, text: str, step, ids: list[str], roles: dict) -> str:
         """Пользователь написал, что поменять в описании: переписываем описание, число вариантов и формат, показываем снова."""
         fl = self._flow_cfg()
         d = chat["draft"]
         notes: list[str] = []
-        d["brief"] = self._make_brief(text, ids, d["brief"], True, reply, notes, step)
+        mods = imgflow.models_from_text(text, ids, {m: imgdirector.title(m) for m in ids})
+        if mods:                                                            # «основу рисует Mess, позу — Pony»
+            chat["draw"] = dict(chat.get("draw") or {}, models=dict((chat.get("draw") or {}).get("models") or {}, **mods))
+            ids2, roles = self._anime_ids(chat)
+            notes.append("ⓘ Модели выбраны по вашим словам: основа — " + imgdirector.title(roles["style"]) + ", поза — " + imgdirector.title(roles["pose"]) + ".")
+        d["brief"] = self._make_slots(text, d["brief"], True, reply, notes, step) if self._has_content(text, mods) else d["brief"]
         d["request"] = (d["request"] + "; " + text)[-700:]
         d["style_text"] = (d.get("style_text", "") + " " + text)[-700:]
-        n, named = imgflow.count_from(text, d["count"], imgdirector.MAX_VARIANTS)
-        if named and not d.get("targets"):
+        n, named = imgflow.count_from(text, d["count"], imgdirector.MAX_VARIANTS, bare=True)
+        if named:
             d["count"] = n
+        if d.get("kind") in ("edit", "upload"):
+            d["change"] = (d.get("change", "") + "; " + text.strip())[-300:].lstrip("; ")
         if imagesmod.is_wallpaper(text):
             d["wallpaper"] = list(imagesmod.wallpaper_target(text))
             d["size"] = list(localimg.sdxl_size((1024, 576)))
@@ -758,16 +884,23 @@ class ChatService:
                 notes.append(f"ⓘ Модель проверки не скачалась ({str(e)[:120]}) — рисую один круг без проверки.")
         checking = state != "off" and imgcheck.ready()
         rounds = fl["rounds"] if checking else 1
+        if roles.get("single"):
+            rounds = 1                                                      # вы выбрали одну модель: перерисовок другими моделями нет
 
         # основа для правок: прежние картинки или присланная пользователем
         items: list[dict] = []
         if kind == "edit":
+            bases = []
             for t in d["targets"]:
                 raw = self._picture(t["file"])
                 if raw is None:
                     notes.append(f"ⓘ Картинку варианта {t['n']} не нашла в папке — пропускаю.")
                     continue
-                items.append({"n": len(items) + 1, "seed": t.get("seed") or random.randint(1, 2**31 - 1), "init": imgflow.prepare_init(raw)[0]})
+                bases.append((t, imgflow.prepare_init(raw)[0]))
+            for i in range(max(d["count"], len(bases)) if bases else 0):       # вариантов больше, чем картинок: правим ту же основу с другим seed
+                t, init = bases[i % len(bases)]
+                seed = (t.get("seed") or random.randint(1, 2**31 - 1)) if i < len(bases) else random.randint(1, 2**31 - 1)
+                items.append({"n": len(items) + 1, "seed": seed, "init": init})
         elif kind == "upload":
             try:
                 base = imgflow.prepare_init(Path(d["upload"]).read_bytes())[0]
@@ -868,7 +1001,7 @@ class ChatService:
             return ("".join(x + "\n\n" for x in notes) + f"⚠ Не получилось нарисовать: {why}"), why, []
 
         reply["image_set"] = {"request": style_text, "stem": stem, "size": list(size), "wallpaper": d.get("wallpaper"), "variants": done,
-                              "brief": {"tags": brief["tags"], "scene": brief["scene"], "ru": brief.get("ru", "")}}
+                              "brief": {"tags": brief["tags"], "scene": brief["scene"], "ru": brief.get("ru", ""), "slots": brief.get("slots")}}
         reply["image_prompt"] = done[0]["prompt"]
         reply["brain"] = ((reply.get("brain") or "") + " · " if reply.get("brain") else "") + "рисуют: " + ", ".join(dict.fromkeys(x["title"] for x in done))
         lead = ("**Готово — поправила.**" if kind == "edit" else "**Готово — переделала вашу картинку.**" if kind == "upload"
@@ -887,7 +1020,7 @@ class ChatService:
             out.append("*(остановлено)*")
         out.append("Картинки в папке «Документы\\Карина». Что дальше — кнопки ниже или просто напишите правку: «поверни её вполоборота», «на втором варианте сделай волосы длиннее», «ночью», «ещё варианты».")
         reply["choices"] = list(imgflow.DONE_BUTTONS)
-        chat["draw"] = {"active": True}
+        chat["draw"] = dict(chat.get("draw") or {}, active=True)
         chat.pop("draft", None)
         return "\n\n".join(out), "", made
 
@@ -1092,7 +1225,7 @@ class ChatService:
                     reply["choices"] = btns
                 spoken = reply["text"][:160]
             elif way == "image":
-                a_ids, a_roles = self._anime_ids()
+                a_ids, a_roles = self._anime_ids(chat)
                 if draft and ctl == "" and a_roles:
                     out_text, err_img, made_img = self._anime_revise(chat, reply, text, step, a_ids, a_roles), "", []
                 else:

@@ -22,8 +22,10 @@ IMAGE_EXT = {"png", "jpg", "jpeg", "webp", "bmp", "gif"}
 
 # ---- кнопки под ответами Карины (как они приходят обратно в чат, пока без эмодзи — norm() их убирает)
 BTN_DRAW, BTN_EDIT, BTN_CANCEL = "✅ Рисовать", "✏️ Изменить", "✖ Отмена"
+BTN_MODELS = "🧩 Модели"
+PICK_BASE, PICK_POSE = "Рисует основу: ", "Меняет позу: "          # кнопки выбора моделей: после двоеточия — название модели
 BTN_CONTINUE, BTN_NEW, BTN_CLOSE = "✏️ Продолжить редактировать", "🎨 Новый рисунок", "✖ Закрыть рисование"
-DRAFT_BUTTONS = [BTN_DRAW, BTN_EDIT, BTN_CANCEL]
+DRAFT_BUTTONS = [BTN_DRAW, BTN_EDIT, BTN_MODELS, BTN_CANCEL]
 DONE_BUTTONS = [BTN_CONTINUE, BTN_NEW, BTN_CLOSE]
 
 
@@ -35,6 +37,9 @@ _CANCEL = re.compile(r"^(?:отмена|отменить|отмени|не на�
 _EDIT_BTN = re.compile(r"^изменить$")
 _CONT_BTN = re.compile(r"^продолжить редактир\w*$")
 _NEW_BTN = re.compile(r"^новый рисунок$")
+_MODELS_BTN = re.compile(r"^(?:модели|выбрать модели|выбор моделей|какие модели)$")
+_PICK_BASE = re.compile(r"^рисует основу[: ]+(.+)$")
+_PICK_POSE = re.compile(r"^меняет позу[: ]+(.+)$")
 
 
 def classify(text: str, has_draft: bool) -> str:
@@ -49,6 +54,14 @@ def classify(text: str, has_draft: bool) -> str:
     if _NEW_BTN.match(t):
         return "new"
     if has_draft:
+        if _MODELS_BTN.match(t):
+            return "models"
+        m = _PICK_BASE.match(t)
+        if m:
+            return "pick_base:" + m.group(1).strip()
+        m = _PICK_POSE.match(t)
+        if m:
+            return "pick_pose:" + m.group(1).strip()
         if _CONFIRM.match(t):
             return "confirm"
         if _CANCEL.match(t):
@@ -237,18 +250,32 @@ def ru_items(ru: str) -> list[tuple[str, str]]:
 
 
 def draft_text(brief: dict, request: str, kind: str, style_title: str, size: tuple[int, int], count: int, rounds: int, check: str,
-               wallpaper: tuple[int, int] | None = None, uploaded: bool = False, models_note: str = "", notes: list[str] | None = None) -> str:
+               wallpaper: tuple[int, int] | None = None, uploaded: bool = False, models_note: str = "", notes: list[str] | None = None,
+               change: str = "") -> str:
     """Что Карина собирается нарисовать — для подтверждения. Всё на русском и коротко, чтобы глазами сверить с тем, что хотелось."""
     head = {"new": "Вот что я нарисую", "edit": "Вот как я поправлю картинку", "more": "Нарисую ещё варианты по прежнему описанию"}.get(kind, "Вот что я нарисую")
     if uploaded:
         head = "Вот как я переделаю вашу картинку"
     lines = [f"**{head}:**"]
     items = ru_items(brief.get("ru", ""))
-    if items:
+    slots = brief.get("slots") if isinstance(brief.get("slots"), dict) else None
+    if slots:
+        from . import imgslots
+        for key, label in imgslots.SLOTS:
+            c = slots.get(key) or {}
+            if c.get("ru"):
+                lines.append(f"• **{label}:** {c['ru']}")
+            elif key != "extra":
+                lines.append(f"• **{label}:** — не указано (оставлю на усмотрение модели)")
+        lines.append(f"• **Теги, которые уйдут рисующей модели:** {brief.get('tags', '')[:420]}")
+    elif items:
         lines += [f"• **{k}:** {v}" for k, v in items]
     else:
         lines.append(f"• **По вашему запросу:** {request.strip()[:240]}")
         lines.append(f"• **Теги:** {brief.get('tags', '')[:300]}")
+    if change and kind in ("edit", "upload"):
+        lines.insert(1, f"• **Что меняю:** {change.strip()[:300]}")
+        lines.append("• **Остальное остаётся как на картинке** (персонаж, стиль, фон), если вы не просили иначе.")
     shape = "вертикальная" if size[1] > size[0] else "широкая" if size[0] > size[1] else "квадрат"
     if wallpaper:
         lines.append(f"• **Формат:** обои {wallpaper[0]}×{wallpaper[1]} (рисую широкий кадр {size[0]}×{size[1]} и увеличиваю)")
@@ -256,7 +283,7 @@ def draft_text(brief: dict, request: str, kind: str, style_title: str, size: tup
         lines.append(f"• **Формат:** {shape}, {size[0]}×{size[1]}")
     lines.append(f"• **Стиль:** аниме как в кадрах современных сериалов ({style_title})")
     if kind != "more" or count:
-        lines.append(f"• **Вариантов:** {count}" + (f" · проверяю результат и при необходимости поправляю позу (до {rounds} кругов)" if check in ("on", "download") and rounds > 1 else ""))
+        lines.append(f"• **Вариантов:** {count}" + (f" · проверяю результат; если не получилось, передам картинку другой модели (до {rounds} кругов)" + (" — покажу один лучший результат" if count == 1 else "") if check in ("on", "download") and rounds > 1 else ""))
     if check == "download":
         lines.append("• Для проверки результата один раз скачаю маленькую модель-«тегер» (~0,4 ГБ).")
     elif check == "nopkg":
@@ -267,17 +294,72 @@ def draft_text(brief: dict, request: str, kind: str, style_title: str, size: tup
         lines.append("ⓘ " + models_note)
     for n in notes or []:
         lines.append(n)
+    if slots and kind in ("new", "upload"):
+        from . import imgslots
+        miss = imgslots.missing(slots)
+        if miss:
+            lines.append(f"\n❓ Хотите уточнить: {', '.join(miss)}? Напишите — добавлю дословно, как скажете.")
     lines.append("\nВсё верно? Нажмите **«Рисовать»** — или напишите, что поменять: «сделай волосы длиннее», «пусть сидит», «ночью», «2 варианта», «обои 4k».")
     return "\n".join(lines)
 
 
-def count_from(text: str, default: int, maximum: int = 6) -> tuple[int, bool]:
-    """Число вариантов из фразы («3 варианта», «два варианта», «один вариант»). → (число, назвал ли пользователь)."""
+def count_from(text: str, default: int, maximum: int = 6, bare: bool = False) -> tuple[int, bool]:
+    """Число вариантов из фразы («3 варианта», «Вариантов: 1», «один эскиз», «только один»). → (число, назвал ли пользователь).
+    bare=True (мы сейчас правим черновик) — разрешает и голое «1» / «один»."""
     t = norm(text)
     words = {"один": 1, "одну": 1, "одно": 1, "два": 2, "две": 2, "три": 3, "четыре": 4, "пять": 5, "шесть": 6}
-    m = re.search(r"\b(\d|один|одну|одно|два|две|три|четыре|пять|шесть)\s+(?:варианта|вариантов|вариант|картинки|картинок|картинку|изображения|изображений|рисунка|рисунков|рисунок|штуки|штук)\b", t)
+    num = r"(\d|один|одну|одно|два|две|три|четыре|пять|шесть)"
+    noun = r"(?:вариант\w*|эскиз\w*|картин\w*|изображени\w*|рисун\w*|штук\w*|штуки)"
+    m = (re.search(rf"\b{num}\s+{noun}\b", t)
+         or re.search(rf"\b{noun}\s*[:=\-–—]?\s*{num}\b", t)
+         or re.search(r"\b(?:только|лишь)\s+(один|одну|одно)\b", t)
+         or re.search(r"\b(один)\s+эскиз\b", t)
+         or (re.fullmatch(rf"\W*{num}\W*", t) if bare else None))
     if not m:
+        if re.search(r"\bэскиз\b", t) and not re.search(r"\bэскизы\b", t):
+            return 1, True
         return default, False
     w = m.group(1)
     n = int(w) if w.isdigit() else words[w]
     return max(1, min(maximum, n)), True
+
+
+# ---------------------------------------------------------------- выбор моделей пользователем
+ALIASES = {"messillustrious": ("mess", "месс", "мэсс", "иллюстриус аниме", "illustrious anime"), "noobai": ("noob", "ноуб", "нуб"), "ponyxl": ("pony", "пони"),
+           "illustrious1": ("illustrious xl", "illustrious 1", "иллюстриус"), "animagine4": ("animagine", "анимаджин")}
+
+
+def model_by_name(name: str, ids: list[str], titles: dict[str, str] | None = None) -> str:
+    """«Mess Illustrious Anime Mix» / «mess» / «пони» → id модели из ids (или "")."""
+    n = norm(name)
+    if not n:
+        return ""
+    for mid in ids:                                              # сначала точное название, потом псевдонимы
+        if titles and norm(titles.get(mid, "")) == n:
+            return mid
+    for mid in ids:
+        if any(a in n for a in ALIASES.get(mid, ())) or norm(mid) in n:
+            return mid
+    for mid in ids:
+        if titles and n and n in norm(titles.get(mid, "")):
+            return mid
+    return ""
+
+
+def models_from_text(text: str, ids: list[str], titles: dict[str, str] | None = None) -> dict[str, str]:
+    """«основу рисует Mess, позу — Pony» / «рисуй только моделью NoobAI» → {"base": id, "pose": id или "same"}. Пусто — про модели речи нет."""
+    t = norm(text)
+    if not re.search(r"модел|рису\w* (?:только )?(?:в |на )?(?:mess|noob|pony|пони|месс)|основ|поз\w* (?:мен\w*|делает|рисует|через|в)", t):
+        return {}
+    out: dict[str, str] = {}
+    for clause in (norm(c) for c in re.split(r"[;,.\n]| а | и затем | потом |\bи\b(?= поз)", text.lower())):
+        mid = model_by_name(clause, ids, titles)
+        if not mid:
+            continue
+        if re.search(r"поз", clause) and not re.search(r"основ|внешност|рису", clause.split("поз")[0]):
+            out["pose"] = mid
+        else:
+            out["base"] = mid
+            if re.search(r"только|одн\w+ модел", clause) and "pose" not in out:
+                out["pose"] = "same"
+    return out
