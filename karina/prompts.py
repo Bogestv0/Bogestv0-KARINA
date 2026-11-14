@@ -280,7 +280,7 @@ NEGATIVE_ANIME = join_tags(NEGATIVE, _NEGATIVE_ANIME_BASE, NEGATIVE_ANIME_EXTRA)
 # Для встроенных SDXL-моделей при аниме (поверх их собственного негатива, imgdirector.py):
 ANIME_EXTRA_NEG = join_tags("3d, realistic, photo, photorealistic, semi-realistic, render, doll, plastic skin, western cartoon, sketch, painterly, oil painting", NEGATIVE_ANIME_EXTRA)
 # Добавляется ко всем картинкам встроенного генератора: обычные просьбы не должны случайно давать лишнего.
-SAFE_NEG = "nsfw"
+SAFE_NEG = 
 
 
 # --- 7.4 Режиссёр картинок (imgdirector.py) ----------------------------------------------------------------------
