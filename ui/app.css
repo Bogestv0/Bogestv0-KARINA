@@ -432,3 +432,5 @@ main:has(#tab-chat.on){overflow:hidden}
 .codebox pre{margin:0!important;border:0!important;border-radius:0!important;background:transparent!important}
 
 .choices{display:flex;gap:8px;margin:8px 0 2px;flex-wrap:wrap} .choices .btn{min-width:44px}
+.pdeliver{border:1px solid var(--accent,#7c6cf0);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.pdl-h{font-weight:600}

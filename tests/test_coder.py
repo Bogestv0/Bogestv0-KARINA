@@ -161,3 +161,52 @@ class Loop(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EditBlocks(unittest.TestCase):
+    def setUp(self):
+        self.ws = Workspace(Path(tempfile.mkdtemp()))
+        self.ws.write("a.py", "def f(x):\n    if x:\n        return 1\n    return 0\n\n\ndef g(x):\n    return x\n")
+
+    def hunk(self, old, new): return f"<<<<<<< НАЙТИ\n{old}\n=======\n{new}\n>>>>>>> ЗАМЕНА"
+
+    def test_exact_and_multiple(self):
+        n = self.ws.edit("a.py", self.hunk("        return 1", "        return 2") + "\n" + self.hunk("def g(x):\n    return x", "def g(x):\n    return x * 2"))
+        self.assertEqual(n, 2)
+        t = self.ws.read("a.py"); self.assertIn("return 2", t); self.assertIn("x * 2", t)
+
+    def test_indent_tolerant(self):
+        self.ws.edit("a.py", self.hunk("if x:\nreturn 1", "if x:\nreturn 5"))               # модель потеряла отступы
+        self.assertIn("        return 5", self.ws.read("a.py"))
+
+    def test_ambiguous_missing_and_atomic(self):
+        self.ws.write("b.py", "x = 1\nx = 1\n")
+        with self.assertRaises(CoderError) as c:
+            self.ws.edit("b.py", self.hunk("x = 1", "x = 2"))
+        self.assertIn("2 раз", str(c.exception))
+        with self.assertRaises(CoderError) as c:
+            self.ws.edit("a.py", self.hunk("        return 1", "        return 9") + "\n" + self.hunk("def h(y):", "def h2(y):"))
+        self.assertIn("не найден", str(c.exception))
+        self.assertIn("return 1", self.ws.read("a.py"))                                      # одна пара не подошла — файл не тронут
+        with self.assertRaises(CoderError):
+            self.ws.edit("нет.py", self.hunk("a", "b"))
+
+    def test_parse_edit_search_open(self):
+        p = parse("Правлю.\n[[ПРАВИТЬ: a.py]]\n" + self.hunk("a", "b") + "\n[[/ПРАВИТЬ]]\n[[ИСКАТЬ: как вычитать]]\n[[ОТКРЫТЬ: https://x.org/p]]")
+        self.assertEqual([a[0] for a in p["actions"]], ["edit", "search", "open"])
+        self.assertEqual(p["actions"][1][1], "как вычитать"); self.assertEqual(p["say"], "Правлю.")
+
+    def test_changes_counts(self):
+        before = self.ws.snapshot()
+        self.ws.edit("a.py", self.hunk("        return 1", "        return 2\n        # новая строка"))
+        self.ws.write("new.py", "print(1)\n")
+        ch = {c["path"]: c for c in self.ws.changes(before)}
+        self.assertEqual((ch["a.py"]["kind"], ch["a.py"]["added"], ch["a.py"]["removed"]), ("changed", 2, 1))
+        self.assertEqual(ch["new.py"]["kind"], "new")
+
+    def test_plan_reply(self):
+        c = coder.classify_plan_reply
+        self.assertEqual(c("✅ Делать вариант 2", 2), ("go", 2)); self.assertEqual(c("да", 1), ("go", 0)); self.assertEqual(c("второй", 2), ("go", 2))
+        self.assertEqual(c("✖ Отмена", 2), ("cancel", 0)); self.assertEqual(c("✏️ Изменить план", 2), ("edit_ask", 0))
+        self.assertEqual(c("только без классов", 2), ("feedback", 0))
+        self.assertEqual(coder.plan_variants("Варианты:\n1. a\n2. b\nЧто изменю: x"), 2)

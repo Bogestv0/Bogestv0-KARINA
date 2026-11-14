@@ -62,14 +62,14 @@ class Route(unittest.TestCase):
         self.assertEqual(route("ещё вариант", False, False, last_image=False), "chat")
 
 
-def make(replies):
+def make(replies, plan=False, web=None):
     tmp = Path(tempfile.mkdtemp())
     cfg = Config(tmp / "c.json")
-    cfg.update({"coder": {"run": True, "max_steps": 6}, "search": {"mode": "off"}})
+    cfg.update({"coder": {"run": True, "max_steps": 6, "plan": plan}, "search": {"mode": "off"}})
     model = Scripted(replies)
     ev = []
     brain = FakeBrain(model)
-    coder = CoderService(cfg, brain, ev.append, projects_dir=tmp / "Проекты")
+    coder = CoderService(cfg, brain, ev.append, projects_dir=tmp / "Проекты", web=web)
     svc = ChatService(cfg, model, ev.append, store=ChatStore(tmp / "chats"), brain=brain, files=FileService(tmp / "Карина"), coder=coder)
     return svc, model, ev, tmp
 
@@ -184,3 +184,83 @@ class InChat(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+PLAN = ("Смотрю файл.\n[[ЧИТАТЬ: input/app.py]]")
+PLAN2 = ("[[ПЛАН]]\nЧто это: маленькое приложение.\nЧто понял из задачи: добавить вычитание.\nВарианты:\n1. Отдельная функция sub — просто (рекомендую)\n2. Класс Calc — больше кода\n"
+         "Что изменю: app.py — добавлю sub\nКак проверю: запущу app.py\n[[/ПЛАН]]")
+EDIT = ("Добавлю функцию.\n[[ПРАВИТЬ: input/app.py]]\n<<<<<<< НАЙТИ\ndef add(a, b):\n    return a + b\n=======\ndef add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n>>>>>>> ЗАМЕНА\n[[/ПРАВИТЬ]]\n"
+        "[[ЗАПУСТИТЬ: python input/app.py]]")
+
+
+class FakeWeb:
+    def __init__(self): self.calls = []
+    def search(self, q, n=8, stop=None, providers=None):
+        self.calls.append(("search", q)); return [{"url": "https://docs.example.org/sub", "title": "Как вычитать", "snippet": "используйте оператор -"}], "fake"
+    def fetch_page(self, url, stop=None, allow_private=False):
+        self.calls.append(("open", url)); return {"url": url, "title": "Документация", "text": "Оператор - вычитает числа. " * 20}
+    def best_excerpt(self, text, query, limit): return text[:limit]
+    class Cancelled(Exception): pass
+
+
+class PlanFlow(unittest.TestCase):
+    def setUp(self):
+        self.web = FakeWeb()
+        self.src = Path(tempfile.mkdtemp())
+        import zipfile
+        self.zip = self.src / "calc_proj.zip"
+        with zipfile.ZipFile(self.zip, "w") as z:
+            z.writestr("proj/app.py", "def add(a, b):\n    return a + b\n\n\nprint(add(1, 2))\n")
+            z.writestr("proj/README.md", "# calc\n")
+
+    def test_plan_then_confirm_then_deliver_same_archive(self):
+        svc, model, ev, tmp = make([PLAN, "[[ИСКАТЬ: python вычитание]]", "[[ОТКРЫТЬ: https://docs.example.org/sub]]", PLAN2,
+                                    "Делаю.\n[[ПРАВИТЬ: input/calc_proj/app.py]]\n<<<<<<< НАЙТИ\ndef add(a, b):\n    return a + b\n=======\ndef add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n>>>>>>> ЗАМЕНА\n[[/ПРАВИТЬ]]\n[[ЗАПУСТИТЬ: python input/calc_proj/app.py]]",
+                                    "[[ГОТОВО]]Что изменила: app.py — добавила sub. Проверила запуском.[[/ГОТОВО]]"], plan=True, web=self.web)
+        # шаг 1 модели читает неверный путь — получит ошибку и продолжит, поэтому подправим сценарий: первый ответ читает реальный файл
+        model.replies[0] = "Смотрю файл.\n[[ЧИТАТЬ: input/calc_proj/app.py]]"
+        cid = svc.send(None, "добавь в программу вычитание, не знаю как лучше", paths=[str(self.zip)], wait=True)
+        c = svc.store.get(cid)
+        last = c["messages"][-1]
+        self.assertIn("📝 План", last["text"]); self.assertIn("ничего не меняла", last["text"])
+        self.assertEqual(last["choices"], ["✅ Делать вариант 1", "✅ Делать вариант 2", "✏️ Изменить план", "✖ Отмена"])
+        self.assertEqual([x[0] for x in self.web.calls], ["search", "open"])                    # сходила в интернет и прочитала страницу
+        proj = Path(tmp / "Проекты" / c["project"])
+        self.assertIn("return a + b", (proj / "input/calc_proj/app.py").read_text("utf-8")); self.assertNotIn("sub", (proj / "input/calc_proj/app.py").read_text("utf-8"))
+        svc.send(cid, "✅ Делать вариант 1", wait=True)
+        c = svc.store.get(cid); last = c["messages"][-1]
+        self.assertNotIn("code_plan", c)
+        self.assertIn("def sub", (proj / "input/calc_proj/app.py").read_text("utf-8"))
+        self.assertIn("Что изменилось в файлах", last["text"]); self.assertIn("изменён `input/calc_proj/app.py` (+4 −0)", last["text"])
+        self.assertIn("calc_proj_изменено.zip", last["text"])
+        dl = last["project"]["deliver"]
+        self.assertEqual([d["name"] for d in dl], ["calc_proj_изменено.zip"])
+        import zipfile
+        with zipfile.ZipFile(proj / dl[0]["path"]) as z:                                           # тот же архив, та же структура, правка внутри, нетронутые файлы на месте
+            self.assertEqual(sorted(z.namelist()), ["proj/README.md", "proj/app.py"])
+            self.assertIn("def sub", z.read("proj/app.py").decode("utf-8"))
+        self.assertIn("Выполняй именно его", model.seen[-3][0]["content"] if False else model.seen[4][1]["content"]); self.assertIn("выбран вариант 1", model.seen[4][1]["content"])
+
+    def test_plan_cancel_and_feedback(self):
+        svc, model, ev, tmp = make(["[[ПЛАН]]\nЧто это: x.\nВарианты:\n1. Один способ\nЧто изменю: a\n[[/ПЛАН]]", "[[ПЛАН]]\nЧто это: x.\nУчла правки.\n[[/ПЛАН]]"], plan=True, web=self.web)
+        cid = svc.send(None, "напиши программу сложения", wait=True)
+        self.assertEqual(svc.store.get(cid)["messages"][-1]["choices"], ["✅ Делать по плану", "✏️ Изменить план", "✖ Отмена"])
+        svc.send(cid, "сделай без классов, только функции в коде", wait=True)
+        self.assertIn("Учла правки", svc.store.get(cid)["messages"][-1]["text"])
+        self.assertIn("без классов", model.seen[1][1]["content"])
+        svc.send(cid, "✖ Отмена", wait=True)
+        c = svc.store.get(cid)
+        self.assertNotIn("code_plan", c); self.assertIn("ничего не меняю", c["messages"][-1]["text"])
+
+    def test_skip_plan_when_asked(self):
+        svc, model, ev, tmp = make([GOOD, "[[ГОТОВО]]ok[[/ГОТОВО]]"], plan=True, web=self.web)
+        cid = svc.send(None, "сразу напиши программу сложения", wait=True)
+        self.assertNotIn("code_plan", svc.store.get(cid)); self.assertIn("Что изменилось в файлах", svc.store.get(cid)["messages"][-1]["text"])
+
+    def test_web_off_blocks_search(self):
+        svc, model, ev, tmp = make(["[[ИСКАТЬ: что-то]]", "[[ГОТОВО]]ок[[/ГОТОВО]]"], web=self.web)
+        svc.send(None, "объясни код приложенного проекта", paths=[str(self.zip)], mode="code", wait=True) if False else None
+        r = svc.coder.start("посмотри код", [str(self.zip)], wait=True, web=False)
+        self.assertTrue(r["ok"]); self.assertEqual(self.web.calls, [])
+        self.assertIn("выключен", " ".join(m["content"] for m in model.seen[1] if m["role"] == "user"))

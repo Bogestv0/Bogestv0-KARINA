@@ -426,6 +426,16 @@
     const b = el('button', 'btn primary', '📁 Открыть папку проекта'); const msg = el('span', 'msg err');
     b.onclick = async () => { const r = await call('coder_open', pr.name); msg.textContent = r && !r.ok ? r.error : ''; };
     top.append(b, msg); box.append(top);
+    if ((pr.deliver || []).length) {                           // готовые файлы «как вы присылали»: такой же архив / такие же файлы с правками
+      const dl = el('div', 'pdeliver'); dl.append(el('div', 'pdl-h', '📦 Готово для вас'));
+      for (const f of pr.deliver) {
+        const line = el('div', 'fline'), t = el('div', 'ft'), m3 = el('div', 'fmsg');
+        t.append(el('b', '', f.name), el('span', '', fmtSize(f.size)));
+        const sh = el('button', 'btn primary', 'Показать в папке'); sh.onclick = async () => { const r = await call('project_reveal_file', pr.name, f.path); m3.textContent = r && !r.ok ? r.error : ''; };
+        line.append(el('span', 'ficon', /\.zip$/i.test(f.name) ? '🗜' : '📄'), t, sh); dl.append(line, m3);
+      }
+      box.append(dl);
+    }
     let first = null;
     for (const f of (pr.files || [])) {
       const item = el('div', 'pfile'), line = el('div', 'fline'), t = el('div', 'ft'), m2 = el('div', 'fmsg');
