@@ -321,7 +321,9 @@ class ChatService:
         return c
 
     # ---------- кодер внутри диалога ----------
-    def _code_turn(self, chat: dict, reply: dict, text: str, paths: list[str], step) -> tuple[str, str, list[dict]]:
+    SKIP_PLAN = re.compile(r"\b(?:сразу|без плана|без подтверждени\w*|не спрашивай|не уточняй|делай без)\b")
+
+    def _code_turn(self, chat: dict, reply: dict, text: str, paths: list[str], step, plan_ctl: tuple[str, int] | None = None, web: bool = True) -> tuple[str, str, list[dict]]:
         """Кодер ведёт задачу прямо в этом диалоге. Ход работы — лента действий (что сказала, что записала, что запустила и что получилось),
         она приходит в окно событиями chat_activity и сохраняется вместе с ответом; итог приходит текстом ответа.
         → (текст ответа, ошибка, лента действий)."""
@@ -387,7 +389,21 @@ class ChatService:
 
         ctx = "\n".join(f"{'Пользователь' if m['role'] == 'user' else 'Карина'}: {m['text'][:400]}"
                         for m in chat["messages"][:-2] if m.get("text"))[-2500:]
-        r = self.coder.start(text, paths, wait=True, sink=sink, project=chat.get("project", ""), context=ctx)
+        # что делаем: новая задача (сначала план, если включено) / утверждённый план / правки к плану
+        cp = chat.get("code_plan")
+        task, project, phase, plan_text, variant = text, chat.get("project", ""), "execute", "", 0
+        if plan_ctl and cp:
+            project = cp.get("project", project)
+            if plan_ctl[0] == "go":
+                task, plan_text, variant = cp["task"], cp["plan"], plan_ctl[1]
+            else:                                                       # feedback: план переделываем с учётом правок
+                task = (cp["task"] + "\n\nПравки пользователя к плану: " + text.strip() + "\n\nПрежний план:\n" + cp["plan"])[-6000:]
+                phase = "plan"
+        else:
+            chat.pop("code_plan", None)
+            if self.coder.settings().get("plan", True) and not self.SKIP_PLAN.search(norm(text)):
+                phase = "plan"
+        r = self.coder.start(task, [] if (plan_ctl and cp) else paths, wait=True, sink=sink, project=project, context=ctx, phase=phase, plan=plan_text, variant=variant, web=web)
         if not r.get("ok"):
             return "⚠ " + r.get("error", "Кодер не смог начать."), r.get("error", "Кодер не смог начать."), log
         reply["brain"] = r.get("brain", "")
@@ -395,16 +411,38 @@ class ChatService:
             return "⚠ Кодер завершился без результата.", "Кодер завершился без результата.", log
         err = done.get("error", "")
         name = done.get("project", r.get("project", ""))
+        if done.get("phase") == "plan" and done.get("plan") and not err:
+            chat["code_plan"] = {"task": task if not (plan_ctl and plan_ctl[0] == "feedback") else cp["task"] + "\n" + text.strip(), "project": name,
+                                 "plan": done["plan"], "variants": codermod.plan_variants(done["plan"])}
+            reply["choices"] = codermod.plan_buttons(done["plan"])
+            reply["project"] = {"name": name, "zip": "", "ok": True, "files": [], "deliver": []}
+            return ("**📝 План. Пока я ничего не меняла.**\n\n" + done["plan"] + "\n\n---\nЕсли всё верно — нажмите кнопку ниже" +
+                    (" (можно выбрать вариант)" if codermod.plan_variants(done["plan"]) >= 2 else "") +
+                    ". Или напишите, что поменять в плане, — я перепишу его."), "", log
+        chat.pop("code_plan", None)
         icon = "✅" if done.get("ok") else ("⚠" if err or "не прошла" in done.get("verdict", "") else "ℹ")
         parts = [f"**{icon} {err or done.get('verdict', '')}**"]
         if done.get("summary"):
             parts.append(done["summary"])
-        files = done.get("files") or []
-        if done.get("zip"):
+        changes = done.get("changes") or []
+        if changes:                                       # список считает программа по настоящему сравнению файлов, а не модель
+            parts.append("**Что изменилось в файлах:**\n" + "\n".join(self._change_line(c) for c in changes[:40]) + (f"\n• … и ещё {len(changes) - 40}" if len(changes) > 40 else ""))
+        deliver = done.get("deliver") or []
+        if deliver:
+            parts.append("📦 **Готово для вас** (в папке проекта «Готово»):\n" + "\n".join(f"• `{d['name']}`" for d in deliver))
+        elif done.get("zip"):
             parts.append(f"📦 Всё одним архивом: `{done['zip']}` (рядом с папкой проекта).")
+        files = done.get("files") or []
         parts.append("Можно писать дальше в этом же чате: «добавь…», «исправь…» — я продолжу в этом проекте." if files else "")
-        reply["project"] = {"name": name, "zip": done.get("zip", ""), "ok": bool(done.get("ok")), "files": files[:60]}
+        reply["project"] = {"name": name, "zip": done.get("zip", ""), "ok": bool(done.get("ok")), "files": files[:60], "deliver": deliver[:20], "changes": changes[:60]}
         return "\n\n".join(x for x in parts if x), err, log
+
+    @staticmethod
+    def _change_line(c: dict) -> str:
+        if c["kind"] == "new":
+            return f"• создан `{c['path']}`" + (f" ({c['lines']} строк)" if c.get("lines") else "")
+        d = f" (+{c['added']} −{c['removed']})" if c.get("added") or c.get("removed") else ""
+        return f"• изменён `{c['path']}`{d}"
 
     # ---------- картинки ----------
     def _image_turn(self, chat: dict, reply: dict, text: str, step, count: int | None = None, paths: list[str] | None = None, confirmed: bool = False) -> tuple[str, str, list[dict]]:
@@ -1185,6 +1223,18 @@ class ChatService:
         else:
             way = route(text, bool(paths), bool(chat.get("project")) and self.coder is not None, mode, voice, codermod_light(paths), last_img, recent,
                         bool(draw.get("active")), img_only)
+        # ответ на план кодера: «Делать» / «Вариант 2» / «Отмена» / правки к плану
+        cp = chat.get("code_plan")
+        plan_ctl: tuple[str, int] | None = None
+        if cp and paths:
+            chat.pop("code_plan", None)                        # приложили новые файлы — это новая задача
+            cp = None
+        if cp and not voice and not draft and way in ("chat", "code") and self.coder is not None:
+            k, v = codermod.classify_plan_reply(text, int(cp.get("variants") or 0))
+            tl = norm(text)
+            if k in ("go", "cancel", "edit_ask") or CODE_HINT.search(tl) or CODE_VERB.search(tl) or (len(text.split()) <= 25 and "?" not in text):
+                plan_ctl = (k, v)
+                way = "plan_ctl" if k in ("cancel", "edit_ask") else "code"
         if way == "code" and self.coder is None:
             way = "chat"
         # «Сколько вариантов?»: просьба нарисовать ждёт ответа; ответ-число возвращает её в работу, любое другое сообщение отменяет ожидание
@@ -1241,8 +1291,16 @@ class ChatService:
                 spoken = ("Готово, нарисовала несколько вариантов, смотрите в окне чата." if len(made_img) > 1
                           else "Готово, картинка сохранена в папке Карина в документах.") if made_img else (
                     "Вот что я собираюсь нарисовать. Подтвердите в окне чата." if chat.get("draft") else "")
+            elif way == "plan_ctl":
+                if plan_ctl[0] == "cancel":
+                    chat.pop("code_plan", None)
+                    reply["text"] = "Хорошо, ничего не меняю. Файлы проекта остались как были."
+                else:
+                    reply["text"] = "Напишите, что поменять в плане: другой вариант, что добавить или убрать, какой файл не трогать. Я перепишу план и покажу снова."
+                    reply["choices"] = codermod.plan_buttons(cp.get("plan", ""))
+                spoken = reply["text"][:160]
             elif way == "code":
-                out_text, err_code, activity = self._code_turn(chat, reply, text, paths, step)
+                out_text, err_code, activity = self._code_turn(chat, reply, text, paths, step, plan_ctl, search is not False)
                 reply["text"] = out_text
                 activity = [a for a in activity if a.get("k") != "think"]          # «думаю…» нужно только пока идёт работа
                 if activity:

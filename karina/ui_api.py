@@ -818,6 +818,13 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def project_reveal_file(self, project: str, rel: str):
+        try:
+            self.assistant.coder.reveal_file(str(project), str(rel))
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def project_open_file(self, project: str, rel: str):
         try:
             self.assistant.coder.open_file(str(project), str(rel))

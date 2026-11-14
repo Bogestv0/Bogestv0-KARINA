@@ -39,7 +39,7 @@ DEFAULTS: dict = {
     "brain": {"mode": "local", "claude_model": "claude-sonnet-5-5"},
     # «Кодер»: run — запускать написанный код для проверки (python / pytest / node в папке проекта); max_steps — шагов на задачу
     # run включён по умолчанию (запуск — не песочница, но код перед запуском проверяется на опасные вещи); выключатель — в чате («▶ Запуск и проверка»)
-    "coder": {"run": True, "max_steps": 16},
+    "coder": {"run": True, "max_steps": 16, "plan": True},
     # картинки по запросу: provider — auto (свой сервер, если указан адрес, иначе Pollinations) | pollinations | sd (AUTOMATIC1111 / Forge) | openai (свой сервер с OpenAI API);
     # url — адрес своего сервера (например http://127.0.0.1:7860), key — ключ (если нужен), model — имя модели (для openai)
     # мощность рисования (встроенные модели): power — auto (по видеокарте) | max | balanced | low | cpu; quality — auto | fast | normal | high;
