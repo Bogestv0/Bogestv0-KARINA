@@ -282,6 +282,13 @@ class Packaging(unittest.TestCase):
         bat = (self.root / "run.bat").read_text("utf-8")
         self.assertIn("requirements.installed.txt", bat)
 
+    def test_run_bat_picks_supported_python(self):
+        bat = (self.root / "run.bat").read_text("utf-8")
+        self.assertIn("py -%%V", bat)
+        self.assertIn("(3,11)<=sys.version_info[:2]<=(3,13)", bat)
+        self.assertIn("rmdir /s /q .venv", bat)
+        self.assertIn("\r\n", (self.root / "run.bat").read_bytes().decode("utf-8"))      # у .bat должны быть переводы строк Windows
+
 
 if __name__ == "__main__":
     unittest.main()
