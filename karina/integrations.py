@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from rapidfuzz import fuzz
 from .actions import command, NOT_HANDLED, Ctx
-from .mixer_remote import MixerRemote, MixerError, read_mixer_settings, pct_to_db, clamp_db
+from .mixer_remote import MixerRemote, MixerError, read_mixer_settings, pct_to_db, db_to_pct, clamp_db
 from .vpn_link import VpnError
 from .textutil import norm, parse_number, plural, _UNITS, _TENS
 
@@ -42,7 +42,9 @@ _NUM_WORDS = set(_UNITS) | set(_TENS) | {"сто"}
 def find_number(text: str) -> int | None:
     """Первое число во фразе: «на 30», «на тридцать пять процентов»."""
     run: list[str] = []
-    for tok in text.split() + [""]:
+    for tok in text.replace("%", " % ").split() + [""]:
+        if tok == "%":
+            continue                                        # «20%» = число 20 и знак процента; знак ищут отдельно
         if tok and (tok.isdigit() or tok in _NUM_WORDS):
             run.append(tok)
             continue
@@ -62,16 +64,28 @@ def resolve_strips(text: str, strips: list[dict], aliases: dict | None = None) -
     def hit(stems) -> bool:
         return any(t.startswith(s) for t in tokens for s in stems if s)
 
-    found: dict[str, dict] = {}
+    strong: dict[str, dict] = {}
+    weak: dict[str, dict] = {}
     for s in strips:
         if s.get("hidden"):
             continue
-        stems = list(STEMS.get(s.get("tag", ""), []))
+        key = s.get("tag") or str(s["i"])
         name = norm(s["name"])
-        stems += aliases.get(name, [])
-        stems += [w[:5] for w in name.split() if len(w) >= 4 and not w.isdigit()]     # новое имя дорожки: «Warzone»
-        if hit(stems) or (len(name) >= 3 and name in text):
-            found[s.get("tag") or str(s["i"])] = s
+        sure = list(STEMS.get(s.get("tag", ""), [])) + aliases.get(name, [])          # теги, свои слова пользователя
+        words = [w[:5] for w in name.split() if len(w) >= 4 and not w.isdigit()]       # слова из названия дорожки: «Warzone»
+        if hit(sure) or (len(name) >= 3 and name in text):
+            strong[key] = s
+        elif hit(words):
+            weak[key] = dict(s, _ratio=sum(1 for w in words if hit([w])) / max(1, len(name.split())))
+    found: dict[str, dict] = dict(strong)
+    if weak:                                      # «звук браузера»: дорожку «Донаты в браузере» берём, только если лучшей нет — иначе меняли бы две дорожки сразу
+        top = max(w["_ratio"] for w in weak.values())
+        partners = {t for pair in _PAIRS for t in pair}
+        for key, w in weak.items():
+            if not strong or key in partners or w["_ratio"] >= 1.0 and not strong:
+                if not strong and w["_ratio"] < top:
+                    continue
+                found[key] = {k: v for k, v in w.items() if k != "_ratio"}
     for a, b in _PAIRS:
         if a in found and b in found:
             second = re.search(r"\bвтор\w+\s+(?:браузер|микрофон)\w*|\b(?:браузер|микрофон)\w*\s+(?:2|два|номер два)\b", text)
@@ -95,8 +109,10 @@ def parse_intent(text: str) -> dict | None:
     down, up = _RE_DOWN.search(text), _RE_UP.search(text)
     num = find_number(text)
     if (down or up) and not (down and up):
-        db = num if (num is not None and re.search(r"\b(?:дб|децибел\w*)\b", text)) else None
-        return {"op": "down" if down else "up", "mult": mult, "db": db}
+        is_db = num is not None and re.search(r"\b(?:дб|децибел\w*)\b", text)
+        db = num if is_db else None
+        pct = num if (num is not None and not is_db and 0 < num <= 100) else None      # «тише на 20%» — на 20 процентных пунктов, а не на шаг
+        return {"op": "down" if down else "up", "mult": mult, "db": db, "pct": pct}
     if num is not None and (re.search(r"\bгромкост\w*|\bпроцент\w*|%|\bна\s+\d|\bпоставь\b|\bустанови\b|\bвыставь\b", text)):
         return {"op": "set", "value": num}
     return None
@@ -136,7 +152,7 @@ def _names(strips: list[dict]) -> str:
 def apply_mixer(ctx: Ctx, text: str, intent: dict | None = None, target: str | None = None) -> str | object:
     """Общая часть голосовой и LLM-команды. text — нормализованная фраза."""
     mcfg = ctx.cfg.get("mixer") or {}
-    if not mcfg.get("enabled", True):
+    if not mcfg.get("enabled", True) or getattr(ctx, "skip_mixer", False):
         return NOT_HANDLED
     mixer = _mixer(ctx)
     intent = intent or parse_intent(text)
@@ -145,6 +161,8 @@ def apply_mixer(ctx: Ctx, text: str, intent: dict | None = None, target: str | N
     aliases = mcfg.get("aliases") or {}
     pre = resolve_strips(target if target is not None else text, _strips_local(ctx.cfg, mixer), aliases)
     if not pre:
+        if mcfg.get("prefer") and target is None and intent["op"] in ("down", "up", "set") and is_bare_volume(text):
+            return _ask_track(ctx, mixer, intent, text)         # включён режим «через микшер»: «сделай тише» без названия — уточняем дорожку
         return NOT_HANDLED                       # про дорожку ни слова — это обычная «тише / громче» для всего компьютера
     try:
         strips = mixer.strips()                  # подключаемся и берём настоящие имена и громкость
@@ -168,6 +186,19 @@ def apply_mixer(ctx: Ctx, text: str, intent: dict | None = None, target: str | N
                     mixer.set_mute(s["i"], False)
             return f"{name}: {pct} {plural(pct, ('процент', 'процента', 'процентов'))}."
         sign = -1 if op == "down" else 1
+        if intent.get("pct") and not intent.get("db"):          # «на 20%»: от нынешнего уровня (100 % = 0 дБ) вычитаем/прибавляем 20 пунктов
+            n_moved = 0
+            for s in hit:
+                cur = db_to_pct(s["gain"])
+                new = max(0, cur + sign * int(intent["pct"]))
+                if new != cur:
+                    mixer.set_gain(s["i"], pct_to_db(new))
+                    n_moved += 1
+                    if s["mute"] and sign > 0:
+                        mixer.set_mute(s["i"], False)
+            if not n_moved:
+                return f"{name} уже на {'минимуме' if sign < 0 else 'максимуме'}."
+            return f"{name} {'тише' if sign < 0 else 'громче'} на {intent['pct']} {plural(int(intent['pct']), ('процент', 'процента', 'процентов'))}."
         delta = sign * (float(intent["db"]) if intent.get("db") else step * intent.get("mult", 1.0))
         moved = 0
         for s in hit:
@@ -181,6 +212,54 @@ def apply_mixer(ctx: Ctx, text: str, intent: dict | None = None, target: str | N
         return f"{name} {'тише' if sign < 0 else 'громче'}."
     except MixerError as e:
         return str(e)
+
+
+_FILLER = {"сделай", "сделайте", "поставь", "установи", "выставь", "пожалуйста", "давай", "можешь", "можно", "а", "ну", "чуть", "немного", "слегка", "ещё", "еще", "капельку", "намного",
+           "гораздо", "сильно", "звук", "звука", "громкость", "громкости", "на", "до", "процентов", "процента", "процент", "дб", "децибел", "децибела", "децибелов", "побольше", "поменьше",
+           "вообще", "значительно", "резко", "немножко", "полегче", "тихо"}
+
+
+def is_bare_volume(text: str) -> bool:
+    """«сделай тише», «погромче на 20%», «громкость пятьдесят» — про громкость, но без названия дорожки (кроме слов-связок)."""
+    if not (_RE_DOWN.search(text) or _RE_UP.search(text) or parse_intent(text)):
+        return False
+    t = text.replace("%", " ")
+    for tok in t.split():
+        if tok in _FILLER or tok in _NUM_WORDS or tok.isdigit() or _RE_DOWN.fullmatch(tok) or _RE_UP.fullmatch(tok):
+            continue
+        if tok in ("карина", "кариночка"):
+            continue
+        return False
+    return True
+
+
+_GENERAL = re.compile(r"\b(?:общ\w+|всю|весь|все|всё|компьютер\w*|систем\w*|винд\w*|windows|главн\w+)\b")
+_CANCEL = re.compile(r"\b(?:отмена|отмени|не надо|не нужно|ничего|забудь|стоп|неважно)\b")
+
+
+def _ask_track(ctx: Ctx, mixer: MixerRemote, intent: dict, text: str) -> str | object:
+    if not ctx.assistant or not hasattr(ctx.assistant, "ask_choice"):
+        return NOT_HANDLED
+    names = ", ".join(s["name"].lower() for s in _strips_local(ctx.cfg, mixer) if not s.get("hidden") and s.get("tag", "") not in ("HW1", "HW2"))
+    verb = {"down": "сделать тише", "up": "сделать громче", "set": "изменить"}[intent["op"]]
+
+    def answer(said: str):
+        said = norm(said)
+        if _CANCEL.search(said):
+            return "Хорошо, ничего не меняю.", False
+        if _GENERAL.search(said):
+            sub = Ctx(ctx.cfg, ctx.apps, ctx.assistant, raw=ctx.raw)
+            sub.skip_mixer = True
+            from . import actions
+            ok, reply = actions.dispatch(sub, text)
+            return (reply if ok else "Не получилось изменить общую громкость."), False
+        r = apply_mixer(ctx, said, intent=intent, target=said)
+        if r is NOT_HANDLED:
+            return f"Не поняла, какую дорожку. Скажите, например: {names}. Или «общая» — громкость компьютера.", True
+        return r, False
+
+    ctx.assistant.ask_choice(answer)
+    return f"Что {verb} в микшере? Дорожки: {names}. Или скажите «общая» — тогда изменю громкость компьютера."
 
 
 _SCENE_STEMS = {"play": ["игра", "стрим"], "call": ["звон", "созвон"], "spk": ["колонк", "динамик"]}

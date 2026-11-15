@@ -411,6 +411,7 @@ class ChatService:
             return "⚠ Кодер завершился без результата.", "Кодер завершился без результата.", log
         err = done.get("error", "")
         name = done.get("project", r.get("project", ""))
+        chat["code_notes"] = self._code_notes(done, task, log)
         if done.get("phase") == "plan" and done.get("plan") and not err:
             chat["code_plan"] = {"task": task if not (plan_ctl and plan_ctl[0] == "feedback") else cp["task"] + "\n" + text.strip(), "project": name,
                                  "plan": done["plan"], "variants": codermod.plan_variants(done["plan"])}
@@ -438,6 +439,39 @@ class ChatService:
         return "\n\n".join(x for x in parts if x), err, log
 
     @staticmethod
+    def _code_notes(done: dict, task: str, log: list[dict]) -> str:
+        """Короткая память о последней работе над проектом: что просили, что прочитано и не прочитано, что изменено, чем кончилось. Нужна, чтобы потом честно ответить «ты всё посмотрела?»."""
+        read, unread = done.get("read") or [], done.get("unread") or []
+        searched = [a.get("query") for a in log if a.get("k") == "find" and a.get("query") and "в интернете" in (a.get("text") or "")]
+        lines = ["Последняя задача по проекту: " + task.strip()[:300]]
+        if done.get("phase") == "plan":
+            lines.append("Режим: только изучение и план, ничего не менялось." + (" План составлен, ждёт подтверждения пользователя." if done.get("plan") else " План составить не удалось."))
+        lines.append(f"Прочитано файлов: {len(read)} из {done.get('total_files', len(read) + len(unread))}." + (f" Прочитанные: {', '.join(read[:25])}." if read else ""))
+        if unread:
+            lines.append("Не читала: " + ", ".join(unread[:25]) + (" и др." if len(unread) > 25 else "") + ".")
+        if searched:
+            lines.append("Искала в интернете: " + "; ".join(dict.fromkeys(searched))[:200] + ".")
+        ch = done.get("changes") or []
+        if ch:
+            lines.append("Изменено: " + ", ".join(c["path"] for c in ch[:15]) + ".")
+        if done.get("error"):
+            lines.append("Ошибка: " + str(done["error"])[:200])
+        elif done.get("summary"):
+            lines.append("Итог: " + str(done["summary"])[:300])
+        return "\n".join(lines)
+
+    SESSION_Q = re.compile(r"\b(?:ты|вы)\b.*\b(?:просмотрел\w*|прочитал\w*|посмотрел\w*|изучил\w*|успел\w*|сдела\w+|измен\w+|поправил\w*|написал\w*|нашл\w+|нашёл\w*|закончил\w*|дочитал\w*|проверил\w*|поняла|понял\w*|видел\w*)\b|"
+                           r"\b(?:весь|всё|все|целиком|полностью)\b.*\b(?:код|проект|файл\w*|бот\w*)\b|\bчто (?:ты )?(?:сдела\w+|измен\w+|нашл\w+|успел\w+|прочитал\w*|поняла)\b|"
+                           r"\b(?:почему|как так)\b.*\b(?:не успел\w*|не сдела\w+|не получил\w*)\b|\bна чём остановил\w+\b|\bчто (?:дальше|осталось)\b")
+
+    def _about_session(self, chat: dict, text: str) -> bool:
+        """Вопрос про только что сделанную работу над проектом («ты весь код просмотрела?») — отвечать по памяти о работе, а не искать в интернете."""
+        if not (chat.get("code_notes") or chat.get("project")):
+            return False
+        t = norm(text)
+        return bool(self.SESSION_Q.search(t)) and not re.search(r"\b(?:найди|поищи|загугли|в интернет\w*|в сети)\b", t)
+
+    @staticmethod
     def _change_line(c: dict) -> str:
         if c["kind"] == "new":
             return f"• создан `{c['path']}`" + (f" ({c['lines']} строк)" if c.get("lines") else "")
@@ -451,6 +485,9 @@ class ChatService:
         → (текст ответа, ошибка, созданные файлы)."""
         paths = paths or []
         ids = imgdirector.available(self.cfg)
+        ups = imgflow.image_paths(paths)
+        if ups and self._photo_edit_applies(text, chat):
+            return self._photo_edit_turn(chat, reply, text, step, ids, ups[0])
         if ids:
             if self._anime_applies(text):
                 tags_ids, roles = self._anime_ids(chat)
@@ -715,6 +752,48 @@ class ChatService:
             return bool(rest.split())
         rest = re.sub(r"\b(?:модел\w*|основ\w*|рису\w*|мен\w*|делает|поз\w*|mess|noobai|noob|pony|пони|месс|illustrious|animagine|а|и|на|в|с)\b", " ", rest)
         return len(rest.split()) >= 2
+
+    def _photo_edit_applies(self, text: str, chat: dict) -> bool:
+        """Присланная картинка + в просьбе нет слов про аниме/мангу/рисунок → это правка настоящего фото, не аниме."""
+        t = norm(text)
+        return not (imagesmod.ANIME.search(t) or re.search(r"мульт|арт\b|рисунок|нарисов|скетч|эскиз|иллюстрац|в стиле", t))
+
+    _PHOTO_SYS = ("Rewrite the user's request (Russian) as ONE short English instruction for an image-editing model that edits a real photo. "
+                  "Keep the person, face, pose and everything the user did not mention unchanged; change only what they asked. Output only the instruction.")
+
+    def _photo_edit_turn(self, chat: dict, reply: dict, text: str, step, ids: list[str], src: str) -> tuple[str, str, list[dict]]:
+        """Правка настоящего фото: фото-модель (FLUX.2) получает его как эталон. Нет такой модели — честно говорим, а не рисуем аниме."""
+        real = [m for m in ids if imgdirector.artist(m)["real"]]
+        if not real:
+            return ("На фото, похоже, настоящий человек, а скачанные у меня модели рисуют только аниме — превращать фото в аниме я не стала. "
+                    "Чтобы править такие фото, скачайте FLUX.2 Klein (Настройки → Модели → Картинки). Если нужно именно аниме — напишите «в аниме стиле»."), "", []
+        model = real[0]
+        prompt = text.strip()
+        step("Понимаю, что поменять на фото…")
+        try:
+            choice = self.brain.choose(text)
+            reply["brain"] = choice.label
+            raw = choice.backend.chat([{"role": "system", "content": self._PHOTO_SYS}, {"role": "user", "content": text.strip()[:800]}], max_tokens=120, temperature=0.3, stop=self._stop)
+            raw = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S).strip().strip("\"'")
+            if raw and not imagesmod.has_cyrillic(raw):
+                prompt = raw
+        except (BrainUnavailable, EngineError):
+            pass
+        if self._stop.is_set():
+            return "*(остановлено)*", "", []
+        try:
+            init = open(src, "rb").read()
+            size = imgflow.size_of(init)
+            vpl = imagesmod.local_plan(self.cfg, model)
+            step(f"Правлю фото — {imgdirector.title(model)}…")
+            data, _ = localimg.generate(prompt, size, random.randint(1, 2**31 - 1), model, "", self._stop, plan=vpl, init_image=init, strength=0.5, exact_size=True)
+        except Exception as e:
+            if self._stop.is_set():
+                return "*(остановлено)*", "", []
+            return f"⚠ Не получилось поправить фото: {e}", str(e), []
+        made = self.files.create_bytes(imagesmod.file_stem(text) + ".png", data)
+        reply["image_prompt"] = prompt
+        return f"**Готово — поправила фото** (модель {imgdirector.title(model)}, лицо и остальное не трогала). Файл: `{made['name']}`.", "", [made]
 
     def _anime_applies(self, text: str, prev: dict | None = None) -> bool:
         """Рисовать в фирменном аниме-стиле (с подтверждением и кругами), а не прежним путём: есть аниме-модель и просят не фото/реализм."""
@@ -1309,6 +1388,11 @@ class ChatService:
                     err = err_code
             else:
                 note_ = ""
+                session_note = ""
+                if self._about_session(chat, text):
+                    search = False                                       # вопрос про нашу работу — ответ из памяти о ней, интернет не нужен
+                    session_note = ("\n\nНедавно ты работала над проектом пользователя в этом диалоге. Вот что РЕАЛЬНО происходило (отвечай только по этому, ничего не добавляй от себя; "
+                                    "если чего-то не успела или не читала — скажи прямо и предложи продолжить):\n" + (chat.get("code_notes") or "(подробностей нет)"))
                 choice, want_files, use_search = self._choose(text, search, hard=bool(paths))     # недоступный мозг — сразу понятная ошибка
                 backend, is_claude = choice.backend, choice.name == "claude"
                 reply["brain"] = choice.label
@@ -1345,7 +1429,7 @@ class ChatService:
                         step("Нет интернета — отвечаю без поиска")
                     else:
                         sc = self._search_cfg()
-                        rs = research.Researcher(backend, step, self._stop, sc["depth"], budget, system=system_prompt(voice, web=True, files=want_files, attached=bool(paths)))
+                        rs = research.Researcher(backend, step, self._stop, sc["depth"], budget, system=system_prompt(voice, web=True, files=want_files, attached=bool(paths)) + session_note)
                         try:
                             ctx_q = "; ".join(m["content"][:120] for m in api_msgs[:-1] if m["role"] == "user")[-400:]
                             rs.collect(text, ctx_q)
@@ -1357,7 +1441,7 @@ class ChatService:
                             note += f"⚠ Не удалось найти информацию в интернете ({e}). Отвечаю из собственных знаний — возможны неточности.\n\n"
                             step("Поиск не удался — отвечаю без него")
                 if not out and not self._stop.is_set():
-                    messages = [{"role": "system", "content": system_prompt(voice, files=want_files, attached=bool(paths))}] + hist
+                    messages = [{"role": "system", "content": system_prompt(voice, files=want_files, attached=bool(paths)) + session_note}] + hist
                     out = backend.chat(messages, max_tokens=max_tokens, on_delta=on_delta, stop=self._stop)
                 if choice.name == "cloud" and getattr(backend, "last_label", ""):
                     reply["brain"] = backend.last_label            # какой именно провайдер ответил (после перехода при лимите это может быть не первый)

@@ -64,6 +64,7 @@ class Assistant:
         self.listening = True
         self.followup_until = 0.0
         self._pending = None            # (действие, до какого времени ждём «да»)
+        self._choice = None             # (обработчик ответа, до какого времени ждём, сколько раз переспрашивали): «что сделать тише?» → «музыку»
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self.plugin_errors = actions.load_plugins()
@@ -282,6 +283,11 @@ class Assistant:
     def ask_confirm(self, action):
         self._pending = (action, time.time() + 12)
 
+    def ask_choice(self, handler):
+        """Следующая фраза (имя «Карина» не нужно) — ответ на мой вопрос. handler(текст) → (ответ, переспросить ли ещё раз)."""
+        self._choice = (handler, time.time() + 20, 0)
+        self.followup_until = max(self.followup_until, time.time() + 20)
+
     # ---------- обработка фразы ----------
     def handle(self, text: str, direct: bool = False):
         """direct=True — введено вручную в окне: имя не требуется."""
@@ -326,6 +332,20 @@ class Assistant:
         if not rest:
             self.say("Слушаю.")
             return
+        if self._choice:
+            fn, until, tries = self._choice
+            self._choice = None
+            if now < until:
+                try:
+                    reply, again = fn(rest)
+                except Exception as e:
+                    self.log("error", f"Ответ на уточнение не обработан: {e}")
+                    reply, again = "Не получилось.", False
+                if again and tries < 1:
+                    self._choice = (fn, now + 20, tries + 1)
+                    self.followup_until = max(self.followup_until, now + 20)
+                self.say(reply)
+                return
         if chatmod.wants_open_chat(rest):
             self.emit({"type": "goto", "tab": "chat"})
             self.say("Открываю чат.")

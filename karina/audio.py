@@ -34,6 +34,19 @@ def list_devices(kind: str = "input") -> list[dict]:
     return out
 
 
+def friendly_error(e: Exception) -> str:
+    """Ошибка PortAudio простыми словами (код остаётся в скобках — для поиска)."""
+    t = str(e)
+    hints = {"-9996": "устройство недоступно: его мог занять микшер или другая программа (монопольный режим), либо оно отключено — отпустите его там или выберите другое",
+             "-9997": "устройство не принимает нужную частоту — я пробовала и родную, не вышло; выберите то же устройство через другой интерфейс (WASAPI/MME) в списке",
+             "-9998": "у устройства нет нужного числа каналов",
+             "-9999": "ошибка звуковой системы — попробуйте переподключить устройство"}
+    for code, h in hints.items():
+        if code in t:
+            return f"{h} ({t[-40:]})"
+    return t
+
+
 def resolve_device(dev_id, name: str, devices: list[dict]):
     """Сохранённое устройство → (номер для sounddevice, найдено ли).
     Номера устройств меняются при подключении/отключении, поэтому сверяем ещё и имя.
@@ -199,6 +212,8 @@ class _Channel:
     def __init__(self, owner: "Listener", slot: int, device):
         self.owner, self.slot, self.device = owner, slot, device
         self.stream = None
+        self.rate = SR                  # частота, на которой реально открыт микрофон (не 16 кГц — пересчитываем в _cb)
+        self._acc = np.zeros(0, dtype=np.float32)
         self.nf = 0.004                 # уровень фонового шума именно этого микрофона
         self.last_cb = time.monotonic()
         self._lvl_ts = 0.0
@@ -215,13 +230,53 @@ class _Channel:
         self.peak = 0.0
         self.t0 = 0.0
 
+    def _candidates(self, sd):
+        """Что пробуем открыть: (устройство, частота, каналов). Сначала как раньше (16 кГц, моно), потом родная частота устройства (виртуальные микшеры
+        и многие карты не умеют 16 кГц — «Invalid sample rate»), потом стерео, потом то же устройство через другой звуковой интерфейс (MME / WASAPI / DirectSound)."""
+        out = []
+        devs = [self.device]
+        try:
+            if self.device is not None:
+                me = sd.query_devices(self.device)
+                for i, d in enumerate(sd.query_devices()):
+                    if i != self.device and d["max_input_channels"] > 0 and d["name"] == me["name"]:
+                        devs.append(i)
+        except Exception:
+            pass
+        for dev in devs:
+            try:
+                info = sd.query_devices(dev, "input") if dev is not None else sd.query_devices(kind="input")
+                native = int(info.get("default_samplerate") or 48000)
+                maxch = max(1, int(info.get("max_input_channels") or 1))
+            except Exception:
+                native, maxch = 48000, 1
+            rates = [SR] + [r for r in (native, 48000, 44100) if r != SR]
+            for rate in dict.fromkeys(rates):
+                out.append((dev, rate, 1))
+                if maxch > 1:
+                    out.append((dev, rate, min(2, maxch)))
+        return out
+
     def start(self):
         import sounddevice as sd
         self.stop()
         self.last_cb = time.monotonic()
-        self.stream = sd.InputStream(samplerate=SR, channels=1, dtype="float32", blocksize=FRAME,
-                                     device=self.device, callback=self._cb)
-        self.stream.start()
+        first = None
+        for dev, rate, ch in self._candidates(sd):
+            try:
+                self.rate, self._acc = rate, np.zeros(0, dtype=np.float32)
+                self.stream = sd.InputStream(samplerate=rate, channels=ch, dtype="float32", blocksize=FRAME if rate == SR else 0, device=dev, callback=self._cb)
+                self.stream.start()
+                return
+            except Exception as e:
+                first = first or e
+                try:
+                    if self.stream is not None:
+                        self.stream.close()
+                except Exception:
+                    pass
+                self.stream = None
+        raise first or RuntimeError("микрофон не открылся")
 
     def stop(self):
         if self.stream is not None:
@@ -236,7 +291,23 @@ class _Channel:
     def _cb(self, indata, frames, t, status):
         now = time.monotonic()
         self.last_cb = now
-        x = indata[:, 0].copy()
+        x = indata[:, 0].astype(np.float32, copy=True)
+        if self.rate != SR:                                   # устройство открыто на своей частоте: приводим к 16 кГц и режем на кадры по 30 мс
+            r = self.rate / SR
+            if self.rate % SR == 0:
+                k = self.rate // SR
+                x = x[: len(x) // k * k].reshape(-1, k).mean(axis=1)
+            else:
+                n = max(1, int(len(x) / r))
+                x = np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x).astype(np.float32)
+            self._acc = np.concatenate([self._acc, x])
+            while len(self._acc) >= FRAME:
+                chunk, self._acc = self._acc[:FRAME].copy(), self._acc[FRAME:]
+                self._process(chunk, now)
+            return
+        self._process(x, now)
+
+    def _process(self, x, now):
         if self.owner.muted:
             self._reset()
             return
@@ -345,7 +416,7 @@ class Listener:
         try:
             ch.start()
         except Exception as e:
-            st.update(state="error", text=f"Не открылся: {e}")
+            st.update(state="error", text=f"Не открылся: {friendly_error(e)}")
             return st
         used.add(key)
         self.channels[i] = ch

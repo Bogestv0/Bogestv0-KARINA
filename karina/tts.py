@@ -30,13 +30,14 @@ def voice_params(tcfg: dict, voice_id: str | None = None) -> tuple[str, str, str
     return v["voice"], f"{max(-60, min(60, rate)):+d}%", f"{v['pitch']:+d}Hz"
 
 
-def prep_text(text: str, tcfg: dict) -> str:
-    """Что читать: без кавычек-ёлочек, слова из словаря произношений («discord» → «дискорд») заменяются на «как слышится»."""
+def prep_text(text: str, tcfg: dict, stress: bool = False) -> str:
+    """Что читать: без кавычек-ёлочек, слова из словаря произношений («discord» → «дискорд») заменяются на «как слышится».
+    Знак ударения (U+0301) нужен только Silero; голоса Microsoft и системные его не понимают и коверкают слово («Кареена»), поэтому без stress=True он убирается."""
     text = re.sub(r"[«»]", "", text).strip()
     for word, say in (tcfg.get("pronounce") or {}).items():
         if word:
             text = re.sub(r"(?<!\w)" + re.escape(word) + r"(?!\w)", lambda m, say=say: say, text, flags=re.I)
-    return text
+    return text if stress else text.replace("\u0301", "")
 
 
 CACHE_MAX_LEN = 160     # длиннее не кэшируем: это уже разовые ответы, а не повторяющиеся фразы
@@ -82,6 +83,7 @@ class Speaker:
 
     def speak(self, text: str):
         t = self.cfg["tts"]
+        stressed = prep_text(text, t, stress=True)
         text = prep_text(text, t)
         if not t.get("enabled", True) or not text:
             return
@@ -89,7 +91,7 @@ class Speaker:
         eng = t.get("engine", "auto")
         sel = VOICES.get(t.get("voice") or DEFAULT_VOICE) or {}
         if sel.get("engine") == "silero" and eng != "online":
-            if self._silero(text, sel):         # выбран локальный голос: он главнее онлайн-голоса; не вышло — обычная цепочка ниже
+            if self._silero(stressed, sel):         # выбран локальный голос: он главнее онлайн-голоса; не вышло — обычная цепочка ниже
                 self.engine_used = "silero"
                 return
         if eng != "offline" and not sel.get("engine") and self._play_cached(text):

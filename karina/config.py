@@ -53,7 +53,7 @@ DEFAULTS: dict = {
     "models": {"active": "", "gpu": "auto", "ctx": 0, "threads": 0},
     # Микшер Bogestv0 MIXER (удалённый пульт по WebSocket): host/port/pin пустые или 0 = взять из настроек самого микшера;
     # step_db — на сколько дБ меняет «тише/громче»; aliases — свои слова для дорожек {"Игры": ["варзон"]}
-    "mixer": {"enabled": True, "host": "127.0.0.1", "port": 0, "pin": "", "step_db": 3.0, "aliases": {}},
+    "mixer": {"enabled": True, "prefer": False, "host": "127.0.0.1", "port": 0, "pin": "", "step_db": 3.0, "aliases": {}},
     # Bogestv0 VPN: расширение само подключается к Карине на 127.0.0.1:port (только с адреса расширения) и ждёт команды «включи / выключи впн»
     "vpn": {"enabled": True, "port": 47835},
     # Профиль: имя, дата рождения, город, питомцы. google.client_id / client_secret — ваш OAuth-клиент для входа через Google

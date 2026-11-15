@@ -1,4 +1,4 @@
-"""Бесплатные облачные модели: Gemini и сервисы из списков на GitHub (без ключа и с бесплатным ключом) плюс «свой сервер». Groq, OpenRouter, Mistral, NVIDIA и SambaNova убраны: из России они недоступны или требуют карту/SMS.
+"""Облачные модели: только Google Gemini (бесплатный ключ из AI Studio) и «свой сервер» (любой OpenAI-совместимый адрес). Остальные бесплатные сервисы убраны.
 
 У каждого человека свои ключи и свои лимиты. Провайдеры идут по очереди; когда у одного кончился лимит (ошибка 429),
 Карина сразу переходит к следующему, а исчерпанный откладывает на время, которое назвал сервер. Интерфейс такой же, как у
@@ -27,64 +27,12 @@ PRESETS: dict[str, dict] = {
         "signup": "https://aistudio.google.com/apikey", "prefer": [r"gemini-[\d.]+-flash$", r"flash"], "newest": True,   # модель не зашита: Google снимает старые («gemini-2.5-flash» → 404), берём самую новую flash из списка
         "note": "Длинный контекст: хорош для больших текстов и глубокого поиска. Лимиты видны в Google AI Studio. Вне ЕС, Великобритании и Швейцарии бесплатные запросы могут использоваться Google для обучения — личное не отправляйте.",
     },
-    # --- без ключа и регистрации (для России проще всего: нечего блокировать при регистрации) ---
-    "ovh": {
-        "name": "OVHcloud AI Endpoints", "url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1", "model": "", "max_in": 12000, "max_out": 2500, "nokey": True,
-        "signup": "https://endpoints.ai.cloud.ovh.net", "prefer": [r"qwen.*coder", r"qwen3.*(27|32)b", r"qwen", r"mistral-small", r"gpt-oss"],
-        "note": "Европейский хостинг, без ключа и регистрации: около 2 запросов в минуту на модель. Подходит для кода (Qwen, Mistral).",
-    },
-    "kilo": {
-        "name": "Kilo Gateway", "url": "https://api.kilo.ai/api/gateway", "model": "", "max_in": 24000, "max_out": 3000, "nokey": True,
-        "signup": "https://kilo.ai", "prefer": [r"code", r"free", r"nemotron"],
-        "note": "Без ключа, около 200 запросов в час с одного адреса. Есть модели, заточенные под код. Список бесплатных моделей меняется.",
-    },
-    "llm7": {
-        "name": "LLM7.io", "url": "https://api.llm7.io/v1", "model": "", "max_in": 12000, "max_out": 2000, "nokey": True,
-        "signup": "https://token.llm7.io", "prefer": [r"codestral|coder", r"deepseek", r"gpt", r"llama"],
-        "note": "Без ключа (около 15 запросов в минуту; бесплатный токен на сайте поднимает лимит до 30). Модели разных авторов.",
-    },
-    "pollinations": {
-        "name": "Pollinations", "url": "https://gen.pollinations.ai/v1", "model": "", "max_in": 12000, "max_out": 2000, "nokey": True,
-        "signup": "https://pollinations.ai", "prefer": [r"coder|code", r"openai", r"mistral", r"llama"],
-        "note": "Без регистрации, лимит на адрес. Этот же сервис умеет рисовать картинки (в Карине пока только текст).",
-    },
-    # --- нужен бесплатный ключ ---
-    "github": {
-        "name": "GitHub Models", "url": "https://models.github.ai/inference", "model": "", "max_in": 7000, "max_out": 2000,
-        "signup": "https://github.com/settings/personal-access-tokens", "prefer": [r"gpt-4\.1$", r"gpt-4o$", r"deepseek", r"llama.*70b", r"gpt-4\.1-mini"],
-        "note": "Ключ — токен GitHub (Fine-grained, право «Models: read»). Сильные модели OpenAI и DeepSeek, около 50–150 запросов в сутки; на запрос не больше 8000 токенов на входе.",
-    },
-    "huggingface": {
-        "name": "Hugging Face", "url": "https://router.huggingface.co/v1", "model": "", "max_in": 16000, "max_out": 2500,
-        "signup": "https://huggingface.co/settings/tokens", "prefer": [r"qwen.*coder", r"gpt-oss-120b", r"llama-3\.3-70b", r"qwen3", r"instruct"],
-        "note": "Ключ — токен Hugging Face (право на Inference Providers). Бесплатные кредиты около $0.10 в месяц: на несколько десятков запросов. Много моделей для кода (Qwen Coder).",
-    },
-    "zai": {
-        "name": "Z.ai (GLM)", "url": "https://api.z.ai/api/paas/v4", "model": "", "max_in": 24000, "max_out": 3000, "newest": True,
-        "signup": "https://z.ai/manage-apikey/apikey-list", "prefer": [r"glm-[\d.]+-flash$", r"flash"],
-        "note": "Бесплатные модели GLM Flash (одновременно один запрос, в часы пик медленнее). Неплохо пишут код.",
-    },
-    "cohere": {
-        "name": "Cohere", "url": "https://api.cohere.ai/compatibility/v1", "model": "", "max_in": 24000, "max_out": 3000,
-        "signup": "https://dashboard.cohere.com/api-keys", "prefer": [r"command-a", r"command-r-plus", r"command"],
-        "note": "Пробный ключ: 20 запросов в минуту и 1000 в месяц. Только текст.",
-    },
-    "siliconflow": {
-        "name": "SiliconFlow", "url": "https://api.siliconflow.com/v1", "model": "Qwen/Qwen2.5-Coder-7B-Instruct", "max_in": 24000, "max_out": 3000,
-        "signup": "https://cloud.siliconflow.com/account/ak", "prefer": [r"qwen.*coder.*(7|8)b", r"qwen3-8b", r"glm-4-9b"],
-        "note": "Часть моделей бесплатна (Qwen Coder 7B, Qwen3 8B, GLM-4 9B); платные модель-ссылки дадут ошибку оплаты. Есть и генерация картинок (FLUX), в Карине пока не подключена.",
-    },
-    "ollama": {
-        "name": "Ollama Cloud", "url": "https://ollama.com/v1", "model": "", "max_in": 24000, "max_out": 3000,
-        "signup": "https://ollama.com/settings/keys", "prefer": [r"coder", r"gpt-oss", r"qwen", r"."],
-        "note": "Ключ с ollama.com. Бесплатный уровень с дневным лимитом; какие модели бесплатны, меняется.",
-    },
     "custom": {
         "name": "Свой сервер", "url": "", "model": "", "max_in": 16000, "max_out": 2000, "signup": "", "prefer": [],
         "note": "Любой сервис с OpenAI-совместимым API (адрес вида https://…/v1): другие бесплатные облака из списков на GitHub, Ollama или LM Studio в вашей сети.",
     },
 }
-DEFAULT_ORDER = ["gemini", "ovh", "llm7", "kilo", "pollinations", "github", "huggingface", "zai", "siliconflow", "cohere", "ollama", "custom"]
+DEFAULT_ORDER = ["gemini", "custom"]
 STRATEGIES = ("failover", "spread")
 _NOT_CHAT = re.compile(r"embed|whisper|tts|guard|moderat|image|rerank|speech|orpheus|safeguard|transcri|audio|dall|veo|imagen", re.I)
 

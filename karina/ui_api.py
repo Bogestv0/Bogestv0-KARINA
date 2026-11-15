@@ -378,7 +378,7 @@ class Api:
         patch.pop("audio_out", None)    # вывод звука меняется только через audio_out_set
         mx, vp = patch.get("mixer"), patch.get("vpn")
         if isinstance(mx, dict):                    # проверяем значения: в config.json не должно попасть мусора
-            clean = {"enabled": bool(mx.get("enabled", True)), "pin": "".join(ch for ch in str(mx.get("pin") or "") if ch.isdigit())[:8]}
+            clean = {"enabled": bool(mx.get("enabled", True)), "prefer": bool(mx.get("prefer", False)), "pin": "".join(ch for ch in str(mx.get("pin") or "") if ch.isdigit())[:8]}
             try:
                 port = int(mx.get("port") or 0)
                 clean["port"] = port if port == 0 or 1024 <= port <= 65535 else 0

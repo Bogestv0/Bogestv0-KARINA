@@ -927,6 +927,16 @@ class CoderService:
             ctx = int(m["ctx"]) if m else 8192
         return int(max(1000, ctx - max_tokens - 1200) * 2.0)
 
+    @staticmethod
+    def _read_stats(ws: Workspace, read_paths: set[str]) -> dict:
+        """Сколько файлов проекта прочитано и какие нет — Карина отвечает на «ты всё посмотрела?» по фактам."""
+        try:
+            allf = [r for r, _ in ws.listing()]
+        except Exception:
+            allf = []
+        unread = [r for r in allf if r not in read_paths]
+        return {"read": sorted(read_paths)[:80], "unread": unread[:80], "total_files": len(allf)}
+
     def _web_search(self, q: str) -> str:
         res, name = self.web.search(q, 6, self._stop)
         lines = [f"{k}. {r.get('title', '')[:120]} — {r['url']}\n   {(r.get('snippet') or '')[:260]}" for k, r in enumerate(res, 1)]
@@ -958,6 +968,7 @@ class CoderService:
         stats = {"writes": 0, "runs": 0, "last_run": None, "dirty": False, "web": 0}      # last_run: код возврата последнего запуска; dirty: после него файлы менялись
         before = ws.snapshot()                                                           # «до»: с этим сравним, что именно изменила Карина
         touched: set[str] = set()
+        read_paths: set[str] = set()                                                   # какие файлы реально прочитаны (для честного ответа «ты всё посмотрела?»)
         self._say("start", f"Проект: {ws.root.name}" + (f" · отвечает: {choice.label}" if choice.label else ""), project=ws.root.name)
         for w in warns:
             self._say("warn", w)
@@ -969,10 +980,11 @@ class CoderService:
             nudged, fixes = False, 0
             if backend.state != "ready":
                 self._say("step", "Загружаю модель в память…")
-            for step in range(1, st["max_steps"] + 1):
+            max_steps = max(st["max_steps"], 20) if planning else st["max_steps"]
+            for step in range(1, max_steps + 1):
                 if self._stop.is_set():
                     break
-                self._say("think", f"Шаг {step} из {st['max_steps']}: " + ("изучаю задачу…" if planning else "думаю…"), step=step, total=st["max_steps"])
+                self._say("think", f"Шаг {step} из {max_steps}: " + ("изучаю задачу…" if planning else "думаю…"), step=step, total=max_steps)
                 msgs = self._trim(msgs, budget)
                 last_emit = [0.0]
 
@@ -1010,6 +1022,7 @@ class CoderService:
                             results.append(f"✔ {arg}: применено правок — {n}. Чтобы убедиться, перечитай нужные строки.")
                         elif kind == "read":
                             text = ws.read(arg, read_limit)
+                            read_paths.add(re.sub(r":\d+(?:-\d+)?$", "", re.sub(r"^(?:\./)+", "", arg.replace("\\", "/"))))
                             self._say("read", f"Читаю {arg}", path=arg)
                             results.append(f"=== {arg} ===\n{text}")
                         elif kind == "find":
@@ -1054,7 +1067,7 @@ class CoderService:
                     break
                 if p["done"] is not None:
                     bad = syntax_errors(ws, touched) if (stats["writes"] and not planning) else []
-                    if bad and fixes < 2 and step < st["max_steps"]:
+                    if bad and fixes < 2 and step < max_steps:
                         fixes += 1
                         self._say("warn", "Автопроверка нашла синтаксические ошибки: " + "; ".join(bad[:3]))
                         msgs.append({"role": "assistant", "content": reply.strip() or "(пусто)"})
@@ -1075,7 +1088,17 @@ class CoderService:
                     break
                 msgs.append({"role": "user", "content": prompts.fill(prompts.CODER_RESULTS, results="\n\n".join(results))})
             else:
-                if planning:
+                if planning and not self._stop.is_set():                              # шаги кончились: не бросаем всё прочитанное, а просим план по нему
+                    self._say("think", "Шаги закончились — составляю план по тому, что уже прочитала…")
+                    msgs.append({"role": "user", "content": "Шаги на чтение закончились. Больше ничего не читай и не ищи — напиши [[ПЛАН]] по тому, что уже прочитано; чего не успела изучить — укажи в плане."})
+                    try:
+                        last = parse(backend.chat([sysmsg] + self._trim(msgs, budget), max_tokens=max_tokens, temperature=0.2, stop=self._stop))
+                        plan_out = last["plan"] or last["say"]
+                    except Exception:
+                        plan_out = ""
+                if planning and plan_out:
+                    pass
+                elif planning:
                     summary = "Не успела подготовить план за отведённые шаги — попробуйте сформулировать задачу короче или нажмите «Изменить план»."
                 else:
                     summary = "Закончились шаги, не все проверки пройдены. Посмотрите файлы проекта — часть работы сделана."
@@ -1088,7 +1111,7 @@ class CoderService:
             plan_out = ""
         if planning and plan_out and not error:                                  # план готов: ничего не менялось, ждём подтверждения
             done = {"type": "coder_done", "phase": "plan", "project": ws.root.name, "plan": plan_out, "summary": "", "error": "", "verdict": "",
-                    "files": [], "zip": "", "ok": True, "changes": [], "deliver": []}
+                    "files": [], "zip": "", "ok": True, "changes": [], "deliver": [], **self._read_stats(ws, read_paths)}
             self.last = {"project": ws.root.name, "folder": str(ws.root), "result": done}
             sink_ = self._sink
             self._busy.release()
@@ -1129,7 +1152,7 @@ class CoderService:
             except Exception:
                 pass
         done = {"type": "coder_done", "phase": "execute", "project": ws.root.name, "summary": summary, "error": error, "verdict": verdict,
-                "files": files, "zip": zip_name, "changes": changes, "deliver": deliver,
+                "files": files, "zip": zip_name, "changes": changes, "deliver": deliver, **self._read_stats(ws, read_paths),
                 "ok": (not error) and stats["last_run"] == 0 and not stats["dirty"]}
         self.last = {"project": ws.root.name, "folder": str(ws.root), "result": done}
         sink_ = self._sink
