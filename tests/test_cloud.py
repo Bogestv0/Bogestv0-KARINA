@@ -314,16 +314,10 @@ class TestRetriesAndModels(Base):
         self.assertEqual(self.pool.describe()[2]["model_auto"], "b/other:free")
         self.assertIn("openrouter · b/other:free".replace("openrouter", "OpenRouter"), self.pool.last_label)
 
-    def test_keyless_provider_works_without_key_and_sends_no_auth(self):
-        """OVH, LLM7, Kilo, Pollinations: ключ не нужен — достаточно включить; заголовка Authorization нет."""
-        cloud.PRESETS["ovh"] = dict(self.saved["ovh"], url=self.pool.provider("gemini")["url"].rsplit("/", 1)[0] + "/groq")
-        cloud.DEFAULT_ORDER.append("ovh")
-        self.cfg.update({"cloud": {"providers": {"ovh": {"enabled": True}}}})
-        self.assertEqual([p["id"] for p in self.pool.configured()], ["ovh"])
-        self.fake.models["groq"] = ["x/mistral-small", "x/qwen2.5-coder"]
-        self.fake.script["groq"] = [("ok", ["без ключа"])]
-        self.assertEqual(self.ask(), "без ключа")
-        self.assertEqual(self.pool.describe()[[d["id"] for d in self.pool.describe()].index("ovh")]["nokey"], True)
+    def test_only_google_and_custom_remain(self):
+        """Остальные бесплатные облака убраны: в программе только Google Gemini и «свой сервер»."""
+        real = {k for k in self.saved if k not in ("groq", "openrouter")}
+        self.assertEqual(real, {"gemini", "custom"})
 
     def test_all_presets_are_consistent(self):
         for pid, p in self.saved.items():

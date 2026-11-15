@@ -74,6 +74,7 @@ class FakeAssistant:
         self.mixer = MixerRemote(cfg, settings_paths=[settings] if settings else [])
         self.vpn = VpnLink(cfg)
     def ask_confirm(self, a): pass
+    def ask_choice(self, h): self.choice = h
 
 
 class FakeExtension:
@@ -283,3 +284,61 @@ import unittest.mock  # noqa: E402
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MixerPercentAndChoice(Base):
+    def reset(self):
+        self.mixer.gain = [-3.0, -5.0, -6.0, -14.0, -4.0, -8.0, -9.0, -12.0]
+        self.a.mixer.close()
+
+    def test_set_with_percent_sign(self):
+        self.reset()
+        _, r = self.say("Карина, сделай звук музыки на 20%")
+        self.assertEqual(r, "Музыка: 20 процентов.")
+        self.assertEqual(self.mixer.log[-1], ("gain", 3, round(pct_to_db(20), 1)))
+
+    def test_relative_percent(self):
+        self.reset()                                                                  # браузер: −9 дБ ≈ 35 % → тише на 20 пунктов = 15 %
+        _, r = self.say("Карина, сделай браузер тише на 20%")
+        self.assertEqual(r, "Браузер тише на 20 процентов.")
+        self.assertEqual(self.mixer.log[-1], ("gain", 6, round(pct_to_db(15), 1)))
+        _, r = self.say("Карина, сделай браузер громче на 10 процентов")
+        self.assertEqual(self.mixer.log[-1][:2], ("gain", 6))
+
+    def test_only_named_strip(self):
+        self.reset()
+        n = len(self.mixer.log)
+        self.say("Карина, сделай звук браузера громче")
+        moved = {m[1] for m in self.mixer.log[n:] if m[0] == "gain"}
+        self.assertEqual(moved, {6})                                                  # только браузер, не донаты
+
+    def answer(self, text):
+        out = self.a.choice(text)
+        last, quiet = -1, 0
+        for _ in range(60):
+            n = len(self.mixer.log); quiet = quiet + 1 if n == last else 0
+            if quiet >= 3: break
+            last = n; time.sleep(0.02)
+        return out
+
+    def test_prefer_mode_asks_which_strip(self):
+        self.reset()
+        self.cfg.data["mixer"]["prefer"] = True
+        n = len(self.mixer.log)
+        _, r = self.say("Карина, сделай тише")
+        self.assertIn("Что сделать тише в микшере", r); self.assertEqual(len(self.mixer.log), n)
+        reply, again = self.answer("музыку")
+        self.assertEqual(reply, "Музыка тише."); self.assertFalse(again)
+        self.assertEqual(self.mixer.log[-1], ("gain", 3, -17.0))
+        _, r = self.say("Карина, погромче на 20%")
+        reply, _ = self.answer("игры"); self.assertEqual(reply, "Игры громче на 20 процентов.")
+        _, r = self.say("Карина, сделай тише")
+        reply, again = self.answer("что-то непонятное"); self.assertTrue(again); self.assertIn("Не поняла", reply)
+        with unittest.mock.patch.object(actions, "_get_volume", lambda: 50), unittest.mock.patch.object(actions, "_set_volume", lambda v: True):
+            reply, again = self.answer("общая")
+        self.assertEqual(reply, "Громкость 40.")
+
+    def test_prefer_off_keeps_system_volume(self):
+        with unittest.mock.patch.object(actions, "_get_volume", lambda: 50), unittest.mock.patch.object(actions, "_set_volume", lambda v: True):
+            _, r = self.say("Карина, сделай тише")
+        self.assertEqual(r, "Громкость 40.")

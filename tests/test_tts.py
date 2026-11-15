@@ -177,3 +177,13 @@ class TestCache(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StressMark(unittest.TestCase):
+    def test_accent_only_for_silero(self):
+        from karina import config
+        t = config.DEFAULTS["tts"]
+        self.assertEqual(tts.prep_text("Привет, Карина!", t), "Привет, Карина!")                 # Microsoft/системный голос: без знака ударения
+        self.assertIn("́", tts.prep_text("Привет, Карина!", t, stress=True))
+        from karina import silero_voice
+        self.assertIn("Кар+ина", silero_voice.to_plus_stress(tts.prep_text("Карина", t, stress=True)))

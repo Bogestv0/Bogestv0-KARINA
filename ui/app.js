@@ -1170,7 +1170,7 @@
     f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold; f.assist.value = c.stt.assist || 'smart';
     f.tts_enabled.checked = !!c.tts.enabled; f.engine.value = c.tts.engine; f.voice.value = c.tts.voice || 'svetlana_cute'; f.offline.value = c.tts.offline || 'auto'; f.background.checked = (c.ui || {}).background !== false; loadVoiceOffline(); loadSil(); f.rate.value = c.tts.rate;
     const mx = c.mixer || {}, vp = c.vpn || {};
-    f.mixer_enabled.checked = mx.enabled !== false; f.mixer_pin.value = mx.pin || ''; f.mixer_port.value = mx.port || 0; f.mixer_step.value = mx.step_db || 3; f.vpn_enabled.checked = vp.enabled !== false; loadVpnStatus();
+    f.mixer_enabled.checked = mx.enabled !== false; f.mixer_prefer.checked = !!mx.prefer; f.mixer_pin.value = mx.pin || ''; f.mixer_port.value = mx.port || 0; f.mixer_step.value = mx.step_db || 3; f.vpn_enabled.checked = vp.enabled !== false; loadVpnStatus();
     f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
     f.search_mode.value = (c.search || {}).mode || 'auto'; f.search_depth.value = (c.search || {}).depth || 'normal'; showWeb();
     $('#apiKey').placeholder = c.llm.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : 'sk-ant-…';
@@ -1197,7 +1197,7 @@
       stt: { model: f.model.value, mics, assist: f.assist.value, vad_threshold: Number(f.vad_threshold.value) },
       tts: { enabled: f.tts_enabled.checked, engine: f.engine.value, voice: f.voice.value, offline: f.offline.value, rate: Number(f.rate.value) },
       search: { mode: f.search_mode.value, depth: f.search_depth.value },
-      mixer: { enabled: f.mixer_enabled.checked, pin: f.mixer_pin.value.trim(), port: Number(f.mixer_port.value) || 0, step_db: Number(f.mixer_step.value) },
+      mixer: { enabled: f.mixer_enabled.checked, prefer: f.mixer_prefer.checked, pin: f.mixer_pin.value.trim(), port: Number(f.mixer_port.value) || 0, step_db: Number(f.mixer_step.value) },
       vpn: { enabled: f.vpn_enabled.checked },
       updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value, background: f.background.checked },
       llm: { enabled: f.llm_enabled.checked, api_key: $('#apiKey').value.trim() },

@@ -264,3 +264,50 @@ class PlanFlow(unittest.TestCase):
         r = svc.coder.start("посмотри код", [str(self.zip)], wait=True, web=False)
         self.assertTrue(r["ok"]); self.assertEqual(self.web.calls, [])
         self.assertIn("выключен", " ".join(m["content"] for m in model.seen[1] if m["role"] == "user"))
+
+
+class Memory(unittest.TestCase):
+    def test_question_about_work_uses_notes_not_web(self):
+        svc, model, ev, tmp = make([GOOD, "[[ГОТОВО]]сделала calc.py[[/ГОТОВО]]", "Нет, я прочитала не всё: t.py не открывала."])
+        svc.cfg.update({"search": {"mode": "always"}})                                  # «Поиск: вкл» — раньше любой вопрос уходил в интернет
+        cid = svc.send(None, "напиши программу сложения", mode="code", wait=True)
+        self.assertIn("Последняя задача", svc.store.get(cid)["code_notes"])
+        svc.send(cid, "Ты весь код просмотрела?", wait=True)
+        c = svc.store.get(cid); last = c["messages"][-1]
+        self.assertEqual(last["text"], "Нет, я прочитала не всё: t.py не открывала.")
+        self.assertNotIn("sources", last)
+        sysmsg = model.seen[-1][0]["content"]
+        self.assertIn("РЕАЛЬНО происходило", sysmsg); self.assertIn("calc.py", sysmsg)
+        self.assertFalse(svc.will_search("Ты весь код просмотрела?") and False)
+
+    def test_session_question_detector(self):
+        svc, *_ = make([])
+        chat_ = {"project": "p", "code_notes": "x"}
+        for t in ["Ты весь код просмотрела ?", "что ты успела сделать", "почему ты не успела", "ты прочитала файлы?"]:
+            self.assertTrue(svc._about_session(chat_, t), t)
+        for t in ["найди в интернете документацию по telegram", "какая погода", "добавь кнопку в бота"]:
+            self.assertFalse(svc._about_session(chat_, t), t)
+        self.assertFalse(svc._about_session({}, "ты весь код просмотрела"))
+
+    def test_plan_gets_written_even_when_steps_run_out(self):
+        reads = ["[[ЧИТАТЬ: нет_такого_%d.py]]" % i for i in range(20)]
+        svc, model, ev, tmp = make(reads + ["[[ПЛАН]]\nЧто это: бот.\nВарианты:\n1. Один\nЧто изменю: a\nНе успела изучить: всё остальное.\n[[/ПЛАН]]"], plan=True)
+        cid = svc.send(None, "напиши бота сложения", mode="code", wait=True)
+        last = svc.store.get(cid)["messages"][-1]
+        self.assertIn("📝 План", last["text"]); self.assertIn("Не успела изучить", last["text"])
+
+
+class RealPhoto(unittest.TestCase):
+    def test_photo_without_anime_word_is_not_anime(self):
+        svc, model, ev, tmp = make([])
+        chat = {"messages": []}
+        self.assertTrue(svc._photo_edit_applies("убери фон и сделай волосы светлее", chat))
+        self.assertFalse(svc._photo_edit_applies("перерисуй в аниме стиле", chat))
+        self.assertFalse(svc._photo_edit_applies("сделай рисунок", chat))
+
+    def test_no_photo_model_says_so_instead_of_anime(self):
+        svc, model, ev, tmp = make([])
+        text, err, made = svc._photo_edit_turn({"id": "c"}, {"id": "r"}, "поменяй фон", lambda *_: None, ["messillustrious"], "x.png")
+        self.assertEqual(made, [])
+        self.assertIn("настоящий человек", text)
+        self.assertIn("FLUX.2", text)
