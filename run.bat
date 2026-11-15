@@ -6,6 +6,12 @@ if not exist .venv (
   echo Первый запуск: создаю окружение и ставлю библиотеки, это займёт несколько минут...
   python -m venv .venv || (pause & exit /b 1)
   call .venv\Scripts\python -m pip install --upgrade pip
+)
+rem Список библиотек изменился (например, в обновлении появился torch для голоса Silero) — доустанавливаем сами
+fc /b requirements.txt .venv\requirements.installed.txt >nul 2>nul
+if errorlevel 1 (
+  echo Ставлю библиотеки (torch для естественного голоса — около 200 МБ, один раз^)...
   call .venv\Scripts\python -m pip install -r requirements.txt || (echo Ошибка установки & pause & exit /b 1)
+  copy /y requirements.txt .venv\requirements.installed.txt >nul
 )
 start "" .venv\Scripts\pythonw.exe main.py

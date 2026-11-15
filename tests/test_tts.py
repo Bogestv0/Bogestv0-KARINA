@@ -1,5 +1,5 @@
 """Голоса: параметры edge-tts, словарь произношений, запасной голос — без сети и звука."""
-import os, pathlib, sys, tempfile, unittest
+import os, pathlib, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -37,7 +37,7 @@ class TestVoices(unittest.TestCase):
         d = Path(tempfile.mkdtemp()) / "c.json"
         d.write_text('{"tts": {"voice_online": "ru-RU-DariyaNeural", "rate": 1}}', "utf-8")   # конфиг прошлой версии
         cfg = Config(d)
-        self.assertEqual(cfg["tts"]["voice"], "svetlana_cute")
+        self.assertEqual(cfg["tts"]["voice"], "silero_xenia")
         self.assertEqual(cfg["tts"]["rate"], 1)
         self.assertIn("discord", cfg["tts"]["pronounce"])
 
@@ -134,7 +134,7 @@ class TestCache(unittest.TestCase):
         with mock.patch.object(tts.net, "is_online", return_value=True):
             sp.speak("Длинный ответ. " * 20)
         self.assertFalse(list(sp.cache_dir.glob("*.mp3")) if sp.cache_dir.exists() else [])
-        self.assertEqual(len(self.played), 1)
+        self.assertGreaterEqual(len(self.played), 2)       # длинный ответ идёт по частям (потоковая озвучка)
 
     def test_prewarm_fills_cache_skips_existing_and_stops_offline(self):
         cfg, sp = speaker(voice="svetlana_cute", engine="auto")
@@ -174,6 +174,94 @@ class TestCache(unittest.TestCase):
         for phrase in said:
             self.assertIn(phrase, block, phrase)
 
+
+
+
+class TestStreaming(unittest.TestCase):
+    """Длинный ответ озвучивается по предложениям: первое — сразу, остальное готовится, пока играет предыдущее."""
+
+    def make(self):
+        cfg = Config(Path(tempfile.mkdtemp()) / "c.json")
+        cfg.update({"tts": {"voice": "silero_xenia", "engine": "auto"}})
+        return cfg, tts.Speaker(cfg)
+
+    def test_split_speech_first_sentence_alone(self):
+        text = "Привет, это первое предложение. " + "Это ещё одно длинное предложение про погоду и планы на вечер. " * 6
+        parts = tts.split_speech(text, 220)
+        self.assertEqual(parts[0], "Привет, это первое предложение.")
+        self.assertTrue(all(len(p) <= 220 for p in parts))
+        self.assertEqual(tts.split_speech("Коротко."), ["Коротко."])
+        self.assertEqual(tts.split_speech("   "), [])
+
+    def test_pipeline_plays_in_order_and_overlaps(self):
+        cfg, sp = self.make()
+        order, events = [], []
+        sp._play = lambda path: (events.append(("play", Path(path).read_text())), time.sleep(0.15))
+
+        def synth(part, tmp):
+            events.append(("synth", part))
+            Path(tmp).write_text(part)
+            return tmp, True
+        played, err = sp._pipeline(["раз", "два", "три"], synth)
+        self.assertEqual((played, err), (3, None))
+        self.assertEqual([e[1] for e in events if e[0] == "play"], ["раз", "два", "три"])
+        # синтез второго куска начался до того, как доиграл первый: в журнале «synth два» раньше «play три»
+        self.assertLess(events.index(("synth", "два")), events.index(("play", "три")))
+
+    def test_pipeline_error_on_first_part_reports_nothing_played(self):
+        cfg, sp = self.make()
+        sp._play = mock.MagicMock()
+
+        def synth(part, tmp):
+            raise RuntimeError("нет модели")
+        played, err = sp._pipeline(["раз", "два"], synth)
+        self.assertEqual(played, 0)
+        self.assertIsInstance(err, RuntimeError)
+        sp._play.assert_not_called()
+
+    def test_stop_interrupts_and_cleans_temp_files(self):
+        cfg, sp = self.make()
+        made = []
+
+        def synth(part, tmp):
+            made.append(tmp)
+            Path(tmp).write_text(part)
+            return tmp, True
+
+        def play(path):
+            sp.stop()                                # «замолчи» посреди речи
+        sp._play = play
+        played, err = sp._pipeline(["раз", "два", "три", "четыре"], synth)
+        self.assertEqual(played, 1)
+        time.sleep(0.2)
+        self.assertTrue(all(not Path(m).exists() for m in made), "временные записи должны удаляться")
+
+    def test_play_error_does_not_hang(self):
+        cfg, sp = self.make()
+        sp._play = mock.MagicMock(side_effect=OSError("устройство пропало"))
+        done = []
+        th = threading.Thread(target=lambda: done.append(sp._pipeline(["а"] * 6, lambda p, t: (Path(t).write_text(p), (t, True))[1])), daemon=True)
+        th.start(); th.join(5)
+        self.assertTrue(done, "конвейер завис")
+        self.assertIsInstance(done[0][1], OSError)
+
+    def test_silero_not_ready_falls_back_with_hint(self):
+        cfg, sp = self.make()
+        with mock.patch.object(tts.silero_voice, "is_ready", return_value=False):
+            self.assertFalse(sp._silero("Привет.", tts.VOICES["silero_xenia"]))
+        self.assertIn("Silero", sp.warning)
+
+    def test_silero_speaks_through_pipeline(self):
+        cfg, sp = self.make()
+        spoken = []
+        sp._play = lambda path: spoken.append(Path(path).read_text())
+        with mock.patch.object(tts.silero_voice, "is_ready", return_value=True), mock.patch.object(tts.silero_voice, "torch_available", return_value=True), \
+             mock.patch.object(tts.silero_voice, "synth_wav", side_effect=lambda base, text, out, spk, rate: Path(out).write_text(text)):
+            long = "Первое предложение. " + "Второе предложение достаточно длинное, чтобы разбить ответ на части. " * 8
+            self.assertTrue(sp._silero(long, tts.VOICES["silero_xenia"]))
+        self.assertEqual(spoken[0], "Первое предложение.")
+        self.assertGreater(len(spoken), 2)
+        self.assertEqual(sp.warning, "")
 
 if __name__ == "__main__":
     unittest.main()

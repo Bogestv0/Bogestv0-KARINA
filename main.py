@@ -282,7 +282,7 @@ def selftest() -> int:
     timer.start()
     bad = []
     for m in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "sounddevice", "numpy", "rapidfuzz", "edge_tts",
-              "pyautogui", "pyperclip", "PIL", "webview", "comtypes", "pycaw.pycaw", "docx", "openpyxl", "reportlab", "lxml"):
+              "pyautogui", "pyperclip", "PIL", "webview", "comtypes", "pycaw.pycaw", "docx", "openpyxl", "reportlab", "lxml", "torch", "torch.package"):
         step["now"] = "импорт " + m
         logf.write(step["now"] + "\n")
         try:
@@ -372,6 +372,9 @@ if __name__ == "__main__":
         if len(sys.argv) > 1 and sys.argv[1] == "--stt-probe":      # дочерний процесс: проверка загрузки модели распознавания
             from karina.stt import probe_main
             sys.exit(probe_main(sys.argv[2:]))
+        if len(sys.argv) > 1 and sys.argv[1] == "--stt-gpu-probe":  # дочерний процесс: работает ли распознавание на видеокарте
+            from karina.stt import gpu_probe_main
+            sys.exit(gpu_probe_main(sys.argv[2:]))
         if "--install-admin-task" in sys.argv:              # служебный запуск с UAC из настроек
             from karina import elevate
             sys.exit(0 if elevate.install_task() else 1)

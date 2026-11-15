@@ -13,8 +13,8 @@ from karina.config import Config
 
 def cfg_with(**stt):
     cfg = Config(Path(tempfile.mkdtemp()) / "c.json")
-    if stt:
-        cfg.update({"stt": stt})
+    stt.setdefault("vad", "energy")           # тесты кормят детектор синтетическими тонами; нейросеть Silero их голосом не считает
+    cfg.update({"stt": stt})
     return cfg
 
 
@@ -175,6 +175,79 @@ class TestChannel(unittest.TestCase):
         ch = audio._Channel(owner, 0, None)
         feed(ch, tone(40, 0.002) + tone(30, 0.2) + tone(40, 0.002))
         self.assertEqual(owner.heard, [])
+
+
+class FakeVAD:
+    """Подмена нейросети: «голос» там, где громкость кадра выше 0.1."""
+    def __init__(self): self.prob = 0.0
+    def reset(self): self.prob = 0.0
+    def feed(self, x):
+        self.prob = 0.95 if float(np.sqrt(np.mean(x * x))) > 0.1 else 0.02
+        return self.prob
+
+
+class TestNeuralAndBarge(unittest.TestCase):
+    def owner(self, **stt):
+        o = FakeOwner(cfg_with(vad="neural", **stt))
+        o.speaking, o.barged = False, []
+        o._barge = lambda u: o.barged.append(u)
+        return o
+
+    def channel(self, o):
+        ch = audio._Channel(o, 0, None)
+        ch.vad = FakeVAD()
+        return ch
+
+    def test_loud_noise_without_voice_is_ignored(self):
+        o = self.owner()
+        ch = self.channel(o)
+        feed(ch, tone(40, 0.002) + tone(30, 0.08) + tone(40, 0.002))      # громкий шум, но нейросеть голоса не слышит
+        self.assertEqual(o.heard, [])
+
+    def test_voice_is_found(self):
+        o = self.owner()
+        ch = self.channel(o)
+        feed(ch, tone(40, 0.002) + tone(30, 0.3) + tone(40, 0.002))
+        self.assertEqual(len(o.heard), 1)
+
+    def test_short_command_ends_faster_than_long_speech(self):
+        o = self.owner()
+        ch = audio._Channel(o, 0, None)
+        short, long_ = ch._end_frames(30), ch._end_frames(150)
+        self.assertLess(short, long_)
+        self.assertEqual((short, long_), (18, 27))                        # 0,55 с и 0,8 с — как и раньше для длинной речи
+        o2 = self.owner(end_silence=0.3, end_silence_long=1.2)
+        ch2 = audio._Channel(o2, 0, None)
+        self.assertEqual((ch2._end_frames(10), ch2._end_frames(200)), (10, 40))
+
+    def test_command_is_emitted_after_short_pause(self):
+        o = self.owner()
+        ch = self.channel(o)
+        feed(ch, tone(40, 0.002) + tone(25, 0.3) + tone(20, 0.002))       # 0,6 с тишины после короткой фразы
+        self.assertEqual(len(o.heard), 1)
+
+    def test_barge_in_short_stop_is_reported(self):
+        o = self.owner()
+        o.speaking = True
+        ch = self.channel(o)
+        ch.nf = 0.002
+        feed(ch, tone(20, 0.002) + tone(25, 0.4) + tone(25, 0.002))
+        self.assertEqual(o.heard, [])
+        self.assertEqual(len(o.barged), 1)
+
+    def test_own_long_voice_while_speaking_is_not_a_stop(self):
+        o = self.owner()
+        o.speaking = True
+        ch = self.channel(o)
+        feed(ch, tone(10, 0.002) + tone(150, 0.4) + tone(30, 0.002))      # длинная громкая речь = эхо её собственного голоса
+        self.assertEqual((o.heard, o.barged), ([], []))
+
+    def test_quiet_voice_does_not_stop_her(self):
+        o = self.owner()
+        o.speaking = True
+        ch = self.channel(o)
+        feed(ch, tone(10, 0.002) + tone(25, 0.05) + tone(25, 0.002))      # тихо (эхо или шорох) — не «стоп»
+        self.assertEqual(o.barged, [])
 
 
 class FakeStream:

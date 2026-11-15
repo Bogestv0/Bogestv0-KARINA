@@ -22,7 +22,7 @@ class FakeWeatherHandler(http.server.BaseHTTPRequestHandler):
         else:
             rain = abs(float(q["latitude"][0]) - 55.8) < 0.01      # в Казани дождь
             out = {"current": {"temperature_2m": -3.4, "weather_code": 61 if rain else 3, "wind_speed_10m": 4.2},
-                   "daily": {"weather_code": [61 if rain else 3, 0], "temperature_2m_max": [1.0, 5.2], "temperature_2m_min": [-6.0, -1.0], "precipitation_probability_max": [70 if rain else 10, 20]}}
+                   "daily": {"weather_code": [61 if rain else 3, 0, 1], "temperature_2m_max": [1.0, 5.2, 6.0], "temperature_2m_min": [-6.0, -1.0, 0.0], "precipitation_probability_max": [70 if rain else 10, 20, 10]}}
         body = json.dumps(out).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
 
@@ -127,6 +127,28 @@ class WeatherTests(Base):
         self.set_profile(city="Москва")
         r = self.say("погода на завтра"); self.assertIn("завтра: ясно", r)
         self.assertIn("завтра", self.say("какая погода завтра"))
+
+    def test_words_after_city_and_my_city(self):
+        self.set_profile(city="Красноярск")
+        self.assertTrue(self.say("Карина, какая погода в Москве сегодня вечером").startswith("Москва, сейчас"))    # раньше брался город из профиля
+        self.assertTrue(self.say("погода в моём городе").startswith("Красноярск, сейчас"))
+        self.assertTrue(self.say("что на улице").startswith("Красноярск, сейчас"))
+        self.assertTrue(self.say("погода в городе Казани завтра").startswith("Казань, завтра"))
+        self.assertTrue(self.say("будет ли дождь в Казани пожалуйста").startswith("Казань, сейчас"))
+        self.assertTrue(self.say("погода послезавтра").startswith("Красноярск, послезавтра"))
+
+    def test_profile_city_written_loosely(self):
+        for raw in ("г. Красноярск", "город Красноярск, Россия", "Красноярск (Красноярский край)"):
+            self.set_profile(city=raw)
+            self.assertTrue(self.say("скажи погоду").startswith("Красноярск, сейчас"), raw)
+
+    def test_parse_request(self):
+        self.assertEqual(weather.parse_request("какая погода в ближайшие дни"), ("", "today"))
+        self.assertEqual(weather.parse_request("погода в ростове на дону завтра"), ("ростове на дону", "tomorrow"))
+        self.assertEqual(weather.parse_request("погода в москве на выходных"), ("москве", "today"))
+        self.assertEqual(weather.parse_request("погода в нижнем новгороде"), ("нижнем новгороде", "today"))
+        self.assertIn("ростов-на-дону", weather.city_variants("ростов-на-дону") + ["ростов-на-дону"])
+        self.assertEqual(weather.clean_city("г. Новокузнецк, Кемеровская область"), "Новокузнецк")
 
     def test_no_city_and_unknown_city(self):
         self.assertIn("Не знаю, где вы живёте", self.say("скажи погоду"))

@@ -227,5 +227,18 @@ class TestSingle(unittest.TestCase):
             single.ask_existing_to_show(); single.listen_for_show(lambda: None)
 
 
+
+
+class TestSelect(unittest.TestCase):
+    def tearDown(self):
+        ov.select("irina")
+
+    def test_select_switches_files_and_unknown_means_irina(self):
+        self.assertEqual(ov.select("denis"), "denis")
+        self.assertEqual((ov.NAME, ov.SUB), ("ru_RU-denis-medium", "ru/ru_RU/denis/medium"))
+        self.assertTrue(ov.paths(Path("/x"))[0].name.startswith("ru_RU-denis"))
+        self.assertEqual(ov.select("что-то странное"), "irina")
+        self.assertEqual(ov.NAME, "ru_RU-irina-medium")
+
 if __name__ == "__main__":
     unittest.main()
