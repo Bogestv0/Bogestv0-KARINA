@@ -14,13 +14,11 @@ _WEATHER_WORD = r"(?:погод\w*|прогноз\w*|сколько\s+граду
 def _weather(ctx: Ctx, t):
     if re.search(r"\b(?:найди|загугли|поищи|в\s+интернете)\b", t):
         return NOT_HANDLED     # «найди в интернете погоду» — это поиск, он обработается следующей командой
-    day = "tomorrow" if re.search(r"\bзавтра\b", t) else "today"
-    m = weather.CITY_RE.search(t)
-    city = m.group("c").strip() if m else ""
-    city = re.sub(r"\b(?:сегодня|завтра|сейчас)\b", "", city).strip()
+    city, day = weather.parse_request(t)
+    named = bool(city)
     p = prof.get(ctx.cfg)
     if not city:
-        city = p["city"]
+        city = weather.clean_city(p["city"])
     if not city:
         return "Не знаю, где вы живёте. Скажите «погода в Москве» или впишите город в профиле."
     try:
@@ -30,7 +28,7 @@ def _weather(ctx: Ctx, t):
     pet = next((x for x in p["pets"] if x["kind"] == "dog"), None)
     if re.search(r"\bзонт", t):
         text += " Зонт лучше взять." if wet else " Зонт, скорее всего, не понадобится."
-    elif pet and wet and not m:
+    elif pet and wet and not named:
         text += f" На прогулку с питомцем по имени {pet['name']} возьмите дождевик."
     return text
 

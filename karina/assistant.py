@@ -1,6 +1,6 @@
 """Ядро: микрофон → распознавание → имя → команда → голосовой ответ."""
 from __future__ import annotations
-import queue, threading, time, traceback
+import queue, sys, threading, time, traceback
 from . import actions, chat as chatmod, llm, net
 from . import integrations, personal, profile as prof  # noqa: F401  (регистрируют команды микшера, VPN, погоды и профиля)
 from .mixer_remote import MixerRemote
@@ -16,6 +16,7 @@ from .stt import STT
 from .tts import Speaker
 from .textutil import norm
 from .wake import split_wake
+from .hotkeys import Hotkeys
 
 # Фиксированные ответы: озвучиваются заранее, чтобы без интернета звучали тем же голосом, что и онлайн.
 STATIC_PHRASES = [
@@ -43,6 +44,18 @@ YES = {"да", "давай", "подтверждаю", "конечно", "ага
 NO = {"нет", "не надо", "отмена", "отменяю", "стоп", "не нужно"}
 
 
+# «Замолчи» посреди её речи: фраза целиком из этих слов, и хотя бы одно — из первой группы
+STOP_CORE = {"стоп", "хватит", "замолчи", "помолчи", "молчи", "тихо", "достаточно", "стой", "перестань", "прекрати", "довольно", "отмена"}
+STOP_FILL = {"ладно", "все", "уже", "ну", "пожалуйста", "хорош", "хорошо", "карина", "эй", "так", "давай"}
+
+
+def is_stop_phrase(text: str, names: list[str]) -> bool:
+    """«Стоп», «Карина, хватит», «ладно, замолчи» — да; «останови музыку», «хватит ли места» — нет (команды не трогаем, только её речь)."""
+    _, rest = split_wake(text, names)
+    words = norm(rest or text).split()
+    return 0 < len(words) <= 3 and any(w in STOP_CORE for w in words) and all(w in STOP_CORE | STOP_FILL for w in words)
+
+
 class Assistant:
     def __init__(self, cfg, emit):
         self.cfg, self.emit = cfg, emit
@@ -55,6 +68,9 @@ class Assistant:
         self.mixer = MixerRemote(cfg)                       # «сделай тише музыку»: связь с Bogestv0 MIXER
         self.vpn = VpnLink(cfg, log=lambda m: trace(m))     # «включи впн»: расширение Bogestv0 VPN подключается к нам
         self.listener = Listener(cfg, self._on_audio, self._on_level, self._on_mics)
+        self.listener.on_barge = self._on_barge
+        self.bq: queue.Queue = queue.Queue(maxsize=2)       # короткие фразы поверх речи Карины («стоп»)
+        self.hotkeys = Hotkeys(cfg, {"talk": self.push_to_talk, "stop": self.hush}, trace)
         self.mic_status: list = []
         self._levels: dict = {}
         self._lvl_emit = 0.0
@@ -80,6 +96,38 @@ class Assistant:
         t.start()
         self._threads.append(t)
         self.warm_voice()
+        t = threading.Thread(target=self._voice_setup, daemon=True, name="karina-silero-setup")
+        t.start()
+        self._threads.append(t)
+        t = threading.Thread(target=self._barge_worker, daemon=True, name="karina-barge")
+        t.start()
+        self._threads.append(t)
+        self.hotkeys.start()
+
+    def _voice_setup(self):
+        """Естественный голос без возни: если есть torch — один раз переключаем старую настройку на Silero и докачиваем модель в фоне."""
+        try:
+            time.sleep(3)
+            from . import silero_voice
+            t = self.cfg["tts"]
+            if not t.get("auto_silero", True) or not silero_voice.torch_available():
+                if t.get("auto_silero", True):
+                    trace("Silero: torch не найден — " + silero_voice.torch_hint())
+                return
+            if not t.get("silero_migrated"):
+                patch = {"silero_migrated": True}
+                if t.get("voice") in (None, "", "svetlana_cute"):      # голос не менялся с прежних версий — берём естественный
+                    patch["voice"] = "silero_xenia"
+                self.cfg.update({"tts": patch})
+            if not str(self.cfg["tts"].get("voice", "")).startswith("silero_") or silero_voice.is_ready(self.cfg.path.parent):
+                silero_voice.preload(self.cfg.path.parent)
+                return
+            while not self._stop.is_set() and not net.is_online():
+                self._stop.wait(20)
+            if not self._stop.is_set():
+                silero_voice.ensure_model(self.cfg.path.parent, trace, self.emit, cancel=self._stop)
+        except Exception as e:
+            trace(f"Silero: автонастройка не удалась: {e}")
 
     def _birthday_loop(self):
         """Раз в минуту проверяет, не пора ли поздравить (день рождения владельца или питомца). Один раз за день."""
@@ -121,6 +169,7 @@ class Assistant:
 
     def stop(self):
         self._stop.set()
+        self.hotkeys.stop()
         self.tts.stop()
         self.listener.stop()
         self.chat.stop()
@@ -152,7 +201,8 @@ class Assistant:
             self._set_state("loading", "Загружаю модель распознавания… при первом запуске нужен интернет (один раз)")
             trace("Распознавание речи: окно уведомлено, начинаю проверку модели")
             self.stt.load(lambda mb: self._set_state("loading", f"Скачиваю модель распознавания: {mb} МБ (один раз, около 460 МБ для «Хорошей»)"))
-            trace(f"Распознавание речи: модель готова за {time.time() - t0:.1f} с")
+            trace(f"Распознавание речи: модель готова за {time.time() - t0:.1f} с ({'видеокарта' if self.stt.device == 'cuda' else 'процессор'})")
+            self.stt.ensure_prefilter()
         except Exception as e:
             traceback.print_exc()
             self.log("error", f"Не удалось загрузить модель распознавания: {e}")
@@ -180,6 +230,8 @@ class Assistant:
             if not self.listening or self.stt.model is None:
                 continue
             try:
+                if self._prefilter_reject(group):
+                    continue
                 self._set_state("thinking")
                 text = self._recognize(group)
                 if text:
@@ -189,6 +241,18 @@ class Assistant:
                 self.log("error", f"Ошибка обработки: {e}")
             finally:
                 self._set_state("idle")
+
+    def _prefilter_reject(self, group) -> bool:
+        """Быстрая проверка (stt.prefilter): в записи точно нет обращения по имени → полное распознавание не запускаем. Без имени команды не нужны,
+        поэтому не мешаем ответам «да/нет» и фразам в окне после обращения."""
+        c = self.cfg
+        if not c["stt"].get("prefilter") or not c["wake_required"] or time.time() < self.followup_until or self._pending or self._choice:
+            return False
+        audio = group[0].audio if isinstance(group, (list, tuple)) and group and hasattr(group[0], "audio") else group
+        try:
+            return self.stt.has_name(audio, c.wake_names()) is False
+        except Exception:
+            return False
 
     def _on_audio(self, group):
         """Фраза от микрофонов: список записей одной и той же речи (лучшая первой)."""
@@ -407,14 +471,62 @@ class Assistant:
         if not text:
             return
         self.log("karina", text)
-        self.listener.muted = True       # не слушаем самих себя
+        barge = bool(self.cfg["tts"].get("barge_in", True)) and self.stt.model is not None
+        if barge:
+            self.listener.speaking = True    # слушаем только короткое «стоп» — её можно перебить
+        else:
+            self.listener.muted = True       # не слушаем самих себя
         self._set_state("speaking")
         try:
             self.tts.speak(text)
         except Exception as e:
             self.log("error", f"Не удалось озвучить: {e}")
         finally:
-            time.sleep(0.25)
+            self.listener.speaking = False
+            self.listener.muted = True       # на время «хвоста» эха после речи
+            time.sleep(0.2)
             self.listener.muted = not self.listening
             self.followup_until = max(self.followup_until, time.time() + float(self.cfg["followup_seconds"]))
             self._set_state("idle")
+
+    # ---------- «замолчи» и «говорить без имени» ----------
+    def hush(self):
+        """Прервать речь (горячая клавиша или фраза «стоп»)."""
+        if self.tts.speaking:
+            self.tts.stop()
+            self.log("info", "Замолчала.")
+
+    def push_to_talk(self):
+        """Горячая клавиша: следующая фраза принимается без обращения по имени."""
+        self.hush()
+        self.sleeping = False
+        self.followup_until = time.time() + 10
+        self._set_state("idle", "Слушаю — говорите без имени")
+        self.log("info", "Слушаю: можно говорить без имени.")
+        if sys.platform == "win32":
+            try:
+                import winsound
+                threading.Thread(target=winsound.Beep, args=(880, 90), daemon=True).start()
+            except Exception:
+                pass
+
+    def _on_barge(self, u):
+        try:
+            self.bq.put_nowait(u)
+        except queue.Full:
+            pass
+
+    def _barge_worker(self):
+        while not self._stop.is_set():
+            try:
+                u = self.bq.get(timeout=0.4)
+            except queue.Empty:
+                continue
+            if not self.tts.speaking or self.stt.model is None:
+                continue
+            try:
+                text = self.stt.transcribe(u.audio)
+                if text and is_stop_phrase(text, self.cfg.wake_names()):
+                    self.hush()
+            except Exception as e:
+                trace(f"барж-ин: {e}")

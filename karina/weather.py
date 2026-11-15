@@ -1,6 +1,6 @@
 """Погода через Open-Meteo (бесплатно, без ключа и регистрации): сначала ищем город, потом прогноз."""
 from __future__ import annotations
-import json, re, urllib.parse, urllib.request
+import itertools, json, re, urllib.parse, urllib.request
 
 GEO = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST = "https://api.open-meteo.com/v1/forecast"
@@ -25,22 +25,81 @@ def _get(url: str, params: dict, timeout: float = 8.0) -> dict:
         raise WeatherError("Не получилось связаться с сервисом погоды. Проверьте интернет.") from None
 
 
-def city_variants(word: str) -> list[str]:
-    """«в Красноярске» → Красноярске, Красноярск…; «в Москве» → Москва; «в Казани» → Казань."""
-    w = word.strip().strip(".,!?").lower()
+def _word_variants(w: str) -> list[str]:
+    """Одно слово в падеже → возможные начальные формы: «красноярске» → красноярск, «москве» → москва, «казани» → казань."""
+    w = w.strip().strip(".,!?").lower()
     out = [w]
     if len(w) > 3:
         out += [w[:-1], w[:-1] + "а", w[:-1] + "я", w[:-1] + "ь", w[:-2], w[:-2] + "а", w[:-2] + "ь"]
     return list(dict.fromkeys(x for x in out if len(x) >= 3))
 
 
+def _adj_variants(w: str) -> list[str]:
+    """«нижнем» → нижний, «старом» → старый/старой: прилагательные в названиях городов («в Нижнем Новгороде»)."""
+    w = w.lower()
+    if w.endswith("ем") and len(w) > 4:
+        return [w, w[:-2] + "ий"]
+    if w.endswith("ом") and len(w) > 4:
+        return [w, w[:-2] + "ый", w[:-2] + "ой", w[:-2] + "ий"]
+    if w.endswith("ей") and len(w) > 4:
+        return [w, w[:-2] + "ья", w[:-2] + "ая"]
+    return [w]
+
+
+def city_variants(word: str) -> list[str]:
+    """Название из одного слова или с дефисом («в Ростове-на-Дону», «в Санкт-Петербурге»): варианты начальной формы."""
+    w = word.strip().strip(".,!?").lower()
+    if "-" not in w:
+        return _word_variants(w)
+    parts = w.split("-")
+    opts = [[p] for p in parts]
+    opts[0] = _word_variants(parts[0])[:4]
+    opts[-1] = _word_variants(parts[-1])[:4]
+    out = ["-".join(c) for c in itertools.islice(itertools.product(*opts), 12)]
+    return list(dict.fromkeys(out))
+
+
+_TAIL_NOISE = re.compile(r"^(?:г|гор|город\w*|область|обл|край|республика|россия|рф)\.?$", re.I)
+
+
+def clean_city(name: str) -> str:
+    """То, что человек вписал в профиль, как есть: «г. Новокузнецк», «город Омск, Россия», «Томск (Томская обл.)» → «Новокузнецк», «Омск», «Томск»."""
+    s = re.sub(r"\([^)]*\)", " ", str(name or ""))
+    s = s.split(",")[0]
+    words = [w for w in re.split(r"\s+", s.strip()) if w and not _TAIL_NOISE.match(w)]
+    return " ".join(words).strip(" .,-")
+
+
+def _pick(results: list[dict], wanted: list[str]) -> dict | None:
+    """Из ответа сервиса выбираем самый похожий на названное (человек мог сказать с ошибкой или в другом падеже); при равенстве — самый людный."""
+    from rapidfuzz import fuzz
+    best, best_key = None, (0.0, 0)
+    for r in results:
+        nm = str(r.get("name", "")).lower().replace("ё", "е")
+        score = max((fuzz.ratio(nm, v.replace("ё", "е")) for v in wanted), default=0.0)
+        key = (score, int(r.get("population") or 0))
+        if score >= 78 and key > best_key:
+            best, best_key = r, key
+    return best
+
+
 def find_city(name: str) -> dict:
+    name = clean_city(name) or name.strip()
     words = name.split()
-    cands = [name] + (city_variants(" ".join(words)) if len(words) == 1 else [" ".join(words[:-1] + [v]) for v in city_variants(words[-1])])
+    if len(words) == 1:
+        cands = [name] + city_variants(name)
+    else:
+        last = city_variants(words[-1])
+        heads = [list(dict.fromkeys(_adj_variants(w))) for w in words[:-1]]
+        cands = [name] + [" ".join(list(h) + [v]) for h in itertools.islice(itertools.product(*heads), 4) for v in last]
+    if len(words) > 1:                               # «санкт петербург», «ростове на дону» — в базе города с дефисами
+        cands += city_variants("-".join(words))
+    wanted = [c.lower() for c in cands]
     for c in dict.fromkeys(cands):
-        res = (_get(GEO, {"name": c, "count": 1, "language": "ru", "format": "json"}).get("results") or [])
-        if res and res[0].get("name", "").lower()[:4] == c.lower()[:4]:
-            return res[0]
+        res = (_get(GEO, {"name": c, "count": 10, "language": "ru", "format": "json"}).get("results") or [])
+        hit = _pick(res, wanted)
+        if hit:
+            return hit
     raise WeatherError(f"Не нашла город «{name}». Назовите его иначе или поправьте в профиле.")
 
 
@@ -54,7 +113,7 @@ def _deg(n: int) -> str:
 
 
 def forecast(city: dict) -> dict:
-    return _get(FORECAST, {"latitude": city["latitude"], "longitude": city["longitude"], "timezone": "auto", "forecast_days": 2, "wind_speed_unit": "ms",
+    return _get(FORECAST, {"latitude": city["latitude"], "longitude": city["longitude"], "timezone": "auto", "forecast_days": 3, "wind_speed_unit": "ms",
                            "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
                            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"})
 
@@ -63,13 +122,13 @@ def describe(city: dict, data: dict, day: str = "today") -> tuple[str, bool]:
     """→ (фраза, будут ли осадки). day: today | tomorrow."""
     place = city.get("name", "")
     d = data["daily"]
-    i = 1 if day == "tomorrow" else 0
+    i = {"tomorrow": 1, "aftertomorrow": 2}.get(day, 0)
     code, lo, hi = d["weather_code"][i], d["temperature_2m_min"][i], d["temperature_2m_max"][i]
     prob = (d.get("precipitation_probability_max") or [None, None])[i]
     wet = code in WET or bool(prob and prob >= 50)
     rng = f"от {temp_words(lo)} до {temp_words(hi)}" if round(lo) != round(hi) else temp_words(hi)
-    if day == "tomorrow":
-        s = f"{place}, завтра: {_CODES.get(code, 'облачно')}, {rng}."
+    if day in ("tomorrow", "aftertomorrow"):
+        s = f"{place}, {'завтра' if day == 'tomorrow' else 'послезавтра'}: {_CODES.get(code, 'облачно')}, {rng}."
     else:
         c = data["current"]
         s = (f"{place}, сейчас {temp_words(c['temperature_2m'])}, {_CODES.get(c['weather_code'], 'облачно')}, ветер {round(c['wind_speed_10m'])} м/с. "
@@ -84,4 +143,35 @@ def report(city_name: str, day: str = "today") -> tuple[str, bool]:
     return describe(city, forecast(city), day)
 
 
-CITY_RE = re.compile(r"\b(?:в|во|для|по)\s+(?:городе\s+)?(?P<c>[а-яёa-z][а-яёa-z\- ]{2,40}?)(?=\s+(?:сегодня|завтра|сейчас|на\s+завтра)\b|$)")
+CITY_RE = re.compile(r"\b(?:в|во|для|по)\s+(?:городе\s+)?(?P<c>[а-яёa-z][а-яёa-z\- ]{2,40}?)(?=\s+(?:сегодня|завтра|сейчас|на\s+завтра)\b|$)")   # старый разбор, оставлен для совместимости
+
+# Слова, которыми кончается название города в фразе («погода в Омске сегодня вечером»), и слова, которые городом не являются.
+_STOP = {"сегодня", "завтра", "послезавтра", "сейчас", "вечером", "утром", "днем", "ночью", "вечер", "утро", "день", "ночь", "на", "пожалуйста", "будет", "ли", "какая", "какой",
+         "и", "а", "но", "что", "как", "там", "чтобы", "если", "карина", "скажи", "расскажи", "подскажи", "узнай", "нужен", "нужна", "надо", "стоит", "можно", "будут"}
+_NOT_CITY = {"ближайшие", "ближайшее", "ближайший", "эти", "этот", "это", "выходные", "выходных", "понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье",
+             "течение", "общем", "целом", "первую", "последние", "последнее", "мире", "стране", "интернете", "сети", "сторону", "случае", "дорогу", "поездку"}
+_TIME_AFTER_NA = {"неделю", "неделе", "недели", "сутки", "день", "вечер", "ночь", "утро", "ближайшие", "ближайшую", "ближайший", "выходные", "завтра", "сегодня", "три", "пять", "семь", "два"}
+_LOCAL = {"моем", "нашем", "своем", "родном", "этом", "здесь", "тут", "дома", "меня", "нас", "городе", "город", "города", "моего", "нашего", "моему"}
+_LOCAL_PHRASE = re.compile(r"\b(?:у\s+меня|у\s+нас|около\s+меня|рядом(?:\s+со\s+мной)?|здесь|тут|дома|на\s+улице|в\s+(?:моем|нашем|своем|родном|этом)\s+город\w*|в\s+город[ео])\b")
+_DAYS = (("послезавтра", "aftertomorrow"), ("завтра", "tomorrow"))
+
+
+def parse_request(t: str) -> tuple[str, str]:
+    """Фраза «какая погода в Красноярске завтра вечером» → («красноярске», «tomorrow»). Город пустой — значит «мой», из профиля."""
+    day = next((d for w, d in _DAYS if re.search(rf"\b{w}\b", t)), "today")
+    words = t.split()
+    for i, w in enumerate(words):
+        if w not in ("в", "во", "для", "по", "города", "городе", "город", "г"):
+            continue
+        j = i + 1
+        while j < len(words) and words[j] in ("городе", "город", "города", "г", "гор"):
+            j += 1                                   # «в городе Омске»
+        name = []
+        while j < len(words) and len(name) < 4 and (words[j] not in _STOP or (words[j] == "на" and name and j + 1 < len(words) and words[j + 1] not in _STOP | _NOT_CITY | _TIME_AFTER_NA)):
+            if not name and (words[j] in _NOT_CITY or words[j] in _LOCAL):
+                break
+            name.append(words[j])
+            j += 1
+        if name:
+            return " ".join(name), day
+    return "", day

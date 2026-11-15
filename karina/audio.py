@@ -1,4 +1,4 @@
-"""Захват микрофонов (до 4 одновременно) и выделение фраз (простой адаптивный детектор речи, без внешних моделей).
+"""Захват микрофонов (до 4 одновременно) и выделение фраз (нейросетевой детектор речи Silero VAD; если он недоступен — адаптивный по громкости).
 
 Каждый включённый микрофон слушает сам по себе. Одну и ту же фразу часто слышат сразу несколько микрофонов:
 такие записи собирает Fuser в одну «группу», а ассистент выбирает из неё лучший вариант (см. Assistant._recognize).
@@ -7,10 +7,12 @@ from __future__ import annotations
 import collections, threading, time
 from dataclasses import dataclass, field
 import numpy as np
+from . import vad as vadmod
 
 SR = 16000
 FRAME = 480  # 30 мс
 MAX_MICS = 4
+BARGE_MAX_FRAMES = 80   # дольше 2,4 с речи поверх голоса Карины «стопом» не считаем
 
 
 # ---------------- устройства ----------------
@@ -217,6 +219,8 @@ class _Channel:
         self.nf = 0.004                 # уровень фонового шума именно этого микрофона
         self.last_cb = time.monotonic()
         self._lvl_ts = 0.0
+        self.vad = None                 # нейросетевой детектор речи (создаётся при первой надобности)
+        self.need_quiet = 0             # после сброса «эха» ждём тишины, прежде чем снова слушать
         self._reset()
 
     def _reset(self):
@@ -229,6 +233,8 @@ class _Channel:
         self.sp_n = 0
         self.peak = 0.0
         self.t0 = 0.0
+        if getattr(self, "vad", None) is not None:
+            self.vad.reset()
 
     def _candidates(self, sd):
         """Что пробуем открыть: (устройство, частота, каналов). Сначала как раньше (16 кГц, моно), потом родная частота устройства (виртуальные микшеры
@@ -307,6 +313,25 @@ class _Channel:
             return
         self._process(x, now)
 
+    def _is_voiced(self, x, rms: float, base: float, strict: bool) -> bool:
+        """Голос ли в этом кадре. Нейросеть Silero (если доступна) с гистерезисом; иначе — по громкости над шумовым полом.
+        strict — Карина сама говорит: нужен заметно громкий и уверенный голос (чтобы её собственный голос из колонок не сходил за вас)."""
+        cfg = self.owner.cfg["stt"]
+        if self.vad is None and cfg.get("vad", "neural") != "energy" and vadmod.available():
+            self.vad = vadmod.NeuralVAD()
+        if self.vad is not None:
+            p = self.vad.feed(x)
+            thr = 0.8 if strict else (0.35 if self.speaking else 0.5)
+            return p >= thr and rms > (max(self.nf * 4.0, base) if strict else 0.0025)
+        return rms > max(self.nf * (5.0 if strict else 3.0), base * (2.0 if strict else 1.0))
+
+    def _end_frames(self, n: int) -> int:
+        """Сколько кадров тишины считаем концом фразы. Короткая команда заканчивается быстро, долгая речь (с паузами на раздумья) — позже."""
+        cfg = self.owner.cfg["stt"]
+        short, long_ = float(cfg.get("end_silence", 0.55)), float(cfg.get("end_silence_long", 0.8))
+        sec = short if n * FRAME / SR < 3.0 else long_
+        return max(6, int(round(sec / (FRAME / SR))))
+
     def _process(self, x, now):
         if self.owner.muted:
             self._reset()
@@ -316,9 +341,15 @@ class _Channel:
             self._lvl_ts = now
             self.owner.on_level(self.slot, min(1.0, rms * 10))
         base = float(self.owner.cfg["stt"].get("vad_threshold", 0.012))
-        voiced = rms > max(self.nf * 3.0, base)
+        talking = bool(getattr(self.owner, "speaking", False))     # Карина сейчас говорит: слушаем только короткое «стоп»
+        voiced = self._is_voiced(x, rms, base, talking)
         if not voiced:
             self.nf = min(0.05, 0.97 * self.nf + 0.03 * rms)
+        if talking and self.need_quiet > 0:
+            self.need_quiet = max(0, self.need_quiet - 1) if not voiced else 12
+            return
+        if not talking:
+            self.need_quiet = 0
         if not self.speaking:
             self.pre.append(x)
             self.run = self.run + 1 if voiced else 0
@@ -338,13 +369,20 @@ class _Channel:
             self.sp_n += 1
         self.silence = 0 if voiced else self.silence + 1
         n = len(self.buf)
-        if self.silence >= 27 or n >= 500:   # 0.8 c тишины или 15 c речи
+        if talking and n > BARGE_MAX_FRAMES:        # долго и громко, пока говорит Карина, — это её собственный голос, а не «стоп»
+            self._reset()
+            self.need_quiet = 12
+            return
+        if self.silence >= self._end_frames(n) or n >= 500:   # конец фразы или 15 c речи
             audio = np.concatenate(self.buf)
             speech = (self.sp_sq / self.sp_n) ** 0.5 if self.sp_n else 0.0
             u = Utterance(self.slot, audio, self.t0, now, snr=speech / max(self.nf, 1e-4), peak=self.peak)
             self._reset()
             if len(audio) / SR >= 0.45:
-                self.owner._utterance(u)
+                if talking:
+                    self.owner._barge(u)
+                else:
+                    self.owner._utterance(u)
 
 
 # ---------------- все микрофоны ----------------
@@ -355,7 +393,9 @@ class Listener:
     def __init__(self, cfg, on_utterance, on_level, on_status=None):
         self.cfg, self.on_utterance, self.on_level = cfg, on_utterance, on_level
         self.on_status = on_status or (lambda st: None)
-        self.muted = False       # пока говорит Карина или слушание выключено
+        self.muted = False       # слушание выключено (или Карина говорит, а перебивать её нельзя)
+        self.speaking = False    # Карина говорит, но её можно перебить: ловим только короткую фразу вроде «стоп»
+        self.on_barge = None     # куда отдавать такую короткую фразу
         self.channels: dict[int, _Channel] = {}
         self.statuses: list[dict] = []
         self._fuser = Fuser(self._emit_group)
@@ -447,6 +487,14 @@ class Listener:
             return
         self._fuser.start()
         self._fuser.add(u)
+
+    def _barge(self, u: Utterance):
+        cb = self.on_barge
+        if cb is not None and not self.muted:
+            try:
+                cb(u)
+            except Exception:
+                pass
 
     def _emit_group(self, group: list[Utterance]):
         if not self.muted:

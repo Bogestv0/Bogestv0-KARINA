@@ -1,6 +1,6 @@
 """Голос Карины. Есть интернет — нейросетевой голос Microsoft (edge-tts), нет — системный голос Windows (SAPI)."""
 from __future__ import annotations
-import asyncio, hashlib, os, re, sys, tempfile, threading, time
+import asyncio, hashlib, os, queue, re, sys, tempfile, threading, time
 from pathlib import Path
 from . import net, offline_voice, silero_voice
 
@@ -48,6 +48,16 @@ def cache_name(text: str, voice: str, rate: str, pitch: str) -> str:
     return hashlib.sha1(f"{voice}|{rate}|{pitch}|{text}".encode("utf-8")).hexdigest()[:24] + ".mp3"
 
 
+def split_speech(text: str, limit: int = 220) -> list[str]:
+    """Режет ответ для потоковой озвучки: первое предложение — отдельно (чтобы заговорить как можно раньше), остальное — кусками до limit знаков."""
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return [text] if text else []
+    sents = re.split(r"(?<=[.!?…])\s+", text)
+    first, rest = sents[0], " ".join(sents[1:])
+    return silero_voice.split_text(first, limit) + (silero_voice.split_text(rest, limit) if rest else [])
+
+
 def _mci_play(path: str, stop: threading.Event):
     import ctypes
     mci = ctypes.windll.winmm.mciSendStringW
@@ -76,6 +86,7 @@ class Speaker:
         self._stop = threading.Event()
         self._edge_fail_until = 0.0
         self.cache_dir = Path(cfg.path).parent / "voice_cache"   # рядом с config.json
+        self.speaking = False
         self._warm_lock = threading.Lock()
 
     def stop(self):
@@ -88,6 +99,13 @@ class Speaker:
         if not t.get("enabled", True) or not text:
             return
         self._stop.clear()
+        self.speaking = True
+        try:
+            self._speak(text, stressed, t)
+        finally:
+            self.speaking = False
+
+    def _speak(self, text: str, stressed: str, t: dict):
         eng = t.get("engine", "auto")
         sel = VOICES.get(t.get("voice") or DEFAULT_VOICE) or {}
         if sel.get("engine") == "silero" and eng != "online":
@@ -113,37 +131,88 @@ class Speaker:
             self._edge_fail_until = time.time() + 60   # минуту не пытаемся, пока сеть не наладится
         self._offline(text)
 
-    def _silero(self, text: str, v: dict) -> bool:
-        """Говорит локальным голосом Silero. False — не вышло (нет torch или модели): тогда говорит обычный голос, а причина видна в предупреждении."""
-        base = self.cfg.path.parent
-        if not silero_voice.is_ready(base):
-            self.warning = "Голос Silero не скачан: Настройки → «Голос» → «Скачать голос Silero». Пока говорю обычным голосом."
-            return False
-        if not silero_voice.torch_available():
-            self.warning = silero_voice.torch_hint()
-            return False
-        fd, path = tempfile.mkstemp(suffix=".wav", prefix="karina_")
-        os.close(fd)
-        try:
-            silero_voice.synth_wav(base, text, path, v.get("speaker", "xenia"), int(self.cfg["tts"].get("rate", 0)))
-            if not self._stop.is_set():
-                self._play(path)
-            self.warning = ""
-            return True
-        except Exception as e:
-            if self._stop.is_set():
-                return True
-            self.warning = f"Голос Silero не запустился ({e.__class__.__name__}: {e}), говорю обычным голосом."
-            return False
-        finally:
+    def _pipeline(self, parts: list[str], synth) -> tuple[int, Exception | None]:
+        """Озвучивает куски по порядку; пока играет один, готовится следующий (конвейер) — длинный ответ начинается сразу, а не после синтеза целиком.
+        synth(часть, путь_для_записи) → (путь_готового_файла, удалить_после). Возвращает (сколько кусков прозвучало, ошибка или None)."""
+        q: queue.Queue = queue.Queue(maxsize=2)
+        err: list = []
+
+        def rm(path):
             try:
                 os.remove(path)
             except OSError:
                 pass
 
+        def producer():
+            try:
+                for part in parts:
+                    if self._stop.is_set() or err:
+                        break
+                    fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="karina_")
+                    os.close(fd)
+                    try:
+                        path, temp = synth(part, tmp)
+                    except Exception as e:
+                        err.append(e)
+                        rm(tmp)
+                        break
+                    if path != tmp:
+                        rm(tmp)                      # запись легла в другое место (кэш, mp3) — пустой временный файл не нужен
+                    q.put((path, temp))
+            except BaseException as e:               # на всякий случай: потребитель ждёт сигнала конца
+                err.append(e)
+            finally:
+                q.put(None)
+
+        threading.Thread(target=producer, daemon=True, name="karina-tts-synth").start()
+        played = 0
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            path, temp = item
+            try:
+                if not self._stop.is_set() and not err:
+                    self._play(path)
+                    played += 1
+            except Exception as e:
+                err.append(e)                        # дальше не играем, но очередь дочитываем до конца, чтобы не оставить мусор
+            finally:
+                if temp:
+                    rm(path)
+        return played, (err[0] if err else None)
+
+    def _silero(self, text: str, v: dict) -> bool:
+        """Говорит локальным голосом Silero по предложениям. False — не вышло (нет torch или модели): тогда говорит обычный голос, а причина видна в предупреждении."""
+        base = self.cfg.path.parent
+        if not silero_voice.is_ready(base):
+            self.warning = "Голос Silero ещё скачивается (или не скачан): Настройки → «Голос» → «Скачать голос Silero». Пока говорю обычным голосом."
+            return False
+        if not silero_voice.torch_available():
+            self.warning = silero_voice.torch_hint()
+            return False
+        speaker, rate = v.get("speaker", "xenia"), int(self.cfg["tts"].get("rate", 0))
+
+        def synth(part, tmp):
+            silero_voice.synth_wav(base, part, tmp, speaker, rate)
+            return tmp, True
+        try:
+            played, err = self._pipeline(split_speech(text), synth)
+        except Exception as e:
+            played, err = 0, e
+        if self._stop.is_set() or (err is None):
+            self.warning = ""
+            return True
+        if played:                                   # начали говорить и споткнулись на середине — договаривать другим голосом поздно
+            self.warning = f"Голос Silero оборвался ({err.__class__.__name__}: {err})."
+            return True
+        self.warning = f"Голос Silero не запустился ({err.__class__.__name__}: {err}), говорю обычным голосом."
+        return False
+
     def _offline(self, text: str):
         """Без интернета: нейросетевая «Ирина» (если скачана и включена), иначе системный голос Windows."""
         t = self.cfg["tts"]
+        offline_voice.select(t.get("piper_voice", "irina"))
         if t.get("offline", "auto") == "auto" and offline_voice.is_ready(self.cfg.path.parent):
             fd, path = tempfile.mkstemp(suffix=".wav", prefix="karina_")
             os.close(fd)
@@ -214,7 +283,7 @@ class Speaker:
         os.close(fd)
         try:
             async def gen():
-                await asyncio.wait_for(edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).save(tmp), 8)
+                await asyncio.wait_for(edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).save(tmp), 8 + len(text) / 25)
             asyncio.run(gen())
             if os.path.getsize(tmp) == 0:
                 raise OSError("пустой звук")
@@ -232,16 +301,14 @@ class Speaker:
             if not self._stop.is_set():
                 self._play(str(dest))
             return
-        dest = Path(tempfile.gettempdir()) / f"karina_{os.getpid()}_{time.time_ns()}.mp3"
-        try:
-            self._synth(text, voice_id, dest)
-            if not self._stop.is_set():
-                self._play(str(dest))
-        finally:
-            try:
-                dest.unlink()
-            except OSError:
-                pass
+
+        def synth(part, tmp):                        # длинные ответы разовые — в общий кэш не кладём
+            dest = Path(tmp).with_suffix(".mp3")
+            self._synth(part, voice_id, dest)
+            return str(dest), True
+        played, err = self._pipeline(split_speech(text), synth)
+        if err is not None and not played and not self._stop.is_set():
+            raise err                                # ничего не прозвучало — пусть сработает запасной голос
 
     # ---------- запас записей на случай «нет интернета» ----------
     def prewarm(self, texts):

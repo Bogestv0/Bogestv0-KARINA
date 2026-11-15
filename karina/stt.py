@@ -1,6 +1,6 @@
 """Распознавание речи: faster-whisper, полностью офлайн (модель скачивается один раз)."""
 from __future__ import annotations
-import json, os, re, socket, subprocess, sys, tempfile, threading, time
+import json, os, re, shutil, socket, subprocess, sys, tempfile, threading, time
 import numpy as np
 from .config import DATA, FROZEN, ROOT
 from .diag import trace
@@ -53,8 +53,8 @@ def _explain_exit(code: int) -> str:
     return f"процесс завершился с кодом {code} (0x{u:08X})"
 
 
-def _probe_cmd(name: str, root, download: bool, out_file: str) -> list[str]:
-    tail = ["--stt-probe", name, str(root), "download" if download else "local", out_file]
+def _probe_cmd(name: str, root, download: bool, out_file: str, gpu: bool = False) -> list[str]:
+    tail = ["--stt-gpu-probe", name, str(root), out_file] if gpu else ["--stt-probe", name, str(root), "download" if download else "local", out_file]
     return [sys.executable] + tail if FROZEN else [sys.executable, str(ROOT / "main.py")] + tail
 
 
@@ -146,49 +146,181 @@ def run_probe(name: str, root, download: bool, progress=None, timeout: float | N
             pass
 
 
+def gpu_probe_main(argv: list[str]) -> int:
+    """Дочерний процесс: работает ли распознавание на видеокарте NVIDIA (нужны CUDA 12 и cuDNN 9 в системе). Проверка настоящая:
+    модель загружается на видеокарту и расшифровывает секунду шума без фильтра тишины, иначе нехватку библиотек видно только на первой фразе.
+    argv: имя_модели папка файл_результата. Код 0 — работает."""
+    name, root, out_file = argv[:3]
+    res = {"status": "error", "message": "проверка не завершилась"}
+
+    def save():
+        try:
+            with open(out_file, "w", encoding="utf-8") as f:
+                json.dump(res, f, ensure_ascii=False)
+        except OSError:
+            pass
+    save()
+    try:
+        import ctranslate2
+        if ctranslate2.get_cuda_device_count() <= 0:
+            res = {"status": "no", "message": "видеокарта CUDA не найдена"}
+            save()
+            return 2
+        from faster_whisper import WhisperModel
+        import numpy as np
+        model = WhisperModel(name, device="cuda", compute_type="float16", download_root=str(root), local_files_only=True)
+        noise = (np.random.default_rng(1).standard_normal(16000) * 0.01).astype(np.float32)
+        list(model.transcribe(noise, language="ru", beam_size=1, vad_filter=False)[0])
+        res = {"status": "ok", "message": ""}
+        save()
+        return 0
+    except BaseException as e:
+        res = {"status": "error", "message": f"{e.__class__.__name__}: {e}"}
+        save()
+        return _ERROR
+
+
+def run_gpu_probe(name: str, root, timeout: float = 150.0) -> tuple[bool, str]:
+    """(работает ли видеокарта, пояснение). Запускается в отдельном процессе: нехватка библиотек CUDA иногда роняет процесс."""
+    fd, out_file = tempfile.mkstemp(prefix="karina-gpuprobe-", suffix=".json")
+    os.close(fd)
+    flags = 0x08000000 if sys.platform == "win32" else 0
+    try:
+        try:
+            r = subprocess.run(_probe_cmd(name, root, False, out_file, gpu=True), stdin=subprocess.DEVNULL, capture_output=True,
+                               timeout=timeout, creationflags=flags, cwd=str(ROOT))
+        except subprocess.TimeoutExpired:
+            return False, "проверка видеокарты не уложилась во время"
+        except OSError as e:
+            return False, f"не удалось запустить проверку: {e}"
+        try:
+            with open(out_file, encoding="utf-8") as f:
+                res = json.load(f)
+        except (OSError, ValueError):
+            res = {}
+        if r.returncode == 0 and res.get("status") == "ok":
+            return True, ""
+        return False, res.get("message") or _explain_exit(r.returncode)
+    finally:
+        try:
+            os.unlink(out_file)
+        except OSError:
+            pass
+
+
 class STT:
     def __init__(self, cfg):
         self.cfg = cfg
         self.model = None
         self.loaded_name = None
+        self.device = "cpu"
+        self.gpu_note = ""            # почему не видеокарта (для журнала и настроек)
+        self._lock = threading.RLock()    # модель одна: фразу и короткое «стоп» поверх речи Карины распознаём по очереди
+        self._tiny = None                 # маленькая модель для быстрой проверки имени (stt.prefilter)
+        self._tiny_state = None           # None — не начинали | "loading" | "ok" | "off"
+        self._tiny_lock = threading.Lock()
+
+    # ---------- видеокарта ----------
+    def _gpu_wanted(self, name: str) -> bool:
+        st = self.cfg["stt"]
+        pref = str(st.get("device", "auto")).lower()
+        if pref == "cpu":
+            return False
+        known = st.get("gpu_probe") or {}
+        if pref == "auto" and (shutil.which("nvidia-smi") is None or (known.get("model") == name and known.get("ok") is False)):
+            return False
+        return True
+
+    def _remember_gpu(self, name: str, ok: bool):
+        try:
+            self.cfg.update({"stt": {"gpu_probe": {"model": name, "ok": ok}}})
+        except Exception:
+            pass
 
     def load(self, progress=None):
         """Сначала модель проверяется в ОТДЕЛЬНОМ процессе (загрузка + пробное распознавание тишины). Если нативная
         библиотека роняет процесс — Карина остаётся жива и показывает причину. Если модели нет на диске — проверяется
         huggingface.co и модель скачивается (тоже в отдельном процессе). Только после успешной проверки модель
-        загружается в основном процессе."""
+        загружается в основном процессе. Видеокарта NVIDIA используется, если отдельная проверка её работы прошла; иначе процессор."""
         name = self.cfg["stt"].get("model", "small")
-        if self.model is not None and self.loaded_name == name:
-            return
-        root = DATA / "models"
-        status, why = run_probe(name, root, download=False)
-        if status == "missing":
-            ok, net_why = hf_reachable()
-            if not ok:
-                raise RuntimeError(f"модель распознавания ещё не скачана, а сайт huggingface.co недоступен ({net_why}). "
-                                   "Проверьте интернет; если сайт у вас закрыт — включите VPN на время первого запуска "
-                                   f"(скачивается один раз, ~0,5 ГБ). Исходная ошибка: {why}")
-            status, why = run_probe(name, root, download=True, progress=progress)
-        if status == "crash":
-            raise RuntimeError("библиотека распознавания речи аварийно завершила работу при загрузке модели «%s»: %s" % (name, why))
-        if status == "timeout":
-            raise RuntimeError(f"загрузка модели «{name}» зависла: {why}")
-        if status != "ok":
-            raise RuntimeError(f"не удалось загрузить модель «{name}»: {why}")
-        from faster_whisper import WhisperModel      # проверка прошла — теперь безопасно загружать здесь
-        self.model = WhisperModel(name, device="cpu", compute_type="int8", download_root=str(root), local_files_only=True)
-        self.loaded_name = name
+        with self._lock:
+            if self.model is not None and self.loaded_name == name:
+                return
+            root = DATA / "models"
+            status, why = run_probe(name, root, download=False)
+            if status == "missing":
+                ok, net_why = hf_reachable()
+                if not ok:
+                    raise RuntimeError(f"модель распознавания ещё не скачана, а сайт huggingface.co недоступен ({net_why}). "
+                                       "Проверьте интернет; если сайт у вас закрыт — включите VPN на время первого запуска "
+                                       f"(скачивается один раз, ~0,5 ГБ). Исходная ошибка: {why}")
+                status, why = run_probe(name, root, download=True, progress=progress)
+            if status == "crash":
+                raise RuntimeError("библиотека распознавания речи аварийно завершила работу при загрузке модели «%s»: %s" % (name, why))
+            if status == "timeout":
+                raise RuntimeError(f"загрузка модели «{name}» зависла: {why}")
+            if status != "ok":
+                raise RuntimeError(f"не удалось загрузить модель «{name}»: {why}")
+            from faster_whisper import WhisperModel      # проверка прошла — теперь безопасно загружать здесь
+            self.device, self.gpu_note = "cpu", ""
+            if self._gpu_wanted(name):
+                ok, why_gpu = run_gpu_probe(name, root)
+                self._remember_gpu(name, ok)
+                if ok:
+                    try:
+                        self.model = WhisperModel(name, device="cuda", compute_type="float16", download_root=str(root), local_files_only=True)
+                        self.device = "cuda"
+                        trace(f"Распознавание речи: работает на видеокарте ({name})")
+                    except Exception as e:
+                        self.gpu_note = f"{e.__class__.__name__}: {e}"
+                else:
+                    self.gpu_note = why_gpu
+                if self.device == "cpu":
+                    trace("Распознавание речи: видеокарта не используется — " + (self.gpu_note or "нет"))
+            if self.model is None or self.device == "cpu":
+                self.model = WhisperModel(name, device="cpu", compute_type="int8", download_root=str(root), local_files_only=True)
+            self.loaded_name = name
+
+    def _fall_back_to_cpu(self, why: str):
+        """Видеокарта подвела посреди работы — переходим на процессор и больше её не трогаем для этой модели."""
+        name = self.loaded_name or self.cfg["stt"].get("model", "small")
+        trace("Распознавание речи: ошибка на видеокарте, перехожу на процессор — " + why)
+        self._remember_gpu(name, False)
+        self.gpu_note = why
+        from faster_whisper import WhisperModel
+        self.model = WhisperModel(name, device="cpu", compute_type="int8", download_root=str(DATA / "models"), local_files_only=True)
+        self.device = "cpu"
 
     def transcribe(self, audio: np.ndarray) -> str:
         return self.transcribe_ex(audio)[0]
 
+    def hint(self) -> str:
+        """Подсказка Whisper: имя, привычные слова команд и город из профиля — так названия распознаются точнее («погода в Новокузнецке»)."""
+        h = f"{self.cfg['name']}, открой, закрой, запусти, громкость, найди в интернете, сделай скриншот."
+        try:
+            from .weather import clean_city
+            city = clean_city((self.cfg.get("profile") or {}).get("city", ""))
+            if city:
+                h += f" Какая погода в {city}? Погода в моём городе."
+        except Exception:
+            pass
+        return h
+
     def transcribe_ex(self, audio: np.ndarray) -> tuple[str, float]:
         """(текст, уверенность 0…1). Уверенность — по оценке самой модели; по ней несколько микрофонов выбирают лучшую запись."""
-        self.load()
-        hint = f"{self.cfg['name']}, открой, закрой, запусти, громкость, найди в интернете, сделай скриншот."
-        segs, _ = self.model.transcribe(audio, language="ru", beam_size=1, vad_filter=True,
-                                        condition_on_previous_text=False, initial_prompt=hint,
-                                        no_speech_threshold=0.6, temperature=0.0)
+        with self._lock:
+            self.load()
+            kw = dict(language="ru", beam_size=1, vad_filter=True, condition_on_previous_text=False, initial_prompt=self.hint(),
+                      no_speech_threshold=0.6, temperature=0.0)
+            try:
+                segs, _ = self.model.transcribe(audio, **kw)
+                segs = list(segs)
+            except Exception as e:
+                if self.device != "cuda":
+                    raise
+                self._fall_back_to_cpu(f"{e.__class__.__name__}: {e}")
+                segs, _ = self.model.transcribe(audio, **kw)
+                segs = list(segs)
         kept = [s for s in segs if s.no_speech_prob < 0.7]
         text = " ".join(s.text.strip() for s in kept).strip()
         low = text.lower()
@@ -203,3 +335,46 @@ class STT:
             num, den = num + w * max(-3.0, min(0.0, float(lp))), den + w
         import math
         return text, (math.exp(num / den) if den else 0.5)
+
+    # ---------- быстрая проверка имени (необязательная) ----------
+    def ensure_prefilter(self):
+        """Если включено stt.prefilter — в фоне готовит маленькую модель «tiny» (скачивает при необходимости). Пока не готова, проверка пропускается."""
+        if not self.cfg["stt"].get("prefilter") or self._tiny_state is not None:
+            return
+        self._tiny_state = "loading"
+        threading.Thread(target=self._load_tiny, daemon=True, name="stt-prefilter").start()
+
+    def _load_tiny(self):
+        try:
+            root = DATA / "models"
+            status, _ = run_probe("tiny", root, download=False)
+            if status == "missing" and hf_reachable()[0]:
+                status, _ = run_probe("tiny", root, download=True)
+            if status != "ok":
+                self._tiny_state = "off"
+                return
+            from faster_whisper import WhisperModel
+            self._tiny = WhisperModel("tiny", device="cpu", compute_type="int8", download_root=str(root), local_files_only=True)
+            self._tiny_state = "ok"
+            trace("Распознавание речи: быстрая проверка имени готова")
+        except Exception as e:
+            self._tiny_state = "off"
+            trace(f"Распознавание речи: быстрая проверка имени недоступна: {e}")
+
+    def has_name(self, audio: np.ndarray, names: list[str]) -> bool | None:
+        """Есть ли в записи обращение по имени (проверка нестрогая, чтобы не потерять команду). None — проверка недоступна: распознаём как обычно."""
+        if self._tiny_state != "ok" or self._tiny is None:
+            return None
+        from rapidfuzz import fuzz
+        try:
+            with self._tiny_lock:
+                segs, _ = self._tiny.transcribe(audio, language="ru", beam_size=1, vad_filter=False, condition_on_previous_text=False,
+                                                 initial_prompt=f"{self.cfg['name']}, открой, закрой.", temperature=0.0)
+                text = " ".join(s.text.strip() for s in segs)
+        except Exception:
+            return None
+        words = norm(text).split()
+        if not words:
+            return False
+        edge = words[:3] + words[-3:]
+        return any(fuzz.ratio(w, n) >= 62 for w in edge for n in names)

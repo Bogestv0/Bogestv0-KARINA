@@ -8,8 +8,21 @@ from .models import Cancelled
 
 HF = "https://huggingface.co"
 REPO = "rhasspy/piper-voices"
+# Русские голоса Piper на выбор (config.json → tts.piper_voice). Скачивается тот, что выбран; Ирина — по умолчанию.
+VOICES = {"irina": "Ирина (женский)", "denis": "Денис (мужской)", "dmitri": "Дмитрий (мужской)", "ruslan": "Руслан (мужской)"}
 SUB = "ru/ru_RU/irina/medium"
 NAME = "ru_RU-irina-medium"
+
+
+def select(voice_id: str = "irina") -> str:
+    """Выбирает голос Piper (имя из VOICES; неизвестное — Ирина). Возвращает выбранное имя."""
+    global SUB, NAME
+    vid = voice_id if voice_id in VOICES else "irina"
+    new_sub, new_name = f"ru/ru_RU/{vid}/medium", f"ru_RU-{vid}-medium"
+    if new_name != NAME:
+        SUB, NAME = new_sub, new_name
+        unload()
+    return vid
 UA = {"User-Agent": "Bogestv0-KARINA"}
 
 

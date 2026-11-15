@@ -6,7 +6,8 @@
 Лицензия моделей v5_*_ru — CC BY-NC 4.0: бесплатно для личного некоммерческого использования. Для коммерческого есть MIT-вариант v5_cis_base
 (другие голоса, нужны ударения от silero-stress). Модель скачивается один раз с models.silero.ai (адрес взят из официального models.yml).
 
-Нужен пакет torch (CPU-версия подходит): pip install torch. Без него Карина говорит обычным голосом и подсказывает, что поставить.
+Нужен пакет torch (CPU-версия подходит). Он входит в установщик, в requirements.txt и в обновления: ничего ставить вручную не нужно.
+Модель Карина скачивает сама при первом запуске в фоне (см. ensure_model); пока она не скачана, говорит обычным голосом.
 """
 from __future__ import annotations
 import importlib.util, os, re, sys, threading, time, urllib.error, urllib.request, wave
@@ -31,14 +32,14 @@ FROZEN = bool(getattr(sys, "frozen", False))
 
 
 def torch_available() -> bool:
-    """В собранной (exe) версии torch не входит — её собирают без него, чтобы установщик не весил гигабайт."""
-    return not FROZEN and importlib.util.find_spec("torch") is not None
+    """torch входит в установщик и в requirements.txt, поэтому Silero работает и в exe, и из исходников."""
+    return importlib.util.find_spec("torch") is not None
 
 
 def torch_hint() -> str:
     if FROZEN:
-        return "В установленной версии Карины (exe) Silero недоступен: нет пакета torch. Запустите Карину из исходников (run.bat) с torch или выберите голос Светлана / офлайн «Ирина»."
-    return "Для голоса Silero нужен пакет torch: в окне команд выполните «pip install torch» и перезапустите Карину."
+        return "В этой сборке Карины нет библиотеки torch (она нужна голосу Silero). Установите свежую версию Карины с сайта релизов — torch теперь идёт в комплекте."
+    return "Для голоса Silero нужен пакет torch: закройте Карину и запустите run.bat ещё раз (он доустановит torch сам) или выполните «pip install torch»."
 
 
 def is_ready(base: Path) -> bool:
@@ -190,3 +191,33 @@ def synth_wav(base: Path, text: str, out_path: str, speaker: str = "xenia", spee
         wf.setsampwidth(2)
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(pcm.tobytes())
+
+
+def ensure_model(base: Path, log=lambda m: None, emit=None, attempts: int = 3, cancel: threading.Event | None = None) -> bool:
+    """Сама докачивает модель голоса, если torch есть, а модели ещё нет. True — голос готов. Не бросает исключений."""
+    if is_ready(base):
+        return True
+    if not torch_available():
+        log("Silero: torch не найден, модель не качаю")
+        return False
+    cancel = cancel or threading.Event()
+    for i in range(attempts):
+        if cancel.is_set():
+            return False
+        try:
+            log("Silero: скачиваю модель голоса" + (f" (попытка {i + 1})" if i else ""))
+            download(base, (lambda d, t, st: emit({"type": "silero_dl", "done": d, "total": t, "stage": st})) if emit else None, cancel)
+            break
+        except Cancelled:
+            return False
+        except Exception as e:
+            log(f"Silero: не скачалось ({e.__class__.__name__}: {e})")
+            if cancel.wait(8 * (i + 1)):
+                return False
+    ok = is_ready(base)
+    if emit:
+        emit({"type": "silero_dl_done", "error": "" if ok else "не удалось скачать, попробую при следующем запуске", "ready": ok})
+    if ok:
+        preload(base)
+        log("Silero: голос готов")
+    return ok

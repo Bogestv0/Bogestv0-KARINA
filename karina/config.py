@@ -22,12 +22,17 @@ DEFAULTS: dict = {
            "admin": False, "admin_asked": False},   # admin: запускать Карину с правами администратора (через задачу планировщика)   # frameless: свой заголовок вместо рамки Windows   # background: закрытие окна сворачивает Карину в трей, а не выключает
     # mics — до 4 микрофонов сразу: {"enabled","device","name"} (пусто = старая настройка mic_device, слот 1);
     # assist — как микрофоны помогают друг другу: smart (лучший слушает, остальные помогают при плохом распознавании) | all (распознать со всех, выбрать лучшее) | best (только самый чистый)
-    "stt": {"model": "small", "mic_device": None, "vad_threshold": 0.012, "mics": [], "assist": "smart"},
+    "stt": {"model": "small", "mic_device": None, "vad_threshold": 0.012, "mics": [], "assist": "smart",
+            "vad": "neural", "end_silence": 0.55, "end_silence_long": 0.8, "device": "auto", "prefilter": False},
+    # vad — neural (Silero VAD, сам вернётся к energy, если нет модели) | energy; end_silence / end_silence_long — пауза (с) в конце короткой / долгой фразы;
+    # device — auto (видеокарта NVIDIA, если сработает проба, иначе процессор) | cpu | cuda; prefilter — быстрая проверка имени моделью «tiny» до полного распознавания (экономит процессор)
+    # горячие клавиши (Windows): talk — говорить без имени, stop — замолчать
+    "hotkeys": {"enabled": True, "talk": "ctrl+alt+a", "stop": "ctrl+alt+s"},
     # куда Карина выводит свой голос: device — номер устройства (None = по умолчанию в Windows), name — его имя (номера меняются), volume — громкость голоса 0–100 %
     "audio_out": {"device": None, "name": "", "volume": 100},
-    # voice — svetlana_cute | ava_calm (см. tts.VOICES); pronounce — словарь «слово → как произнести»
-    # offline — auto (нейросетевой Piper, если скачан, иначе системный) | system
-    "tts": {"enabled": True, "engine": "auto", "voice": "svetlana_cute", "rate": 0, "offline": "auto",
+    # voice — silero_xenia | svetlana_cute | ava_calm … (см. tts.VOICES); auto_silero — сама скачать голос Silero; silero_migrated — старым настройкам один раз переключили голос на Silero; pronounce — словарь «слово → как произнести»
+    # offline — auto (нейросетевой Piper, если скачан, иначе системный) | system; piper_voice — irina | denis | dmitri | ruslan; barge_in — можно ли перебить Карину словом «стоп»
+    "tts": {"enabled": True, "engine": "auto", "voice": "silero_xenia", "rate": 0, "offline": "auto", "auto_silero": True, "silero_migrated": False, "barge_in": True, "piper_voice": "irina",
             "pronounce": {"discord": "дискорд", "vpn": "вэ пэ эн", "впн": "вэ пэ эн", "youtube": "ютуб", "steam": "стим", "telegram": "телеграм", "chrome": "хром",
                           "карина": "Кари́на", "карины": "Кари́ны", "карине": "Кари́не", "карину": "Кари́ну", "кариной": "Кари́ной"}},
     "search_engine": "google",    # google | yandex
