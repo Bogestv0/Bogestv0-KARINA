@@ -55,7 +55,7 @@ class TestSpeakFlow(unittest.TestCase):
     def test_karina_speaks_with_silero_without_internet_or_system_voice(self):
         cfg, sp = speaker()
         with mock.patch.object(tts.silero_voice, "is_ready", return_value=True), mock.patch.object(tts.silero_voice, "torch_available", return_value=True), \
-             mock.patch.object(tts.silero_voice, "synth_wav", side_effect=lambda base, text, out, spk, rate: Path(out).write_text(text)) as syn, \
+             mock.patch.object(tts.silero_voice, "synth_wav", side_effect=lambda base, text, out, spk, rate: Path(out).write_text(text, encoding="utf-8")) as syn, \
              mock.patch.object(tts.Speaker, "_play"), mock.patch.object(tts.Speaker, "_sapi") as sapi:
             sp.speak("Готово.")
         self.assertEqual(sp.engine_used, "silero")
