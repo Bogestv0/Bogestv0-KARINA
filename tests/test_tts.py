@@ -196,11 +196,11 @@ class TestStreaming(unittest.TestCase):
     def test_pipeline_plays_in_order_and_overlaps(self):
         cfg, sp = self.make()
         order, events = [], []
-        sp._play = lambda path: (events.append(("play", Path(path).read_text())), time.sleep(0.15))
+        sp._play = lambda path: (events.append(("play", Path(path).read_text(encoding="utf-8"))), time.sleep(0.15))
 
         def synth(part, tmp):
             events.append(("synth", part))
-            Path(tmp).write_text(part)
+            Path(tmp).write_text(part, encoding="utf-8")
             return tmp, True
         played, err = sp._pipeline(["раз", "два", "три"], synth)
         self.assertEqual((played, err), (3, None))
@@ -225,7 +225,7 @@ class TestStreaming(unittest.TestCase):
 
         def synth(part, tmp):
             made.append(tmp)
-            Path(tmp).write_text(part)
+            Path(tmp).write_text(part, encoding="utf-8")
             return tmp, True
 
         def play(path):
@@ -240,7 +240,7 @@ class TestStreaming(unittest.TestCase):
         cfg, sp = self.make()
         sp._play = mock.MagicMock(side_effect=OSError("устройство пропало"))
         done = []
-        th = threading.Thread(target=lambda: done.append(sp._pipeline(["а"] * 6, lambda p, t: (Path(t).write_text(p), (t, True))[1])), daemon=True)
+        th = threading.Thread(target=lambda: done.append(sp._pipeline(["а"] * 6, lambda p, t: (Path(t).write_text(p, encoding="utf-8"), (t, True))[1])), daemon=True)
         th.start(); th.join(5)
         self.assertTrue(done, "конвейер завис")
         self.assertIsInstance(done[0][1], OSError)
@@ -254,9 +254,9 @@ class TestStreaming(unittest.TestCase):
     def test_silero_speaks_through_pipeline(self):
         cfg, sp = self.make()
         spoken = []
-        sp._play = lambda path: spoken.append(Path(path).read_text())
+        sp._play = lambda path: spoken.append(Path(path).read_text(encoding="utf-8"))
         with mock.patch.object(tts.silero_voice, "is_ready", return_value=True), mock.patch.object(tts.silero_voice, "torch_available", return_value=True), \
-             mock.patch.object(tts.silero_voice, "synth_wav", side_effect=lambda base, text, out, spk, rate: Path(out).write_text(text)):
+             mock.patch.object(tts.silero_voice, "synth_wav", side_effect=lambda base, text, out, spk, rate: Path(out).write_text(text, encoding="utf-8")):
             long = "Первое предложение. " + "Второе предложение достаточно длинное, чтобы разбить ответ на части. " * 8
             self.assertTrue(sp._silero(long, tts.VOICES["silero_xenia"]))
         self.assertEqual(spoken[0], "Первое предложение.")
