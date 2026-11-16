@@ -117,6 +117,7 @@ class Assistant:
         try:
             time.sleep(3)
             from . import silero_voice
+            silero_voice.apply_pending(self.cfg.path.parent)        # обновление голоса, которое не удалось подставить при работе, подставляем при запуске
             t = self.cfg["tts"]
             if not t.get("auto_silero", True) or not silero_voice.torch_available():
                 if t.get("auto_silero", True):

@@ -34,6 +34,7 @@ DEFAULTS = {
     "confirm": True,        # переспрашивать «да/нет» перед включением голосом
     "direct_ru": False,     # сайты .ru / .su / .рф открывать напрямую, мимо сервера
     "port": 10808,          # порт локального прокси в режиме «прокси»
+    "hwid": "",             # идентификатор этого компьютера для подписок с лимитом устройств (создаётся сам)
 }
 MODES = ("vpn", "proxy")
 SCOPES = ("all", "apps")
@@ -283,13 +284,14 @@ def parse_text(text: str) -> tuple[list[dict], list[str]]:
 SUB_AGENTS = ("v2rayN/6.45", "Hiddify/2.0.5", "Happ/2.0.0", "Streisand", "Bogestv0-KARINA")
 
 
-def _fetch_curl(url: str, agent: str) -> tuple[int, str]:
+def _fetch_curl(url: str, agent: str, extra: dict | None = None) -> tuple[int, str]:
     """Запасной путь: curl.exe из Windows проверяет сертификат средствами системы (как браузер) и ходит через системный прокси/VPN."""
     import shutil
     exe = shutil.which("curl.exe" if IS_WIN else "curl")
     if not exe:
         raise OSError("curl не найден")
-    r = subprocess.run([exe, "-sSL", "--max-time", "25", "-A", agent, "-w", "\n%{http_code}", url], capture_output=True, creationflags=NO_WINDOW, timeout=35)
+    hdr = [x for k, v in (extra or {}).items() for x in ("-H", f"{k}: {v}")]
+    r = subprocess.run([exe, "-sSL", "--max-time", "25", "-A", agent, *hdr, "-w", "\n%{http_code}", url], capture_output=True, creationflags=NO_WINDOW, timeout=35)
     if r.returncode:
         raise OSError((r.stderr.decode("utf-8", "replace").strip().splitlines() or ["ошибка curl"])[-1])
     out = r.stdout.decode("utf-8", "replace")
@@ -297,35 +299,47 @@ def _fetch_curl(url: str, agent: str) -> tuple[int, str]:
     return int(code or 0), body[:2_000_000]
 
 
-def _fetch(url: str, agent: str) -> tuple[int, str]:
-    req = urllib.request.Request(url, headers={"User-Agent": agent, "Accept": "*/*"})
+def _fetch(url: str, agent: str, extra: dict | None = None) -> tuple[int, str]:
+    req = urllib.request.Request(url, headers={"User-Agent": agent, "Accept": "*/*", **(extra or {})})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.status, r.read(2_000_000).decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
-        return e.code, ""
+        try:
+            return e.code, e.read(2000).decode("utf-8", "replace")      # панель часто объясняет причину текстом («лимит устройств» и т. п.)
+        except Exception:
+            return e.code, ""
     except (urllib.error.URLError, OSError) as e:
         try:
-            return _fetch_curl(url, agent)      # встроенная проверка сертификата не справилась (бывает у собственных серверов) — пробуем средствами системы
+            return _fetch_curl(url, agent, extra)      # встроенная проверка сертификата не справилась (бывает у собственных серверов) — пробуем средствами системы
         except Exception:
             raise e from None
 
 
-def fetch_subscription(url: str) -> str:
+def device_headers(hwid: str) -> dict:
+    """Так же представляется расширение Bogestv0 VPN: подписка на вашем сервере привязана к устройству (x-hwid), без этих заголовков она не отдаётся."""
+    return {"x-hwid": hwid, "x-device-os": "Windows" if IS_WIN else "PC", "x-device-model": "Karina"}
+
+
+def fetch_subscription(url: str, hwid: str = "") -> str:
     """Скачивает подписку и возвращает текст, в котором есть ссылки на серверы. Перебирает «User-Agent» разных клиентов; если ни один не подошёл — понятная причина."""
     url = url.strip()
     if not re.match(r"^https?://", url, re.I):
         raise TunnelError("Адрес подписки должен начинаться с http:// или https://")
+    extra = device_headers(hwid) if hwid else None
     last = ""
     net_err = None
     for agent in SUB_AGENTS:
         try:
-            code, body = _fetch(url, agent)
+            code, body = _fetch(url, agent, extra)
         except (urllib.error.URLError, OSError) as e:
             net_err = e
             continue
         if code >= 400:
-            last = f"сервер ответил ошибкой {code}"
+            said = re.sub(r"\s+", " ", body).strip()[:160]
+            last = f"сервер ответил ошибкой {code}" + (f": {said}" if said and not said.lstrip().startswith("<") else "")
+            if code in (401, 403, 404, 410, 429) and said and not said.lstrip().startswith("<"):
+                break                       # панель сама объяснила отказ (лимит устройств, срок вышел) — другие «клиенты» не помогут
             continue
         found, _ = parse_text(body)
         if found:
@@ -491,6 +505,14 @@ class Tunnel:
     def save(self, **patch) -> None:
         self.cfg.update({"tunnel": patch})
 
+    def _hwid(self) -> str:
+        """Постоянный идентификатор этого компьютера (как HWID у расширения): создаётся один раз и хранится в настройках."""
+        h = self.settings()["hwid"]
+        if not re.fullmatch(r"[0-9a-f]{32}", h or ""):
+            h = os.urandom(16).hex()
+            self.save(hwid=h)
+        return h
+
     def configured(self) -> bool:
         return bool(self.settings()["servers"])
 
@@ -512,7 +534,7 @@ class Tunnel:
             raise TunnelError("Вставьте ссылку на сервер или адрес подписки.")
         sub = ""
         if re.match(r"^https?://\S+$", text, re.I):
-            sub, text = text, fetch_subscription(text)
+            sub, text = text, fetch_subscription(text, self._hwid())
         found, errs = parse_text(text)
         if not found:
             raise TunnelError("Не нашла ни одной подходящей ссылки (vless://, vmess://, trojan://, ss://, hysteria2://)." + (f" Ошибки: {'; '.join(errs[:3])}" if errs else ""))
@@ -529,7 +551,7 @@ class Tunnel:
         url = self.settings()["sub_url"]
         if not url:
             raise TunnelError("Подписка не задана.")
-        found, errs = parse_text(fetch_subscription(url))
+        found, errs = parse_text(fetch_subscription(url, self._hwid()))
         if not found:
             raise TunnelError("В подписке нет подходящих ссылок.")
         s = self.settings()

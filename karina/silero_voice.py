@@ -50,7 +50,7 @@ def is_ready(base: Path) -> bool:
 
 
 def delete(base: Path) -> None:
-    for f in (model_path(base), model_path(base).with_name(model_path(base).name + ".part"), model_path(base).with_name(model_path(base).name + ".new")):
+    for f in (model_path(base), model_path(base).with_name(model_path(base).name + ".part"), model_path(base).with_name(model_path(base).name + ".new"), model_path(base).with_name(model_path(base).name + ".new.part")):
         f.unlink(missing_ok=True)
     unload()
 
@@ -65,6 +65,35 @@ def _curl_exe() -> str | None:
     поэтому справляется там, где встроенная проверка Python не может построить цепочку. Проверка сертификата остаётся включённой."""
     import shutil
     return shutil.which("curl.exe" if sys.platform == "win32" else "curl")
+
+
+def _swap_in(new: Path, dest: Path) -> None:
+    """Заменяет модель свежей копией. Загруженную модель Windows держит открытой («Отказано в доступе»), поэтому сначала выгружаем её;
+    если файл всё равно занят — свежая копия остаётся рядом и подставится при следующем запуске Карины."""
+    import gc
+    unload()
+    gc.collect()
+    for i in range(6):
+        try:
+            new.replace(dest)
+            return
+        except PermissionError:
+            time.sleep(0.4 * (i + 1))
+            gc.collect()
+    raise RuntimeError("Свежая копия голоса скачана и применится при следующем запуске Карины (текущий файл занят).")
+
+
+def apply_pending(base: Path) -> bool:
+    """Подставляет скачанное, но не применённое обновление голоса (вызывается до загрузки модели). True — подставили."""
+    dest = model_path(base)
+    new = dest.with_name(dest.name + ".new")
+    try:
+        if new.exists() and new.stat().st_size > 1_000_000:
+            new.replace(dest)
+            return True
+    except OSError:
+        pass
+    return False
 
 
 def _download_curl(part: Path, prog, cancel: threading.Event) -> None:
@@ -104,7 +133,7 @@ def download(base: Path, progress=None, cancel: threading.Event | None = None, f
     prog = progress or (lambda *a: None)
     cancel = cancel or threading.Event()
     dest = model_path(base)
-    part = dest.with_name(dest.name + (".new" if fresh else ".part"))
+    part = dest.with_name(dest.name + (".new.part" if fresh else ".part"))     # готовая свежая копия получает имя .new только после полной загрузки
     dest.parent.mkdir(parents=True, exist_ok=True)
     if fresh:
         part.unlink(missing_ok=True)
@@ -129,8 +158,12 @@ def download(base: Path, progress=None, cancel: threading.Event | None = None, f
             raise RuntimeError(_cert_message(dest) + f" ({e2})") from None
         if not part.exists() or part.stat().st_size < 1_000_000:
             raise RuntimeError(_cert_message(dest)) from None
-        part.replace(dest)
-        unload()
+        if fresh:
+            done_new = dest.with_name(dest.name + ".new")
+            part.replace(done_new)
+            _swap_in(done_new, dest)
+        else:
+            part.replace(dest)
         prog(1, 1, "done")
         return dest
     with r:
@@ -152,9 +185,12 @@ def download(base: Path, progress=None, cancel: threading.Event | None = None, f
                     last = time.time()
     if total and part.stat().st_size != total:
         raise RuntimeError("Загрузка оборвалась. Нажмите «Скачать» ещё раз — продолжу с того же места.")
-    part.replace(dest)
     if fresh:
-        unload()                             # следующая фраза уже пойдёт с новой моделью
+        done_new = dest.with_name(dest.name + ".new")
+        part.replace(done_new)
+        _swap_in(done_new, dest)
+    else:
+        part.replace(dest)
     prog(total, total, "done")
     return dest
 
@@ -173,6 +209,7 @@ def _load(base: Path):
     import torch
     path = str(model_path(base))
     if _loaded["key"] != path:
+        apply_pending(base)
         torch.set_num_threads(max(1, min(4, (os.cpu_count() or 2) // 2)))
         imp = torch.package.PackageImporter(path)
         model = imp.load_pickle("tts_models", "model")
