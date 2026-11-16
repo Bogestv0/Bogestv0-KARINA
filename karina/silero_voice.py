@@ -10,7 +10,7 @@
 Модель Карина скачивает сама при первом запуске в фоне (см. ensure_model); пока она не скачана, говорит обычным голосом.
 """
 from __future__ import annotations
-import importlib.util, os, re, sys, threading, time, urllib.error, urllib.request, wave
+import importlib.util, os, re, ssl, sys, threading, time, urllib.error, urllib.request, wave
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -72,6 +72,13 @@ def download(base: Path, progress=None, cancel: threading.Event | None = None) -
             part.replace(dest)
             return dest
         raise RuntimeError(f"Сервер Silero ответил ошибкой {e.code}. Попробуйте позже.") from None
+    except urllib.error.URLError as e:
+        if isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
+            raise RuntimeError(
+                "Не удалось проверить сертификат сервера Silero (просрочен или не принят системой). Проверьте дату и время на компьютере и обновите Windows. "
+                f"Если не помогло — скачайте файл {URL} в браузере и положите его сюда: {dest} (папка «Открыть папку с данными» → voices)."
+            ) from None
+        raise
     with r:
         if have and getattr(r, "status", 200) != 206:
             have = 0                         # докачки нет — заново
