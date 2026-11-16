@@ -66,6 +66,23 @@ class Sub(unittest.TestCase):
             self.fetch(lambda ua: (404, ""))
         self.assertIn("404", str(c.exception))
 
+    def test_curl_fallback_when_python_cannot_connect(self):
+        import urllib.error
+        from unittest import mock
+        with mock.patch.object(tunnel.urllib.request, "urlopen", side_effect=urllib.error.URLError("ssl")), \
+             mock.patch.object(tunnel, "_fetch_curl", return_value=(200, LINK)) as c:
+            self.assertIn("vless://", tunnel.fetch_subscription("https://example.com/sub"))
+        c.assert_called()
+
+    def test_network_error_message_when_curl_fails_too(self):
+        import urllib.error
+        from unittest import mock
+        with mock.patch.object(tunnel.urllib.request, "urlopen", side_effect=urllib.error.URLError("нет сети")), \
+             mock.patch.object(tunnel, "_fetch_curl", side_effect=OSError("curl не найден")):
+            with self.assertRaises(tunnel.TunnelError) as c:
+                tunnel.fetch_subscription("https://example.com/sub")
+        self.assertIn("нет сети", str(c.exception))
+
     def test_bad_address(self):
         with self.assertRaises(tunnel.TunnelError):
             tunnel.fetch_subscription("ftp://x")

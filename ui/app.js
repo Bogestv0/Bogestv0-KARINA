@@ -1017,7 +1017,7 @@
       city: f.city.value, share_with_llm: f.share_with_llm.checked, pets });
     if (d) { fillProfile(d); flash($('#profMsg'), 'Сохранено'); } else flash($('#profMsg'), 'Не удалось сохранить', true);
   });
-  const gMsg = (t, bad) => { const o = $('#gMsg'); o.hidden = !t; o.className = 'note' + (bad ? ' bad' : ''); o.textContent = t || ''; };
+  const gMsg = (t, bad) => { const o = $('#gMsg'); o.hidden = !t; o.className = 'note' + (bad ? ' bad' : ''); o.textContent = t || ''; if (t && bad) { flash($('#setMsg'), t, true); try { o.scrollIntoView({ block: 'center' }); } catch (e) {} } };
   $('#gSave').onclick = async () => { const d = await call('save_google_client', $('#gClient').value, $('#gSecret').value); if (d) { $('#gSecret').value = ''; fillProfile(d); gMsg('Сохранено. Теперь нажмите «Войти через Google».'); } };
   $('#gIn').onclick = async () => { gMsg('Открываю браузер… выберите аккаунт Google.'); $('#gIn').hidden = true; $('#gCancel').hidden = false; if (!(await call('google_login'))) loadProfile(); };
   $('#gCancel').onclick = () => call('google_cancel');
