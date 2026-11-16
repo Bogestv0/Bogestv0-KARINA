@@ -123,6 +123,7 @@ def wants_open_files(text: str) -> bool:
 
 
 PROFILE_PROVIDER = lambda: ""      # noqa: E731  Ассистент подставляет сюда справку о пользователе (profile.prompt_section)
+PERSONA_PROVIDER = lambda: ""      # noqa: E731  Ассистент подставляет сюда характер (prompts.PERSONA_RUDE), если он включён в настройках
 
 
 def system_prompt(voice: bool = False, web: bool = False, files: bool = False, attached: bool = False) -> str:
@@ -131,6 +132,7 @@ def system_prompt(voice: bool = False, web: bool = False, files: bool = False, a
     access += prompts.CHAT_FILES_ATTACHED if attached else prompts.CHAT_FILES_NONE
     p = prompts.fill(prompts.CHAT_SYSTEM, female=FEMALE, today=today, access=access)
     p += PROFILE_PROVIDER()
+    p += PERSONA_PROVIDER()
     if files:
         p += filesmod.prompt_section()
     if voice:

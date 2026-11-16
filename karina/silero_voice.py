@@ -1,7 +1,7 @@
 """Естественный русский голос Silero v5 — работает у вас на компьютере, без интернета и без ключей.
 
 Почему он: нейросеть заточена под русский язык, сама ставит ударения и ё, на обычном процессоре говорит в десятки раз быстрее, чем длится речь
-(Silero заявляет RTF около 0,04). Голоса Ксения и Ксения-2 («xenia», «kseniya»), Байя («baya») — женские, Айдар («aidar») и Евгений («eugene») — мужские.
+(Silero заявляет RTF около 0,04). Используется один голос — Байя («baya», женский); в интерфейсе он называется «Карина».
 
 Лицензия моделей v5_*_ru — CC BY-NC 4.0: бесплатно для личного некоммерческого использования. Для коммерческого есть MIT-вариант v5_cis_base
 (другие голоса, нужны ударения от silero-stress). Модель скачивается один раз с models.silero.ai (адрес взят из официального models.yml).
@@ -19,7 +19,7 @@ from .models import Cancelled
 MODEL_ID = "v5_6_ru"
 URL = f"https://models.silero.ai/models/tts/ru/{MODEL_ID}.pt"
 UA = {"User-Agent": "Bogestv0-KARINA"}
-SPEAKERS = {"xenia": "Ксения", "kseniya": "Ксения-2", "baya": "Байя", "aidar": "Айдар", "eugene": "Евгений"}
+SPEAKERS = {"baya": "Байя"}        # голос Карины; остальные голоса модели намеренно не используются
 SAMPLE_RATE = 48000
 MAX_CHUNK = 450          # модель не любит очень длинные куски: режем по предложениям
 
@@ -166,14 +166,14 @@ def _rate_name(speed: int) -> str:
     return "x-slow" if speed <= -4 else "slow" if speed < 0 else "medium" if speed == 0 else "fast" if speed < 4 else "x-fast"
 
 
-def synth_wav(base: Path, text: str, out_path: str, speaker: str = "xenia", speed: int = 0):
+def synth_wav(base: Path, text: str, out_path: str, speaker: str = "baya", speed: int = 0):
     """Озвучить text в wav (48 кГц, моно). speed — ползунок «Скорость речи» (−5…5). Бросает исключение, если нет torch или модели."""
     if not is_ready(base):
         raise FileNotFoundError("голос Silero не скачан")
     if not torch_available():
         raise ImportError(torch_hint())
     if speaker not in SPEAKERS:
-        speaker = "xenia"
+        speaker = "baya"
     import numpy as np
     parts = split_text(to_plus_stress(text))
     if not parts:

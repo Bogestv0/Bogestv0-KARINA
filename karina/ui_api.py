@@ -1,9 +1,10 @@
 """Мост между окном (HTML) и ассистентом. Все методы вызываются из JavaScript: pywebview.api.<метод>()."""
 from __future__ import annotations
-import json, os, queue, subprocess, sys, threading, time
+import json, os, queue, re, subprocess, sys, threading, time
 from .diag import trace
 from . import actions, claude as claudemod, files as filesmod, images as imagesmod, imgdirector, imgpower, localimg, net, models, updater, __version__
 from .uploads import Uploads
+from .models import Cancelled
 from . import audio as audiomod
 from .audio import Listener
 from .config import DATA, DEFAULTS
@@ -67,6 +68,10 @@ class Api:
         d["llm"]["api_key"] = ""       # ключ в окно не отдаём
         d.setdefault("images", {})["has_key"] = bool((d.get("images") or {}).get("key"))
         d["images"]["key"] = ""        # ключ сервиса картинок в окно не отдаём
+        tn = d.setdefault("tunnel", {})
+        tn["has_sub"] = bool(tn.get("sub_url"))
+        tn["sub_url"] = ""             # адрес подписки часто содержит личный токен: в окно не отдаём
+        tn["servers"] = [{"id": x.get("id"), "name": x.get("name"), "kind": x.get("kind")} for x in tn.get("servers", [])]    # ссылки с паролями — тоже
         for pv in ((d.get("cloud") or {}).get("providers") or {}).values():
             pv["has_key"] = bool(pv.get("key"))
             pv["key"] = ""             # ключи облачных провайдеров тоже не отдаём
@@ -207,42 +212,6 @@ class Api:
         self.assistant.set_listening(True)
         return True
 
-    # ---- офлайн-голос (Piper «Ирина») ----
-    def voice_offline_status(self):
-        from . import offline_voice
-        base = self.cfg.path.parent
-        onnx, _ = offline_voice.paths(base)
-        size = onnx.stat().st_size if offline_voice.is_ready(base) else 0
-        return {"ready": offline_voice.is_ready(base), "size": size, "downloading": "voice" in self._downloads}
-
-    def voice_offline_download(self):
-        from . import offline_voice
-        if "voice" in self._downloads or offline_voice.is_ready(self.cfg.path.parent):
-            return False
-        cancel = threading.Event()
-        self._downloads["voice"] = {"cancel": cancel}
-
-        def run():
-            err = ""
-            try:
-                offline_voice.download(self.cfg.path.parent,
-                                       lambda d, t, st: self.emit({"type": "voice_dl", "done": d, "total": t, "stage": st}), cancel)
-            except offline_voice.Cancelled:
-                err = "cancelled"
-            except Exception as e:
-                err = str(e) or e.__class__.__name__
-            finally:
-                self._downloads.pop("voice", None)
-                self.emit({"type": "voice_dl_done", "error": err, "ready": offline_voice.is_ready(self.cfg.path.parent)})
-        threading.Thread(target=run, daemon=True, name="voice-download").start()
-        return True
-
-    def voice_offline_delete(self):
-        from . import offline_voice
-        if "voice" not in self._downloads:
-            offline_voice.delete(self.cfg.path.parent)
-        return self.voice_offline_status()
-
     # ---- голос Silero ----
     def silero_status(self):
         from . import silero_voice
@@ -270,6 +239,101 @@ class Api:
                 self.emit({"type": "silero_dl_done", "error": err, "ready": silero_voice.is_ready(self.cfg.path.parent)})
         threading.Thread(target=run, daemon=True, name="silero-download").start()
         return True
+
+    # ---------- свой VPN и прокси (tunnel.py) ----------
+    def tunnel_state(self):
+        from . import elevate, tunnel as tn
+        t = self.assistant.tunnel
+        s = t.settings()
+        return {"win": sys.platform == "win32", "admin": elevate.is_admin(), "version": tn.SINGBOX_VERSION,
+                "engine": t.engine_ready(), "downloading": "tunnel" in self._downloads,
+                "servers": [{"id": x["id"], "name": x["name"], "kind": x.get("kind", "")} for x in s["servers"]], "active": s["active"],
+                "mode": s["mode"], "scope": s["scope"], "apps": s["apps"], "confirm": bool(s["confirm"]), "direct_ru": bool(s["direct_ru"]),
+                "has_sub": bool(s["sub_url"]), "status": t.status(), "text": t.describe()}
+
+    def _tunnel_do(self, fn):
+        from .tunnel import TunnelError
+        try:
+            r = fn()
+            return {"ok": True, "result": r, "state": self.tunnel_state()}
+        except TunnelError as e:
+            return {"ok": False, "error": str(e), "state": self.tunnel_state()}
+        except Exception as e:
+            return {"ok": False, "error": str(e) or e.__class__.__name__, "state": self.tunnel_state()}
+
+    def tunnel_add(self, text):
+        return self._tunnel_do(lambda: self.assistant.tunnel.add_text(str(text or "")))
+
+    def tunnel_refresh(self):
+        return self._tunnel_do(lambda: self.assistant.tunnel.refresh_subscription())
+
+    def tunnel_remove(self, sid):
+        return self._tunnel_do(lambda: self.assistant.tunnel.remove(str(sid)))
+
+    def tunnel_clear(self):
+        return self._tunnel_do(lambda: (self.assistant.tunnel.stop(), self.assistant.tunnel.clear()))
+
+    def tunnel_set(self, patch):
+        from . import tunnel as tn
+        t = self.assistant.tunnel
+        patch = patch if isinstance(patch, dict) else {}
+        out = {}
+        if "active" in patch and str(patch["active"]) in {x["id"] for x in t.servers()}:
+            out["active"] = str(patch["active"])
+        if patch.get("mode") in tn.MODES:
+            out["mode"] = patch["mode"]
+        if patch.get("scope") in tn.SCOPES:
+            out["scope"] = patch["scope"]
+        if "apps" in patch:
+            apps = patch["apps"]
+            if isinstance(apps, str):
+                apps = [a for a in re.split(r"[,;\n]+", apps)]
+            out["apps"] = tn.clean_apps(apps if isinstance(apps, list) else [])
+        for k in ("confirm", "direct_ru"):
+            if k in patch:
+                out[k] = bool(patch[k])
+        if out:
+            t.save(**out)
+        return {"ok": True, "state": self.tunnel_state()}
+
+    def tunnel_start(self):
+        return self._tunnel_do(lambda: self.assistant.tunnel.start())
+
+    def tunnel_stop(self):
+        return self._tunnel_do(lambda: self.assistant.tunnel.stop())
+
+    def tunnel_download(self):
+        from . import tunnel as tn
+        t = self.assistant.tunnel
+        if "tunnel" in self._downloads or t.engine_ready():
+            return False
+        cancel = threading.Event()
+        self._downloads["tunnel"] = {"cancel": cancel}
+
+        def run():
+            err = ""
+            try:
+                t.download_engine(lambda d, tot, st: self.emit({"type": "tunnel_dl", "done": d, "total": tot, "stage": st}), cancel)
+            except Cancelled:
+                err = "cancelled"
+            except Exception as e:
+                err = str(e) or e.__class__.__name__
+            finally:
+                self._downloads.pop("tunnel", None)
+                self.emit({"type": "tunnel_dl_done", "error": err, "ready": t.engine_ready()})
+        threading.Thread(target=run, daemon=True, name="tunnel-download").start()
+        return True
+
+    def tunnel_download_cancel(self):
+        d = self._downloads.get("tunnel")
+        if d:
+            d["cancel"].set()
+        return True
+
+    def tunnel_engine_delete(self):
+        if "tunnel" not in self._downloads:
+            self.assistant.tunnel.delete_engine()
+        return self.tunnel_state()
 
     def silero_delete(self):
         from . import silero_voice
@@ -376,6 +440,7 @@ class Api:
         patch.pop("cloud", None)        # облачные модели меняются только через cloud_* (с проверкой значений)
         patch.pop("images", None)       # картинки меняются только через images_set
         patch.pop("audio_out", None)    # вывод звука меняется только через audio_out_set
+        patch.pop("tunnel", None)       # VPN и прокси меняются только через tunnel_* (с проверкой значений)
         mx, vp = patch.get("mixer"), patch.get("vpn")
         if isinstance(mx, dict):                    # проверяем значения: в config.json не должно попасть мусора
             clean = {"enabled": bool(mx.get("enabled", True)), "prefer": bool(mx.get("prefer", False)), "pin": "".join(ch for ch in str(mx.get("pin") or "") if ch.isdigit())[:8]}

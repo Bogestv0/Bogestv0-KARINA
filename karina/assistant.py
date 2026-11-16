@@ -6,6 +6,7 @@ from . import integrations, music, personal, profile as prof  # noqa: F401  (р�
 from . import memory as memorymod
 from .mixer_remote import MixerRemote
 from .vpn_link import VpnLink
+from .tunnel import Tunnel
 from .brain import Brain
 from .coder import CoderService
 from .diag import trace
@@ -65,9 +66,12 @@ class Assistant:
         self.brain = Brain(cfg, self.engine)
         self.coder = CoderService(cfg, self.brain, emit)
         self.chat = chatmod.ChatService(cfg, self.engine, emit, speak=self.say, brain=self.brain, coder=self.coder)
+        if cfg["tts"].get("voice") != "karina":
+            cfg.update({"tts": {"voice": "karina"}})     # единственный голос — Карина (Silero «Байя»); старые значения вроде silero_xenia приводим к нему
         self.stt, self.tts = STT(cfg), Speaker(cfg)
         self.mixer = MixerRemote(cfg)                       # «сделай тише музыку»: связь с Bogestv0 MIXER
         self.vpn = VpnLink(cfg, log=lambda m: trace(m))     # «включи впн»: расширение Bogestv0 VPN подключается к нам
+        self.tunnel = Tunnel(cfg, cfg.path.parent, log=lambda m: trace(m))     # свой VPN/прокси на sing-box: «включи впн», «включи прокси»
         self.listener = Listener(cfg, self._on_audio, self._on_level, self._on_mics)
         self.listener.on_barge = self._on_barge
         self.memory = memorymod.get(cfg)                    # чему Карина научилась: выбранные приложения, узнаваемые сразу фразы
@@ -93,7 +97,9 @@ class Assistant:
         for t in self._threads:
             t.start()
         self.vpn.start()
+        self.tunnel.recover()
         chatmod.PROFILE_PROVIDER = lambda: prof.prompt_section(self.cfg)
+        chatmod.PERSONA_PROVIDER = lambda: (chatmod.prompts.PERSONA_RUDE if (self.cfg.get("persona") or {}).get("rude") else "")
         t = threading.Thread(target=self._birthday_loop, daemon=True, name="karina-birthday")
         t.start()
         self._threads.append(t)
@@ -116,12 +122,7 @@ class Assistant:
                 if t.get("auto_silero", True):
                     trace("Silero: torch не найден — " + silero_voice.torch_hint())
                 return
-            if not t.get("silero_migrated"):
-                patch = {"silero_migrated": True}
-                if t.get("voice") in (None, "", "svetlana_cute"):      # голос не менялся с прежних версий — берём естественный
-                    patch["voice"] = "silero_xenia"
-                self.cfg.update({"tts": patch})
-            if not str(self.cfg["tts"].get("voice", "")).startswith("silero_") or silero_voice.is_ready(self.cfg.path.parent):
+            if silero_voice.is_ready(self.cfg.path.parent):
                 silero_voice.preload(self.cfg.path.parent)
                 return
             while not self._stop.is_set() and not net.is_online():
@@ -147,27 +148,14 @@ class Assistant:
                 trace(f"поздравление: {e}")
             self._stop.wait(60)
 
-    def phrases_to_cache(self) -> list[str]:
-        """Что стоит озвучить заранее: стандартные ответы, ответы своих команд, «Открываю/Запускаю/Закрываю <программа>»."""
-        out = list(STATIC_PHRASES) + [f"Привет! Меня зовут {self.cfg['name']}. Я вас слышу."]
-        out += [str(c.get("reply")) for c in self.cfg.get("commands", []) if c.get("reply")]
-        try:
-            from .apps import SITES
-            out += [f"Открываю {k}." for k in SITES]
-            for e in self.apps.entries():
-                n = e.get("name")
-                if n:
-                    out += [f"Открываю {n}.", f"Запускаю {n}.", f"Закрываю {n}."]
-        except Exception:
-            pass
-        return out
-
     def warm_voice(self):
-        """Фоновая подготовка записей выбранного голоса (если есть интернет); вызывается при старте и смене голоса."""
+        """Заранее загружает модель голоса, чтобы первая фраза не ждала; вызывается при старте и смене скорости."""
         try:
-            self.tts.prewarm(self.phrases_to_cache())
+            from . import silero_voice
+            if silero_voice.is_ready(self.cfg.path.parent):
+                silero_voice.preload(self.cfg.path.parent)
         except Exception as e:
-            trace(f"кэш голоса: {e}")
+            trace(f"голос: {e}")
 
     def stop(self):
         self._stop.set()
@@ -177,6 +165,7 @@ class Assistant:
         self.chat.stop()
         self.engine.stop()
         self.vpn.stop()
+        self.tunnel.stop()
         self.mixer.close()
 
     def _set_state(self, s: str, detail: str = ""):

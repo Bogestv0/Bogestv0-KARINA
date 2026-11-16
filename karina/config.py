@@ -32,9 +32,9 @@ DEFAULTS: dict = {
     "hotkeys": {"enabled": True, "talk": "ctrl+alt+a", "stop": "ctrl+alt+s"},
     # куда Карина выводит свой голос: device — номер устройства (None = по умолчанию в Windows), name — его имя (номера меняются), volume — громкость голоса 0–100 %
     "audio_out": {"device": None, "name": "", "volume": 100},
-    # voice — silero_xenia | svetlana_cute | ava_calm … (см. tts.VOICES); auto_silero — сама скачать голос Silero; silero_migrated — старым настройкам один раз переключили голос на Silero; pronounce — словарь «слово → как произнести»
-    # offline — auto (нейросетевой Piper, если скачан, иначе системный) | system; piper_voice — irina | denis | dmitri | ruslan; barge_in — можно ли перебить Карину словом «стоп»
-    "tts": {"enabled": True, "engine": "auto", "voice": "silero_xenia", "rate": 0, "offline": "auto", "auto_silero": True, "silero_migrated": False, "barge_in": True, "piper_voice": "irina",
+    # voice — всегда «karina» (Silero «Байя», единственный голос); auto_silero — сама скачать голос Silero; pronounce — словарь «слово → как произнести»
+    # barge_in — можно ли перебить Карину словом «стоп»
+    "tts": {"enabled": True, "voice": "karina", "rate": 0, "auto_silero": True, "barge_in": True,
             "pronounce": {"discord": "дискорд", "vpn": "вэ пэ эн", "впн": "вэ пэ эн", "youtube": "ютуб", "steam": "стим", "telegram": "телеграм", "chrome": "хром",
                           "карина": "Кари́на", "карины": "Кари́ны", "карине": "Кари́не", "карину": "Кари́ну", "кариной": "Кари́ной"}},
     "search_engine": "google",    # google | yandex
@@ -56,6 +56,10 @@ DEFAULTS: dict = {
     # бесплатные облачные модели (свои ключи): strategy — failover (по порядку, при исчерпании лимита — следующий) | spread (по кругу);
     # order — порядок провайдеров; providers — {id: {"enabled","key","model","url","name"}} (см. cloud.PRESETS)
     "cloud": {"strategy": "failover", "order": [], "providers": {}},
+    # persona.rude — дерзкая Карина 18+ (злится, матерится, шутит пошло) в обычном чате и в готовых ответах «как дела», «кто ты» (см. prompts.PERSONA_RUDE)
+    "persona": {"rude": False},
+    # свой VPN/прокси (karina/tunnel.py): servers — ссылки на серверы (с паролями, в окно не отдаются), mode — vpn | proxy, scope — all | apps, apps — имена exe, confirm — спрашивать «да/нет» голосом
+    "tunnel": {"servers": [], "sub_url": "", "active": "", "mode": "vpn", "scope": "all", "apps": [], "confirm": True, "direct_ru": False, "port": 10808},
     "updates": {"auto": True},   # проверять новую версию при запуске
     "models": {"active": "", "gpu": "auto", "ctx": 0, "threads": 0},
     # Микшер Bogestv0 MIXER (удалённый пульт по WebSocket): host/port/pin пустые или 0 = взять из настроек самого микшера;

@@ -9,6 +9,7 @@ from rapidfuzz import fuzz
 from .actions import command, NOT_HANDLED, Ctx
 from .mixer_remote import MixerRemote, MixerError, read_mixer_settings, pct_to_db, db_to_pct, clamp_db
 from .vpn_link import VpnError
+from . import tunnel_cmds as tc
 from .diag import trace
 from .textutil import norm, parse_number, plural, _UNITS, _TENS
 
@@ -350,9 +351,51 @@ def _vpn_do(ctx: Ctx, cmd: str):
     return res, ""
 
 
-@command("vpn_on", "Включить VPN в расширении браузера", ["включи впн", "подключи vpn"],
+_PROXY = r"(?:прокси\w*|proxy)"
+_ON = r"(?:включи|включить|подключи|подключить|запусти|запустить|вруби|активируй)"
+_OFF = r"(?:выключи|выключить|отключи|отключить|останови|выруби|деактивируй)"
+
+
+def _kind(word: str) -> str:
+    return "proxy" if re.match(r"прокс|proxy", word or "") else "vpn"
+
+
+@command("tunnel_app_on", "Включить встроенный VPN только для приложения (для хрома, гугла, дискорда)",
+         ["включи впн только для хрома", "включи впн для дискорда", "включи прокси для гугла"],
+         rf"^{_ON}\s+(?:мне\s+)?(?P<kind>{_VPN}|{_PROXY})\s+(?:только\s+)?(?:для|на)\s+(?P<app>.+)$", first=True)
+def _tunnel_app_on(ctx, kind, app):
+    return tc.on(ctx, _kind(kind), app)
+
+
+@command("proxy_on", "Включить встроенный прокси (системный прокси Windows)", ["включи прокси"],
+         rf"^{_ON}\s+(?:мне\s+)?{_PROXY}\b", first=True)
+def _proxy_on(ctx):
+    return tc.on(ctx, "proxy")
+
+
+@command("proxy_off", "Выключить встроенный прокси", ["выключи прокси"], rf"^{_OFF}\s+{_PROXY}\b", first=True)
+def _proxy_off(ctx):
+    return tc.off(ctx, "proxy")
+
+
+@command("proxy_status", "Узнать, включён ли прокси", ["включён ли прокси"], rf"^(?:включен|включён|работает)\s+ли\s+{_PROXY}\b", rf"^(?:статус|состояние)\s+{_PROXY}\b", first=True)
+def _proxy_status(ctx):
+    return tc.status(ctx, "proxy")
+
+
+@command("vpn_server", "Сменить сервер встроенного VPN: следующий или по названию", ["смени сервер", "переключи сервер на германию"],
+         rf"^(?:смени|поменяй|переключи|выбери|поставь)\s+(?:мне\s+)?(?:другой\s+|следующий\s+)?сервер(?:\s+(?:{_VPN}|{_PROXY}))?(?:\s+(?:на|в)\s+(?P<name>.+))?$",
+         r"^(?P<name>следующий|другой)\s+сервер$", first=True, llm_args="name")
+def _vpn_server(ctx, name=""):
+    return tc.set_server(ctx, name or "")
+
+
+@command("vpn_on", "Включить VPN (свой, а если не настроен — в расширении браузера)", ["включи впн", "подключи vpn"],
          rf"^(?:включи|включить|подключи|подключись\s+к|запусти|активируй|вруби)\s+(?:мне\s+)?{_EXT}{_VPN}\b", rf"^{_VPN}\s+(?:включи|вкл)\b", first=True)
 def _vpn_on(ctx):
+    mine = tc.on(ctx, "vpn")
+    if mine is not None:
+        return mine
     res, err = _vpn_do(ctx, "on")
     if err:
         return err
@@ -365,6 +408,9 @@ def _vpn_on(ctx):
 @command("vpn_off", "Выключить VPN в расширении браузера", ["выключи впн", "отключи vpn"],
          rf"^(?:выключи|выключить|отключи|отключить|останови|выруби|деактивируй|закрой)\s+{_EXT}{_VPN}\b", rf"^{_VPN}\s+(?:выключи|выкл|стоп)\b", first=True)
 def _vpn_off(ctx):
+    mine = tc.off(ctx, "vpn")
+    if mine is not None:
+        return mine
     res, err = _vpn_do(ctx, "off")
     if err:
         return err
@@ -376,6 +422,9 @@ def _vpn_off(ctx):
 
 @command("vpn_toggle", "Переключить VPN", ["переключи впн"], rf"^(?:переключи|поменяй)\s+{_EXT}{_VPN}\b", first=True)
 def _vpn_toggle(ctx):
+    mine = tc.toggle(ctx)
+    if mine is not None:
+        return mine
     res, err = _vpn_do(ctx, "toggle")
     if err:
         return err
@@ -388,6 +437,9 @@ def _vpn_toggle(ctx):
 @command("vpn_status", "Узнать, включён ли VPN", ["включён ли впн", "статус впн"],
          rf"^(?:включен|включён|работает|подключен|подключён)\s+ли\s+{_VPN}\b", rf"^(?:статус|состояние)\s+{_VPN}\b", rf"^{_VPN}\s+(?:включен|включён|работает|подключен|подключён)\b", first=True)
 def _vpn_status(ctx):
+    mine = tc.status(ctx, "vpn")
+    if mine is not None:
+        return mine
     res, err = _vpn_do(ctx, "status")
     if err:
         return err
