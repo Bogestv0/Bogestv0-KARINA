@@ -9,6 +9,7 @@ from rapidfuzz import fuzz
 from .actions import command, NOT_HANDLED, Ctx
 from .mixer_remote import MixerRemote, MixerError, read_mixer_settings, pct_to_db, db_to_pct, clamp_db
 from .vpn_link import VpnError
+from .diag import trace
 from .textutil import norm, parse_number, plural, _UNITS, _TENS
 
 # ======================================================================= микшер
@@ -56,36 +57,69 @@ def find_number(text: str) -> int | None:
     return None
 
 
+def _name_in(name: str, tokens: list[str]) -> bool:
+    """Название дорожки есть во фразе (в любом падеже): «Браузер» ← «браузера», «Игры» ← «в игре». Все слова названия должны встретиться."""
+    words = name.split()
+    if not words or len(name) < 3:
+        return False
+    for w in words:
+        stem = w if len(w) <= 3 or w.isdigit() else w[:-2] if len(w) >= 6 else w[:-1]
+        if not any(t == w or (not w.isdigit() and t.startswith(stem)) for t in tokens):
+            return False
+    return True
+
+
+_AND = re.compile(r"\b(?:и|оба|обе|обоих|все|всё|вместе)\b")
+
+
 def resolve_strips(text: str, strips: list[dict], aliases: dict | None = None) -> list[dict]:
-    """Какие дорожки имеются в виду во фразе. strips: [{i, name, tag, hidden}]."""
+    """Какие дорожки имеются в виду во фразе. strips: [{i, name, tag, hidden}].
+
+    Дорожка получает оценку: имя дорожки или своё слово пользователя во фразе — 3, слова по тегу («браузер» для V5) — 2,
+    похожее слово (распознали «барузер») — 1,7 для названия и 1,5 для слов тега, слово из длинного названия («Донаты в браузере») — 1. Берутся только дорожки с самой высокой оценкой:
+    «громкость браузера» меняет браузер, а не заодно и «Донаты». Несколько дорожек сразу — только если в фразе есть «и / оба / все»
+    или у них общее слово («микрофон»)."""
     tokens = text.split()
     aliases = {norm(k): [norm(a) for a in v] for k, v in (aliases or {}).items()}
 
     def hit(stems) -> bool:
         return any(t.startswith(s) for t in tokens for s in stems if s)
 
-    strong: dict[str, dict] = {}
-    weak: dict[str, dict] = {}
+    def near(stems) -> bool:
+        return any(len(s) >= 5 and len(t) >= max(6, len(s)) and fuzz.ratio(t[:len(s)], s) >= 84 for t in tokens for s in stems)
+
+    scored: dict[str, tuple[float, dict]] = {}
     for s in strips:
         if s.get("hidden"):
             continue
         key = s.get("tag") or str(s["i"])
         name = norm(s["name"])
-        sure = list(STEMS.get(s.get("tag", ""), [])) + aliases.get(name, [])          # теги, свои слова пользователя
+        by_tag = list(STEMS.get(s.get("tag", ""), []))
+        own = aliases.get(name, [])
         words = [w[:5] for w in name.split() if len(w) >= 4 and not w.isdigit()]       # слова из названия дорожки: «Warzone»
-        if hit(sure) or (len(name) >= 3 and name in text):
-            strong[key] = s
+        phrase = _name_in(name, tokens)
+        if phrase or hit(own):
+            sc = 3.0
+        elif hit(by_tag):
+            sc = 2.0
         elif hit(words):
-            weak[key] = dict(s, _ratio=sum(1 for w in words if hit([w])) / max(1, len(name.split())))
-    found: dict[str, dict] = dict(strong)
-    if weak:                                      # «звук браузера»: дорожку «Донаты в браузере» берём, только если лучшей нет — иначе меняли бы две дорожки сразу
-        top = max(w["_ratio"] for w in weak.values())
-        partners = {t for pair in _PAIRS for t in pair}
-        for key, w in weak.items():
-            if not strong or key in partners or w["_ratio"] >= 1.0 and not strong:
-                if not strong and w["_ratio"] < top:
-                    continue
-                found[key] = {k: v for k, v in w.items() if k != "_ratio"}
+            sc = 1.0 * (sum(1 for w in words if hit([w])) / max(1, len(name.split())))
+        elif near([w for w in name.split() if len(w) >= 5]):
+            sc = 1.7                              # по названию дорожки с опечаткой распознавания: «барузер» → «Браузер»
+        elif near(by_tag + own):
+            sc = 1.5
+        else:
+            continue
+        scored[key] = (sc, s)
+    if not scored:
+        return []
+    top = max(sc for sc, _ in scored.values())
+    keep = {k for k, (sc, _) in scored.items() if sc == top or (_AND.search(text) and sc >= 2.0 and top >= 2.0)}
+    for a, b in _PAIRS:                          # «второй браузер»: V6 узнаётся по слову слабее, чем V5, но пара решается ниже
+        for x, y in ((a, b), (b, a)):
+            if x in keep and y in scored and scored[y][0] <= 1.0:      # напарника берём, только если его имя содержит то же слово
+                keep.add(y)
+    found: dict[str, dict] = {k: scored[k][1] for k in keep}
     for a, b in _PAIRS:
         if a in found and b in found:
             second = re.search(r"\bвтор\w+\s+(?:браузер|микрофон)\w*|\b(?:браузер|микрофон)\w*\s+(?:2|два|номер два)\b", text)
@@ -169,6 +203,7 @@ def apply_mixer(ctx: Ctx, text: str, intent: dict | None = None, target: str | N
         hit = resolve_strips(target if target is not None else text, strips, aliases) or [s for s in strips if s["i"] in {p["i"] for p in pre}]
         if not hit:
             return NOT_HANDLED
+        trace("Микшер: «%s» → %s (дорожки микшера: %s)" % (text, _names(hit), "; ".join(f"{s['name']}[{s.get('tag', '')}]" for s in strips)))
         step = float(mcfg.get("step_db") or 3.0)
         op, name = intent["op"], _names(hit)
         if op in ("mute", "unmute"):

@@ -1,8 +1,9 @@
 """Ядро: микрофон → распознавание → имя → команда → голосовой ответ."""
 from __future__ import annotations
-import queue, sys, threading, time, traceback
+import queue, re, sys, threading, time, traceback
 from . import actions, chat as chatmod, llm, net
-from . import integrations, personal, profile as prof  # noqa: F401  (регистрируют команды микшера, VPN, погоды и профиля)
+from . import integrations, music, personal, profile as prof  # noqa: F401  (регистрируют команды микшера, VPN, музыки, погоды и профиля)
+from . import memory as memorymod
 from .mixer_remote import MixerRemote
 from .vpn_link import VpnLink
 from .brain import Brain
@@ -40,7 +41,7 @@ STATIC_PHRASES = [
 
 GOOD_CONF = 0.70       # от такой уверенности модели распознавание считаем хорошим и помощь остальных микрофонов не нужна
 
-YES = {"да", "давай", "подтверждаю", "конечно", "ага", "выполняй", "точно", "да да"}
+YES = {"да", "давай", "подтверждаю", "конечно", "ага", "выполняй", "точно", "да да", "ищи", "ищи давай", "угу", "ок", "окей", "поищи", "искать"}
 NO = {"нет", "не надо", "отмена", "отменяю", "стоп", "не нужно"}
 
 
@@ -69,6 +70,7 @@ class Assistant:
         self.vpn = VpnLink(cfg, log=lambda m: trace(m))     # «включи впн»: расширение Bogestv0 VPN подключается к нам
         self.listener = Listener(cfg, self._on_audio, self._on_level, self._on_mics)
         self.listener.on_barge = self._on_barge
+        self.memory = memorymod.get(cfg)                    # чему Карина научилась: выбранные приложения, узнаваемые сразу фразы
         self.bq: queue.Queue = queue.Queue(maxsize=2)       # короткие фразы поверх речи Карины («стоп»)
         self.hotkeys = Hotkeys(cfg, {"talk": self.push_to_talk, "stop": self.hush}, trace)
         self.mic_status: list = []
@@ -426,7 +428,11 @@ class Assistant:
             self._to_chat(rest)
             return
         ctx = Ctx(self.cfg, self.apps, self, raw=text)
-        handled, reply = actions.dispatch(ctx, rest)
+        handled, reply = self._recall(ctx, rest)         # знакомая фраза — выполняем сразу, без разбора
+        if not handled:
+            before = (self._pending, self._choice)
+            handled, reply = actions.dispatch(ctx, rest)
+            self._learn(ctx, rest, handled, reply, before)
         if not handled and self.brain.usable():
             self._to_chat(rest)          # свободная фраза — отвечает выбранный «мозг»
             return
@@ -448,10 +454,45 @@ class Assistant:
         if self.chat.busy:
             self.say("Я ещё отвечаю на предыдущий вопрос.")
             return
+        if self.chat.will_search(text) and (self.cfg.get("search") or {}).get("confirm", True):
+            short = re.sub(r"\s+", " ", text).strip()[:90]
+            self.ask_confirm(lambda: self._chat_go(text, True))       # в интернет — только после «да»
+            self.say(f"Искать в интернете: {short}? Скажите «да» или «нет».")
+            return
+        self.say(self._chat_go(text, False))
+
+    def _chat_go(self, text: str, search: bool) -> str:
+        """Отправляет вопрос в чат. search=True — человек подтвердил поиск в интернете; иначе отвечаем без интернета."""
+        if self.chat.busy:
+            return "Я ещё отвечаю на предыдущий вопрос."
         cid = self.chat.voice_chat_id()
         self.emit({"type": "chat_open", "chat": cid})
-        self.say("Хорошо, поищу в интернете." if self.chat.will_search(text) else "Хорошо, подумаю.")
-        self.chat.send(cid, text, voice=True)
+        self.chat.send(cid, text, voice=True, search=True if search else None)
+        return "Хорошо, поищу в интернете." if search else "Хорошо, подумаю."
+
+    _FAIL = ("не нашла", "не получилось", "ошибка", "не поняла", "не знаю", "нет интернета", "не выбрано", "не удалось", "окно «")
+
+    def _recall(self, ctx: Ctx, phrase: str):
+        """Фраза, которую я уже понимала и выполняла, выполняется сразу. Не вышло — забываю её и разбираю заново."""
+        hit = self.memory.recall(phrase)
+        if not hit:
+            return False, ""
+        before = (self._pending, self._choice)
+        handled, reply = actions.run_command(ctx, hit[0], hit[1])
+        if handled and not str(reply).lower().startswith(self._FAIL) and (self._pending, self._choice) == before:
+            self.memory.remember(phrase, hit[0], hit[1])
+            return True, reply
+        self.memory.forget(phrase)
+        return False, ""
+
+    def _learn(self, ctx: Ctx, phrase: str, handled: bool, reply, before):
+        """Запоминает удачно выполненную команду. Не запоминаем, если я задала вопрос (ждём «да» или выбор) или ответила отказом."""
+        try:
+            if handled and ctx.matched and (self._pending, self._choice) == before and not str(reply or "").lower().startswith(self._FAIL):
+                if self.memory.remember(phrase, ctx.matched[0], ctx.matched[1]):
+                    trace(f"Память: запомнила «{phrase}» → {ctx.matched[0]}")
+        except Exception as e:
+            trace(f"Память: {e}")
 
     def _try_llm(self, ctx: Ctx, text: str):
         if not net.is_online():
@@ -462,7 +503,10 @@ class Assistant:
         if not r:
             return False, ""
         if r.get("action"):
-            return actions.run_by_name(ctx, str(r["action"]), r.get("args") or {})
+            before = (self._pending, self._choice)
+            handled, reply = actions.run_by_name(ctx, str(r["action"]), r.get("args") or {})
+            self._learn(ctx, text, handled, reply, before)          # поняла с помощью языковой модели — в следующий раз узнаю сама
+            return handled, reply
         if r.get("say"):
             return True, str(r["say"])
         return False, ""

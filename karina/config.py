@@ -26,6 +26,8 @@ DEFAULTS: dict = {
             "vad": "neural", "end_silence": 0.55, "end_silence_long": 0.8, "device": "auto", "prefilter": False},
     # vad — neural (Silero VAD, сам вернётся к energy, если нет модели) | energy; end_silence / end_silence_long — пауза (с) в конце короткой / долгой фразы;
     # device — auto (видеокарта NVIDIA, если сработает проба, иначе процессор) | cpu | cuda; prefilter — быстрая проверка имени моделью «tiny» до полного распознавания (экономит процессор)
+    # music.services — свои сервисы музыки/видео: {"music": {"мой": {"name": "…", "aliases": ["…"], "kind": "web", "search": "https://…?q={q}"}}} (см. karina/music.py)
+    "music": {"services": {}},
     # горячие клавиши (Windows): talk — говорить без имени, stop — замолчать
     "hotkeys": {"enabled": True, "talk": "ctrl+alt+a", "stop": "ctrl+alt+s"},
     # куда Карина выводит свой голос: device — номер устройства (None = по умолчанию в Windows), name — его имя (номера меняются), volume — громкость голоса 0–100 %
@@ -38,8 +40,8 @@ DEFAULTS: dict = {
     "search_engine": "google",    # google | yandex
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-5-5"},
     # встроенные модели (llama.cpp): active — id выбранной модели; gpu: auto | cpu; ctx/threads: 0 = по умолчанию
-    # поиск в интернете для чата: mode — auto (когда просьба этого требует) | always | off; depth — quick | normal | deep | max
-    "search": {"mode": "auto", "depth": "normal"},
+    # поиск в интернете для чата: mode — auto (только по явной просьбе: «найди в интернете …», «загугли …») | always | off; confirm — переспрашивать «Искать? Да/нет» перед поиском; depth — quick | normal | deep | max
+    "search": {"mode": "auto", "depth": "normal", "confirm": True},
     # «мозг» чата: mode — local (встроенная модель) | claude (по ключу API) | auto (простое локально, сложное в Claude)
     "brain": {"mode": "local", "claude_model": "claude-sonnet-5-5"},
     # «Кодер»: run — запускать написанный код для проверки (python / pytest / node в папке проекта); max_steps — шагов на задачу

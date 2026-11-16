@@ -41,6 +41,7 @@ class Ctx:
     """Что команда может использовать: настройки, программы, подтверждение, сон."""
     def __init__(self, cfg, apps, assistant=None, raw: str = ""):
         self.cfg, self.apps, self.assistant, self.raw = cfg, apps, assistant, raw
+        self.matched: tuple[str, dict] | None = None     # какая команда сработала и с какими аргументами (для памяти Карины)
 
     def confirm(self, question: str, action: Callable[[], str]) -> str:
         if self.assistant:
@@ -136,8 +137,8 @@ def _unmute(ctx):
 
 
 # ---------------------------------------------------------------- медиа
-@command("media_pause", "Пауза / продолжить", ["пауза", "продолжи", "включи музыку"],
-         r"^(?:поставь\s+на\s+)?пауз\w*", r"^(?:продолжи|продолжай|играй|воспроизведи|возобнови)\b", r"^(?:включи|запусти)\s+музыку$", r"^останови\s+музыку")
+@command("media_pause", "Пауза / продолжить", ["пауза", "продолжи", "останови музыку"],
+         r"^(?:поставь\s+на\s+)?пауз\w*", r"^(?:продолжи|продолжай|играй|воспроизведи|возобнови)\b", r"^останови\s+музыку")
 def _pause(ctx):
     winutil.press("play")
     return "Готово."
@@ -256,8 +257,13 @@ def _search(ctx, q):
     if not net.is_online():
         return "Нет интернета, поиск сейчас недоступен."
     base = "https://yandex.ru/search/?text=" if ctx.cfg.get("search_engine") == "yandex" else "https://www.google.com/search?q="
-    webbrowser.open(base + urllib.parse.quote(q))
-    return f"Ищу: {q}."
+
+    def go():
+        webbrowser.open(base + urllib.parse.quote(q))
+        return f"Ищу: {q}."
+    if ctx.assistant and (ctx.cfg.get("search") or {}).get("confirm", True):
+        return ctx.confirm(f"Искать в интернете: {q}?", go)       # в интернет только после «да»
+    return go()
 
 
 # ---------------------------------------------------------------- программы
@@ -287,6 +293,41 @@ def _hello(ctx):
     from . import profile as prof, personal
     greet = personal.morning_greeting(ctx.cfg)                  # день рождения: поздравляем один раз за день
     return (greet + " " if greet else "") + prof.with_name(ctx.cfg, f"{part}!") + " Чем помочь?"
+
+
+# ---------------------------------------------------------------- простые вопросы: отвечает сама, без интернета и без языковой модели
+_SMALL = {
+    "how": ["У меня всё хорошо, спасибо! А у вас как?", "Отлично! Готова помогать. Как вы?", "Всё хорошо, работаю и слушаю вас."],
+    "name": ["Меня зовут {name}.", "Я {name}, ваш голосовой помощник."],
+    "who": ["Я {name}, голосовой помощник на вашем компьютере. Открываю программы, меняю громкость, включаю музыку и отвечаю на вопросы.", "Я {name}, ваш помощник. Могу открыть программу, поменять громкость, включить музыку или поискать в интернете."],
+    "age": ["Я программа, так что возраста у меня нет. Зато я всегда в форме."],
+    "maker": ["Меня сделал Bogestv0."],
+    "doing": ["Слушаю вас и жду команду.", "Жду, когда вы что-нибудь попросите."],
+    "hear": ["Да, я здесь и слушаю.", "Слышу вас хорошо."],
+    "alive": ["Я программа, но стараюсь быть живой собеседницей.", "Я голосовой помощник, но с характером."],
+    "bye": ["До встречи!", "До свидания! Если что, зовите.", "Пока! Я рядом."],
+    "praise": ["Спасибо, мне приятно!", "Благодарю, стараюсь!"],
+}
+_FILL = r"(?:\s+(?:сегодня|сейчас|вообще|у\s+тебя|у\s+вас|как|нормально|вечером|утром|ночью|вы|ты|карина))*$"
+
+
+@command("smalltalk", "Ответить на простой вопрос о себе: как дела, как тебя зовут, кто ты, ты здесь (без интернета)",
+         ["как дела", "как тебя зовут", "кто ты", "ты меня слышишь", "до свидания"],
+         rf"^(?P<how>как\s+(?:у\s+тебя\s+|у\s+вас\s+)?(?:дела|жизнь|настроение|самочувствие)|как\s+(?:ты\s+|вы\s+)?(?:поживаешь|поживаете|себя\s+чувствуешь)|как\s+(?:ты|вы)|что\s+нового\s+у\s+(?:тебя|вас)){_FILL}",
+         rf"^(?P<name>как\s+(?:тебя|вас)\s+зовут|как\s+(?:твое|ваше)\s+имя|тебя\s+как\s+зовут|как\s+тебя\s+называть){_FILL}",
+         rf"^(?P<who>кто\s+(?:ты|вы)|ты\s+кто|что\s+ты\s+такое|представься|расскажи\s+о\s+себе){_FILL}",
+         rf"^(?P<age>сколько\s+тебе\s+лет|сколько\s+вам\s+лет\s*(?:карина)?|когда\s+ты\s+родилась){_FILL}",
+         rf"^(?P<maker>кто\s+(?:тебя|вас)\s+(?:создал|сделал|написал|придумал|разработал)|кто\s+твой\s+(?:создатель|автор|разработчик)){_FILL}",
+         rf"^(?P<doing>что\s+(?:ты\s+)?делаешь|чем\s+(?:ты\s+)?занимаешься|чем\s+занята){_FILL}",
+         rf"^(?P<hear>ты\s+(?:меня\s+)?(?:слышишь|слушаешь|здесь|тут|на\s+месте|со\s+мной)|ты\s+там|алло|эй\s+ты\s+тут){_FILL}",
+         rf"^(?P<alive>ты\s+(?:живая|робот|человек|настоящая|нейросеть|программа)){_FILL}",
+         rf"^(?P<bye>пока|до\s+свидания|до\s+встречи|до\s+завтра|спокойной\s+ночи|доброй\s+ночи|всего\s+доброго){_FILL}",
+         rf"^(?P<praise>ты\s+(?:молодец|умница|умная|лучшая|классная|супер)|молодец|умница|умничка){_FILL}")
+def _smalltalk(ctx, **kw):
+    import random
+    kind = next((k for k, v in kw.items() if v and k in _SMALL), "how")
+    name = str(ctx.cfg.get("name") or "Карина")
+    return random.choice(_SMALL[kind]).format(name=name)
 
 
 @command("thanks", "Поблагодарить", ["спасибо"], r"^(?:спасибо|благодарю)\b")
@@ -362,6 +403,7 @@ def dispatch(ctx: Ctx, text: str):
                     traceback.print_exc()
                     return True, f"Ошибка при выполнении команды: {e}"
                 if r is not NOT_HANDLED:
+                    ctx.matched = (cmd.name, {k: v for k, v in m.groupdict().items() if v is not None})
                     return True, r or ""
     return False, ""
 
@@ -372,10 +414,28 @@ def run_by_name(ctx: Ctx, name: str, args: dict):
         if cmd.name == name:
             try:
                 keys = [a.split()[0] for a in cmd.llm_args.split(",") if a.strip()]
-                r = cmd.func(ctx, **{k: str(args.get(k, "")) for k in keys})
+                kwargs = {k: str(args.get(k, "")) for k in keys}
+                r = cmd.func(ctx, **kwargs)
             except Exception as e:
                 return True, f"Ошибка: {e}"
+            if r is not NOT_HANDLED:
+                ctx.matched = (cmd.name, kwargs)
             return (r is not NOT_HANDLED), (r if r is not NOT_HANDLED else "")
+    return False, ""
+
+
+def run_command(ctx: Ctx, name: str, kwargs: dict):
+    """Выполнить команду по имени с готовыми аргументами (так работает память Карины). → (выполнена ли, ответ)."""
+    for cmd in REGISTRY:
+        if cmd.name == name:
+            try:
+                r = cmd.func(ctx, **kwargs)
+            except Exception as e:
+                return False, f"Ошибка: {e}"
+            if r is NOT_HANDLED:
+                return False, ""
+            ctx.matched = (name, dict(kwargs))
+            return True, r or ""
     return False, ""
 
 
