@@ -83,6 +83,39 @@ class Sub(unittest.TestCase):
                 tunnel.fetch_subscription("https://example.com/sub")
         self.assertIn("нет сети", str(c.exception))
 
+    def test_device_headers_are_sent_and_server_needing_them_works(self):
+        seen = {}
+        def responder(ua):
+            return (200, LINK)
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.update({k.lower(): v for k, v in self.headers.items()})
+                ok = self.headers.get("x-hwid") and self.headers.get("x-device-os") and self.headers.get("x-device-model")
+                self.send_response(200 if ok else 403); self.end_headers(); self.wfile.write((LINK if ok else "device required").encode())
+            def log_message(self, *a): pass
+        srv, url = serve(H)
+        try:
+            with self.assertRaises(tunnel.TunnelError):
+                tunnel.fetch_subscription(url)                          # без заголовков устройства сервер отказывает
+            self.assertIn("vless://", tunnel.fetch_subscription(url, "a" * 32))
+        finally:
+            srv.shutdown(); srv.server_close()
+        self.assertEqual(seen["x-hwid"], "a" * 32); self.assertEqual(seen["x-device-model"], "Karina")
+
+    def test_panel_explanation_is_shown(self):
+        with self.assertRaises(tunnel.TunnelError) as c:
+            self.fetch(lambda ua: (403, "Лимит устройств исчерпан"))
+        self.assertIn("Лимит устройств", str(c.exception))
+
+    def test_hwid_is_created_once_and_kept(self):
+        import tempfile
+        from karina.config import Config
+        cfg = Config(Path(tempfile.mkdtemp()) / "c.json")
+        t = tunnel.Tunnel(cfg, Path(tempfile.mkdtemp()))
+        h = t._hwid()
+        self.assertRegex(h, r"^[0-9a-f]{32}$")
+        self.assertEqual(tunnel.Tunnel(cfg, Path(tempfile.mkdtemp()))._hwid(), h)
+
     def test_bad_address(self):
         with self.assertRaises(tunnel.TunnelError):
             tunnel.fetch_subscription("ftp://x")

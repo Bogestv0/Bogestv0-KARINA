@@ -59,11 +59,35 @@ class Download(unittest.TestCase):
             sv.download(self.tmp, fresh=True)
         self.assertEqual(sv.model_path(self.tmp).read_bytes()[:1], b"n")
         un.assert_called()
-        self.assertFalse(sv.model_path(self.tmp).with_name(sv.model_path(self.tmp).name + ".new").exists())
+        for suf in (".new", ".new.part"):
+            self.assertFalse(sv.model_path(self.tmp).with_name(sv.model_path(self.tmp).name + suf).exists())
+
+    def test_update_when_file_is_locked_is_applied_on_next_start(self):
+        d = sv.model_path(self.tmp); d.parent.mkdir(parents=True)
+        d.write_bytes(b"old" * 500_000)
+        real = Path.replace
+        def locked(self_, target):
+            if Path(target) == d and self_.name.endswith(".new"):
+                raise PermissionError(5, "Отказано в доступе")
+            return real(self_, target)
+        with mock.patch.object(sv.urllib.request, "urlopen", return_value=Resp(b"n" * 1_600_000)), mock.patch.object(Path, "replace", locked), mock.patch.object(sv.time, "sleep"):
+            with self.assertRaises(RuntimeError) as c:
+                sv.download(self.tmp, fresh=True)
+        self.assertIn("следующем запуске", str(c.exception))
+        self.assertEqual(d.read_bytes()[:3], b"old")
+        self.assertTrue(sv.apply_pending(self.tmp))
+        self.assertEqual(d.read_bytes()[:1], b"n")
+
+    def test_unfinished_update_is_never_applied(self):
+        d = sv.model_path(self.tmp); d.parent.mkdir(parents=True)
+        d.write_bytes(b"old" * 500_000)
+        d.with_name(d.name + ".new.part").write_bytes(b"n" * 2_000_000)
+        self.assertFalse(sv.apply_pending(self.tmp))
+        self.assertEqual(d.read_bytes()[:3], b"old")
 
     def test_delete_removes_all_parts(self):
         d = sv.model_path(self.tmp); d.parent.mkdir(parents=True)
-        for suf in ("", ".part", ".new"):
+        for suf in ("", ".part", ".new", ".new.part"):
             d.with_name(d.name + suf).write_bytes(b"1")
         sv.delete(self.tmp)
         self.assertEqual(list(d.parent.iterdir()), [])
