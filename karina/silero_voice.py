@@ -80,7 +80,8 @@ def _download_curl(part: Path, prog, cancel: threading.Event) -> None:
         total = int(sizes[-1]) if sizes else 0
     except Exception:
         pass
-    proc = subprocess.Popen([exe, "-fL", "--retry", "3", "--connect-timeout", "30", "-C", "-", "-o", str(part), URL],
+    part.unlink(missing_ok=True)            # сервер не поддерживает докачку (curl: (33)) — всегда качаем с начала
+    proc = subprocess.Popen([exe, "-fL", "--retry", "3", "--connect-timeout", "30", "-o", str(part), URL],
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=flags)
     try:
         while proc.poll() is None:

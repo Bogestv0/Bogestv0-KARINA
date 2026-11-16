@@ -283,6 +283,20 @@ def parse_text(text: str) -> tuple[list[dict], list[str]]:
 SUB_AGENTS = ("v2rayN/6.45", "Hiddify/2.0.5", "Happ/2.0.0", "Streisand", "Bogestv0-KARINA")
 
 
+def _fetch_curl(url: str, agent: str) -> tuple[int, str]:
+    """Запасной путь: curl.exe из Windows проверяет сертификат средствами системы (как браузер) и ходит через системный прокси/VPN."""
+    import shutil
+    exe = shutil.which("curl.exe" if IS_WIN else "curl")
+    if not exe:
+        raise OSError("curl не найден")
+    r = subprocess.run([exe, "-sSL", "--max-time", "25", "-A", agent, "-w", "\n%{http_code}", url], capture_output=True, creationflags=NO_WINDOW, timeout=35)
+    if r.returncode:
+        raise OSError((r.stderr.decode("utf-8", "replace").strip().splitlines() or ["ошибка curl"])[-1])
+    out = r.stdout.decode("utf-8", "replace")
+    body, _, code = out.rpartition("\n")
+    return int(code or 0), body[:2_000_000]
+
+
 def _fetch(url: str, agent: str) -> tuple[int, str]:
     req = urllib.request.Request(url, headers={"User-Agent": agent, "Accept": "*/*"})
     try:
@@ -290,6 +304,11 @@ def _fetch(url: str, agent: str) -> tuple[int, str]:
             return r.status, r.read(2_000_000).decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         return e.code, ""
+    except (urllib.error.URLError, OSError) as e:
+        try:
+            return _fetch_curl(url, agent)      # встроенная проверка сертификата не справилась (бывает у собственных серверов) — пробуем средствами системы
+        except Exception:
+            raise e from None
 
 
 def fetch_subscription(url: str) -> str:
