@@ -1027,7 +1027,7 @@
   // ---------- голос Silero ----------
   function silView(st) {
     $('#silStatus').textContent = st.downloading ? 'Скачиваю…' : st.ready ? `Скачан (${fmtMb(st.size)})${st.torch ? '. Всё готово.' : '. ' + (st.hint || 'Не хватает пакета torch.')}` : 'Не скачан: пока Карина говорит обычным голосом.';
-    $('#silDl').hidden = st.ready; $('#silDl').disabled = !!st.downloading; $('#silDel').hidden = !st.ready;
+    $('#silDl').hidden = st.ready; $('#silDl').disabled = !!st.downloading; $('#silDel').hidden = !st.ready; $('#silUpd').hidden = !st.ready; $('#silUpd').disabled = !!st.downloading;
     if (!st.downloading) $('#silBar').hidden = true;
   }
   async function loadSil() { const st = await call('silero_status'); if (st) silView(st); }
@@ -1037,6 +1037,7 @@
   }
   function silDone(ev) { if (ev.error && ev.error !== 'cancelled') flash($('#setMsg'), ev.error, true); loadSil(); }
   $('#silDl').onclick = async () => { $('#silDl').disabled = true; $('#silStatus').textContent = 'Подключаюсь…'; if (!(await call('silero_download'))) loadSil(); };
+  $('#silUpd').onclick = async () => { $('#silUpd').disabled = true; $('#silStatus').textContent = 'Подключаюсь…'; if (!(await call('silero_download', true))) loadSil(); };
   $('#silDel').onclick = async () => { const st = await call('silero_delete'); if (st) silView(st); };
 
   // ---------- свой VPN и прокси ----------
