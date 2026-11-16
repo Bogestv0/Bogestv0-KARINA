@@ -50,18 +50,63 @@ def is_ready(base: Path) -> bool:
 
 
 def delete(base: Path) -> None:
-    for f in (model_path(base), model_path(base).with_name(model_path(base).name + ".part")):
+    for f in (model_path(base), model_path(base).with_name(model_path(base).name + ".part"), model_path(base).with_name(model_path(base).name + ".new")):
         f.unlink(missing_ok=True)
     unload()
 
 
-def download(base: Path, progress=None, cancel: threading.Event | None = None) -> Path:
-    """Скачивает модель с докачкой. progress(done, total, stage). Бросает Cancelled при отмене."""
+def _cert_message(dest: Path) -> str:
+    return ("Не удалось проверить сертификат сервера Silero (просрочен или не принят системой). Проверьте дату и время на компьютере и обновите Windows. "
+            f"Если не помогло — скачайте файл {URL} в браузере и положите его сюда: {dest} (папка «Открыть папку с данными» → voices).")
+
+
+def _curl_exe() -> str | None:
+    """curl.exe есть в Windows 10/11. Он проверяет сертификат средствами самой Windows (как браузер, сам докачивает недостающие промежуточные сертификаты),
+    поэтому справляется там, где встроенная проверка Python не может построить цепочку. Проверка сертификата остаётся включённой."""
+    import shutil
+    return shutil.which("curl.exe" if sys.platform == "win32" else "curl")
+
+
+def _download_curl(part: Path, prog, cancel: threading.Event) -> None:
+    import subprocess
+    exe = _curl_exe()
+    if not exe:
+        raise FileNotFoundError("curl не найден")
+    flags = 0x08000000 if sys.platform == "win32" else 0         # без чёрного окна
+    total = 0
+    try:
+        head = subprocess.run([exe, "-sIL", "--max-time", "30", URL], capture_output=True, text=True, creationflags=flags, timeout=40).stdout
+        sizes = re.findall(r"(?im)^content-length:\s*(\d+)", head)
+        total = int(sizes[-1]) if sizes else 0
+    except Exception:
+        pass
+    proc = subprocess.Popen([exe, "-fL", "--retry", "3", "--connect-timeout", "30", "-C", "-", "-o", str(part), URL],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=flags)
+    try:
+        while proc.poll() is None:
+            if cancel.is_set():
+                proc.kill()
+                raise Cancelled()
+            prog(part.stat().st_size if part.exists() else 0, total, "download")
+            time.sleep(0.5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    if proc.returncode:
+        err = (proc.stderr.read().decode("utf-8", "replace").strip().splitlines() or ["ошибка"])[-1]
+        raise RuntimeError(f"Не удалось скачать голос Silero через curl: {err}")
+
+
+def download(base: Path, progress=None, cancel: threading.Event | None = None, fresh: bool = False) -> Path:
+    """Скачивает модель с докачкой. progress(done, total, stage). Бросает Cancelled при отмене.
+    fresh=True — «обновить»: качает свежую копию рядом и заменяет старую только после успеха (старый голос не пропадёт, если что-то пошло не так)."""
     prog = progress or (lambda *a: None)
     cancel = cancel or threading.Event()
     dest = model_path(base)
-    part = dest.with_name(dest.name + ".part")
+    part = dest.with_name(dest.name + (".new" if fresh else ".part"))
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if fresh:
+        part.unlink(missing_ok=True)
     have = part.stat().st_size if part.exists() else 0
     prog(have, 0, "search")
     req = urllib.request.Request(URL, headers={**UA, **({"Range": f"bytes={have}-"} if have else {})})
@@ -73,12 +118,20 @@ def download(base: Path, progress=None, cancel: threading.Event | None = None) -
             return dest
         raise RuntimeError(f"Сервер Silero ответил ошибкой {e.code}. Попробуйте позже.") from None
     except urllib.error.URLError as e:
-        if isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
-            raise RuntimeError(
-                "Не удалось проверить сертификат сервера Silero (просрочен или не принят системой). Проверьте дату и время на компьютере и обновите Windows. "
-                f"Если не помогло — скачайте файл {URL} в браузере и положите его сюда: {dest} (папка «Открыть папку с данными» → voices)."
-            ) from None
-        raise
+        if not isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
+            raise
+        try:                                 # Python не смог построить цепочку сертификатов — пробуем проверку средствами системы (curl.exe)
+            _download_curl(part, prog, cancel)
+        except Cancelled:
+            raise
+        except Exception as e2:
+            raise RuntimeError(_cert_message(dest) + f" ({e2})") from None
+        if not part.exists() or part.stat().st_size < 1_000_000:
+            raise RuntimeError(_cert_message(dest)) from None
+        part.replace(dest)
+        unload()
+        prog(1, 1, "done")
+        return dest
     with r:
         if have and getattr(r, "status", 200) != 206:
             have = 0                         # докачки нет — заново
@@ -99,6 +152,8 @@ def download(base: Path, progress=None, cancel: threading.Event | None = None) -
     if total and part.stat().st_size != total:
         raise RuntimeError("Загрузка оборвалась. Нажмите «Скачать» ещё раз — продолжу с того же места.")
     part.replace(dest)
+    if fresh:
+        unload()                             # следующая фраза уже пойдёт с новой моделью
     prog(total, total, "done")
     return dest
 

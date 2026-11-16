@@ -219,9 +219,11 @@ class Api:
         size = silero_voice.model_path(base).stat().st_size if silero_voice.is_ready(base) else 0
         return {"ready": silero_voice.is_ready(base), "size": size, "downloading": "silero" in self._downloads, "torch": silero_voice.torch_available(), "hint": silero_voice.torch_hint()}
 
-    def silero_download(self):
+    def silero_download(self, fresh=False):
+        """Скачать голос; fresh=True — обновить (скачать свежую копию и заменить имеющуюся)."""
         from . import silero_voice
-        if "silero" in self._downloads or silero_voice.is_ready(self.cfg.path.parent):
+        fresh = bool(fresh)
+        if "silero" in self._downloads or (silero_voice.is_ready(self.cfg.path.parent) and not fresh):
             return False
         cancel = threading.Event()
         self._downloads["silero"] = {"cancel": cancel}
@@ -229,7 +231,7 @@ class Api:
         def run():
             err = ""
             try:
-                silero_voice.download(self.cfg.path.parent, lambda d, t, st: self.emit({"type": "silero_dl", "done": d, "total": t, "stage": st}), cancel)
+                silero_voice.download(self.cfg.path.parent, lambda d, t, st: self.emit({"type": "silero_dl", "done": d, "total": t, "stage": st}), cancel, fresh=fresh)
             except silero_voice.Cancelled:
                 err = "cancelled"
             except Exception as e:

@@ -278,17 +278,51 @@ def parse_text(text: str) -> tuple[list[dict], list[str]]:
     return out, errs
 
 
+# Панели подписок (Marzban, Remnawave, 3x-ui…) отдают разное в зависимости от «User-Agent»: незнакомому клиенту — страницу сайта, ошибку или заглушку.
+# Поэтому пробуем несколько привычных клиентов; нужный список ссылок нужен именно в виде vless:// … (или base64 из них).
+SUB_AGENTS = ("v2rayN/6.45", "Hiddify/2.0.5", "Happ/2.0.0", "Streisand", "Bogestv0-KARINA")
+
+
+def _fetch(url: str, agent: str) -> tuple[int, str]:
+    req = urllib.request.Request(url, headers={"User-Agent": agent, "Accept": "*/*"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, r.read(2_000_000).decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, ""
+
+
 def fetch_subscription(url: str) -> str:
+    """Скачивает подписку и возвращает текст, в котором есть ссылки на серверы. Перебирает «User-Agent» разных клиентов; если ни один не подошёл — понятная причина."""
+    url = url.strip()
     if not re.match(r"^https?://", url, re.I):
         raise TunnelError("Адрес подписки должен начинаться с http:// или https://")
-    try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=20) as r:
-            body = r.read(2_000_000)
-    except urllib.error.HTTPError as e:
-        raise TunnelError(f"Сервер подписки ответил ошибкой {e.code}.") from None
-    except (urllib.error.URLError, OSError) as e:
-        raise TunnelError(f"Не удалось скачать подписку: {getattr(e, 'reason', e)}") from None
-    return body.decode("utf-8", "replace")
+    last = ""
+    net_err = None
+    for agent in SUB_AGENTS:
+        try:
+            code, body = _fetch(url, agent)
+        except (urllib.error.URLError, OSError) as e:
+            net_err = e
+            continue
+        if code >= 400:
+            last = f"сервер ответил ошибкой {code}"
+            continue
+        found, _ = parse_text(body)
+        if found:
+            return body
+        head = re.sub(r"\s+", " ", body).strip()[:60]
+        if body.lstrip().startswith("{") or body.lstrip().startswith("["):
+            last = "сервер отдал настройки в формате JSON, а не список ссылок (vless://…): включите в панели подписки обычный (base64) формат"
+        elif re.search(r"<html|<!doctype", body[:300], re.I):
+            last = "по этому адресу открывается веб-страница, а не список серверов: проверьте, что ссылка скопирована целиком"
+        elif not body.strip():
+            last = "сервер вернул пустой ответ (возможно, срок подписки истёк или в ней нет серверов)"
+        else:
+            last = f"в ответе нет ссылок на серверы (начало ответа: «{head}»)"
+    if not last and net_err is not None:
+        raise TunnelError(f"Не удалось скачать подписку: {getattr(net_err, 'reason', net_err)}")
+    raise TunnelError(f"Подписка не подошла: {last or 'нет ответа'}.")
 
 
 # ====================================================================== настройки sing-box
