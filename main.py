@@ -281,7 +281,7 @@ def selftest() -> int:
     timer.daemon = True
     timer.start()
     bad = []
-    for m in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "sounddevice", "numpy", "rapidfuzz", "edge_tts",
+    for m in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "sounddevice", "numpy", "rapidfuzz",
               "pyautogui", "pyperclip", "PIL", "webview", "comtypes", "pycaw.pycaw", "docx", "openpyxl", "reportlab", "lxml", "torch", "torch.package"):
         step["now"] = "импорт " + m
         logf.write(step["now"] + "\n")
@@ -290,7 +290,7 @@ def selftest() -> int:
         except BaseException:
             bad.append(m + ": " + traceback.format_exc().strip().splitlines()[-1])
             logf.write("  ОШИБКА: " + bad[-1] + "\n")
-    for m in ("pystray", "piper"):          # необязательные: без них нет трея / офлайн-голоса, но Карина работает
+    for m in ("pystray",):          # необязательные: без них нет значка в трее, но Карина работает
         step["now"] = "импорт (необязательный) " + m
         logf.write(step["now"] + "\n")
         try:

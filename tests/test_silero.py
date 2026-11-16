@@ -12,7 +12,7 @@ from karina.config import Config
 class FakeModel:
     def __init__(self, fail_ssml=False):
         self.calls, self.fail_ssml = [], fail_ssml
-    def apply_tts(self, text=None, ssml_text=None, speaker="xenia", sample_rate=48000, **kw):
+    def apply_tts(self, text=None, ssml_text=None, speaker="baya", sample_rate=48000, **kw):
         if ssml_text and self.fail_ssml:
             raise ValueError("ssml не поддерживается")
         self.calls.append((text, ssml_text, speaker, sample_rate))
@@ -43,10 +43,10 @@ class T(unittest.TestCase):
 
     def test_rate_uses_ssml_and_falls_back(self):
         out = str(self.tmp / "o.wav")
-        sv.synth_wav(self.tmp, "Тест & <проверка>", out, "xenia", 3)
+        sv.synth_wav(self.tmp, "Тест & <проверка>", out, "baya", 3)
         self.assertIn('rate="fast"', self.model.calls[0][1]); self.assertIn("&amp;", self.model.calls[0][1])
         self.model.fail_ssml = True; self.model.calls.clear()
-        sv.synth_wav(self.tmp, "Тест", out, "xenia", -5)
+        sv.synth_wav(self.tmp, "Тест", out, "baya", -5)
         self.assertEqual(self.model.calls[0][0], "Тест")
 
     def test_long_text_is_chunked(self):
@@ -57,52 +57,32 @@ class T(unittest.TestCase):
 
     def test_unknown_speaker_defaults(self):
         sv.synth_wav(self.tmp, "Тест", str(self.tmp / "o.wav"), "nobody")
-        self.assertEqual(self.model.calls[0][2], "xenia")
+        self.assertEqual(self.model.calls[0][2], "baya")
 
-    def test_speaker_selected_and_played(self):
-        self.cfg.data["tts"]["voice"] = "silero_aidar"
+    def test_karina_is_baya_and_played(self):
         sp = tts.Speaker(self.cfg)
         played = []
-        with mock.patch.object(sp, "_play", lambda path: played.append(path)), mock.patch.object(net, "is_online", lambda: True), \
-             mock.patch.object(sp, "_edge", side_effect=AssertionError("онлайн-голос не должен вызываться")):
+        with mock.patch.object(sp, "_play", lambda path: played.append(path)), mock.patch.object(sp, "_sapi", side_effect=AssertionError("системный голос не нужен")):
             sp.speak("Готово.")
         self.assertEqual(sp.engine_used, "silero")
-        self.assertEqual(self.model.calls[0][2], "aidar")
+        self.assertEqual(self.model.calls[0][2], "baya")
         self.assertEqual(len(played), 1)
 
-    def test_not_downloaded_falls_back(self):
+    def test_not_downloaded_falls_back_to_system(self):
         sv.model_path(self.tmp).unlink()
-        self.cfg.data["tts"]["voice"] = "silero_xenia"
         sp = tts.Speaker(self.cfg)
-        edge = []
-        with mock.patch.object(net, "is_online", lambda: True), mock.patch.object(sp, "_edge", lambda text, vid: edge.append(vid)):
+        with mock.patch.object(sp, "_sapi") as sapi:
             sp.speak("Готово.")
-        self.assertEqual(edge, ["svetlana_cute"])             # не silero-id, а обычный голос Microsoft
+        sapi.assert_called_once()
         self.assertIn("не скачан", sp.warning)
 
     def test_no_torch_message(self):
         self.pt[1].stop()
-        self.cfg.data["tts"]["voice"] = "silero_xenia"
         sp = tts.Speaker(self.cfg)
-        with mock.patch.object(sv, "torch_available", lambda: False), mock.patch.object(net, "is_online", lambda: False), mock.patch.object(sp, "_offline"):
+        with mock.patch.object(sv, "torch_available", lambda: False), mock.patch.object(sp, "_sapi"):
             sp.speak("Готово.")
         self.assertIn("torch", sp.warning)
         self.pt[1].start()
-
-    def test_online_only_ignores_silero(self):
-        self.cfg.data["tts"].update(voice="silero_xenia", engine="online")
-        sp = tts.Speaker(self.cfg)
-        edge = []
-        with mock.patch.object(net, "is_online", lambda: True), mock.patch.object(sp, "_edge", lambda text, vid: edge.append(vid)):
-            sp.speak("Готово.")
-        self.assertEqual(edge, ["svetlana_cute"])
-
-    def test_all_voice_ids_valid(self):
-        for vid, v in tts.VOICES.items():
-            self.assertTrue(v["label"] and v["voice"], vid)
-            if v.get("engine") == "silero":
-                self.assertIn(v["speaker"], sv.SPEAKERS)
-            tts.voice_params({"voice": vid, "rate": 0})
 
 
 if __name__ == "__main__":

@@ -428,44 +428,12 @@
       <div class="eyebrow">Голос</div>
       <div class="form">
         <label class="switch"><input type="checkbox" name="tts_enabled"><span class="sw"></span><span>Отвечать голосом</span></label>
-        <label>Голос Карины
-          <select name="voice">
-            <option value="svetlana_cute">Светлана — милая (тонкий, живой)</option>
-            <option value="dariya_soft">Дария — мягкая (ровный, естественный)</option>
-            <option value="ava_calm">Ava — спокойная героиня (мягкий, ниже)</option>
-            <option value="dmitry">Дмитрий — мужской (Microsoft)</option>
-            <optgroup label="Silero — локально, без интернета, естественнее всего (нужно скачать)">
-              <option value="silero_xenia">Ксения — Silero (очень естественный)</option>
-              <option value="silero_kseniya">Ксения-2 — Silero (мягче)</option>
-              <option value="silero_baya">Байя — Silero (живая)</option>
-              <option value="silero_aidar">Айдар — Silero (мужской)</option>
-              <option value="silero_eugene">Евгений — Silero (мужской)</option>
-            </optgroup>
-          </select>
-        </label>
+        <p class="muted small" style="margin:0">Голос Карины — живой нейросетевой голос (Silero «Байя»). Он единственный.</p>
         <div class="note" id="silBox">
           <span id="silStatus" class="muted small"></span>
           <div class="row" style="margin-top:8px"><button type="button" class="btn" id="silDl">Скачать голос Silero</button><button type="button" class="btn danger" id="silDel" hidden>Удалить</button></div>
           <div class="pbar" id="silBar" hidden><i></i></div>
-          <p class="muted small" style="margin:8px 0 0">Работает на вашем компьютере, не роботизированный. Нужен пакет <b>torch</b> (один раз: <code>pip install torch</code>), поэтому работает при запуске из исходников (run.bat), а не в установленной exe-версии. Лицензия модели — для личного некоммерческого использования.</p>
-        </div>
-        <label>Источник голоса
-          <select name="engine">
-            <option value="auto">Автоматически: онлайн-голос, а без интернета — системный</option>
-            <option value="online">Только онлайн-голос (Microsoft)</option>
-            <option value="offline">Только офлайн-голос (без интернета)</option>
-          </select>
-        </label>
-        <label>Офлайн-голос (когда нет интернета)
-          <select name="offline">
-            <option value="auto">Нейросетевая «Ирина», если скачана, иначе системный голос</option>
-            <option value="system">Системный голос Windows</option>
-          </select>
-        </label>
-        <div class="note" id="offBox">
-          <span id="offStatus" class="muted small"></span>
-          <div class="row" style="margin-top:8px"><button type="button" class="btn" id="offDl">Скачать офлайн-голос (≈60 МБ)</button><button type="button" class="btn danger" id="offDel" hidden>Удалить</button></div>
-          <div class="pbar" id="offBar" hidden><i></i></div>
+          <p class="muted small" style="margin:8px 0 0">Работает на вашем компьютере, не роботизированный. Пакет <b>torch</b> ставится вместе с Кариной. Лицензия модели — для личного некоммерческого использования.</p>
         </div>
         <label>Скорость речи <output id="outRate"></output><input type="range" name="rate" min="-5" max="5" step="1"></label>
         <label>Поисковик
@@ -538,6 +506,33 @@
       <div class="form">
         <label class="switch"><input type="checkbox" name="persona_rude"><span class="sw"></span><span>Дерзкая Карина 18+: злится, ругается матом, шутит пошло (только в обычном чате)</span></label>
         <div class="note">Работает в чате и в простых ответах («как дела», «кто ты»). Код, файлы и команды остаются нейтральными. Насколько хорошо получится — зависит от выбранной модели.</div>
+      </div>
+    </div>
+    <div class="card" id="tnCard">
+      <div class="eyebrow">VPN и прокси</div>
+      <p class="muted small">«Карина, включи впн», «включи прокси», «включи впн только для хрома», «выключи впн», «смени сервер». Перед включением Карина спросит «да или нет». Работает на движке sing-box: он скачивается один раз и запускается Кариной сама.</p>
+      <div class="form">
+        <div class="note" id="tnEngine"></div>
+        <div class="row"><button type="button" class="btn" id="tnDl">Скачать движок</button><button type="button" class="btn danger" id="tnDel" hidden>Удалить движок</button></div>
+        <div class="pbar" id="tnBar" hidden><i></i></div>
+        <label>Ссылки на серверы (vless://, vmess://, trojan://, ss://, hysteria2://) или адрес подписки
+          <textarea id="tnText" rows="3" placeholder="vless://…  или  https://адрес-подписки" spellcheck="false" autocomplete="off"></textarea></label>
+        <div class="row"><button type="button" class="btn" id="tnAdd">Добавить</button><button type="button" class="btn" id="tnRefresh" hidden>Обновить подписку</button></div>
+        <label>Сервер
+          <select id="tnServer"></select></label>
+        <div class="row"><button type="button" class="btn danger" id="tnRemove">Убрать этот сервер</button><button type="button" class="btn danger" id="tnClear">Убрать все</button></div>
+        <label>Как работает
+          <select id="tnMode"><option value="vpn">VPN (весь трафик через виртуальный адаптер, нужны права администратора)</option><option value="proxy">Прокси (системный прокси Windows, без прав администратора)</option></select></label>
+        <label>Куда
+          <select id="tnScope"><option value="all">Весь компьютер</option><option value="apps">Только выбранные приложения (всегда через VPN, нужны права администратора)</option></select></label>
+        <label>Приложения (имена exe через запятую, например chrome.exe, Discord.exe)
+          <input type="text" id="tnApps" placeholder="chrome.exe, Discord.exe" spellcheck="false" autocomplete="off"></label>
+        <label class="switch"><input type="checkbox" id="tnConfirm"><span class="sw"></span><span>Переспрашивать «да или нет» перед включением голосом</span></label>
+        <label class="switch"><input type="checkbox" id="tnDirectRu"><span class="sw"></span><span>Сайты .ru, .su и .рф открывать напрямую, мимо сервера</span></label>
+        <div class="row"><button type="button" class="btn" id="tnStart">Включить</button><button type="button" class="btn" id="tnStop">Выключить</button></div>
+        <div class="note" id="tnStatus"></div>
+        <div class="note" id="tnMsg" hidden></div>
+        <p class="muted small">Ссылки с паролями хранятся только в настройках Карины на этом компьютере, в окне показаны одни названия. Для режима VPN включите в разделе «Окно и оформление» запуск от имени администратора.</p>
       </div>
     </div>
     <div class="card">

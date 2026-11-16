@@ -55,7 +55,7 @@
     $('#kvNet').textContent = st.online ? 'есть' : 'нет — работаю автономно';
     const names = { tiny: 'минимальная', base: 'базовая', small: 'хорошая', medium: 'высокая' };
     $('#kvStt').textContent = (names[st.model] || st.model) + ' · офлайн';
-    $('#kvVoice').textContent = st.voice === 'online' ? 'онлайн (нейросеть)' : st.voice === 'silero' ? 'локально (нейросеть Silero)' : st.voice === 'piper' ? 'офлайн (нейросеть «Ирина»)' : st.voice === 'offline' ? 'системный (офлайн)' : st.online ? 'онлайн' : 'системный';
+    $('#kvVoice').textContent = st.voice === 'silero' ? 'Карина (нейросеть, локально)' : 'системный (пока не скачан голос Карины)';
     $('#kvMics').textContent = st.mics_text || '—'; renderMicStatus(st.mics);
     const w = $('#ttsWarn'); w.hidden = !st.tts_warning; w.textContent = st.tts_warning || '';
     const p = $('#pluginWarn'); p.hidden = !(st.plugin_errors && st.plugin_errors.length); p.textContent = (st.plugin_errors || []).join('\n');
@@ -163,11 +163,11 @@
       else if (ev.type === 'search_test') { const b = $('#searchTest'); b.hidden = false; b.textContent = ev.lines.join('\n'); flash($('#searchMsg'), ev.ok ? 'Поиск работает' : 'Поиск не работает', !ev.ok); }
       else if (ev.type === 'cloud_test') { const r = $(`.cloud-row[data-pid="${ev.pid}"]`); if (r) { const o = $('.note', r); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Работает (${ev.sec} с): ${ev.text}` : ev.text; $$('button', r).forEach(b => b.disabled = false); } loadCloud(); loadBrain(); }
       else if (ev.type === 'brain_test') { const o = $('#brainTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Claude отвечает: «${ev.text}» (${ev.sec} с)` : ev.text; $('#brainTest').disabled = false; }
-      else if (ev.type === 'voice_dl') voiceDlProgress(ev);
-      else if (ev.type === 'voice_dl_done') voiceDlDone(ev);
       else if (ev.type === 'google_done') googleDone(ev);
       else if (ev.type === 'silero_dl') silProgress(ev);
       else if (ev.type === 'silero_dl_done') silDone(ev);
+      else if (ev.type === 'tunnel_dl') tnProgress(ev);
+      else if (ev.type === 'tunnel_dl_done') tnDlDone(ev);
       else if (ev.type === 'model_progress') modelProgress(ev);
       else if (ev.type === 'model_done') { if (ev.error && ev.error !== 'cancelled') flash($('#mdMsg'), ev.error, true); loadModels(); }
       else if (ev.type === 'engine') renderEngine(ev);
@@ -984,24 +984,7 @@
     if (r && r.ok) { f.reset(); flash($('#appMsg'), 'Добавлено'); loadApps(); } else flash($('#appMsg'), (r && r.error) || 'Ошибка', true);
   });
 
-  // ---------- офлайн-голос ----------
   const fmtMb = b => Math.round(b / 2 ** 20) + ' МБ';
-  function voiceOfflineView(st) {
-    $('#offStatus').textContent = st.downloading ? 'Скачиваю…' : st.ready ? `Скачан (${fmtMb(st.size)}). Без интернета Карина говорит им.` : 'Не скачан: без интернета будет говорить системный голос Windows.';
-    $('#offDl').hidden = st.ready; $('#offDl').disabled = !!st.downloading; $('#offDel').hidden = !st.ready;
-    if (!st.downloading) $('#offBar').hidden = true;
-  }
-  async function loadVoiceOffline() { const st = await call('voice_offline_status'); if (st) voiceOfflineView(st); }
-  function voiceDlProgress(ev) {
-    const pb = $('#offBar'); pb.hidden = false; $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%';
-    $('#offStatus').textContent = ev.stage === 'verify' ? 'Проверяю файл…' : ev.total ? `Скачано ${fmtMb(ev.done)} из ${fmtMb(ev.total)}` : 'Ищу голос…';
-  }
-  function voiceDlDone(ev) {
-    if (ev.error && ev.error !== 'cancelled') flash($('#setMsg'), ev.error, true);
-    loadVoiceOffline();
-  }
-  $('#offDl').onclick = async () => { $('#offDl').disabled = true; $('#offStatus').textContent = 'Ищу голос…'; if (!(await call('voice_offline_download'))) loadVoiceOffline(); };
-  $('#offDel').onclick = async () => { const st = await call('voice_offline_delete'); if (st) voiceOfflineView(st); };
 
   // ---------- профиль ----------
   let kinds = {};
@@ -1055,6 +1038,53 @@
   function silDone(ev) { if (ev.error && ev.error !== 'cancelled') flash($('#setMsg'), ev.error, true); loadSil(); }
   $('#silDl').onclick = async () => { $('#silDl').disabled = true; $('#silStatus').textContent = 'Подключаюсь…'; if (!(await call('silero_download'))) loadSil(); };
   $('#silDel').onclick = async () => { const st = await call('silero_delete'); if (st) silView(st); };
+
+  // ---------- свой VPN и прокси ----------
+  let tnSt = null;
+  const tnMsg = (t, bad) => { const o = $('#tnMsg'); o.hidden = !t; o.className = 'note' + (bad ? ' bad' : ''); o.textContent = t || ''; };
+  function tnView(st) {
+    if (!st) return; tnSt = st;
+    const eng = $('#tnEngine');
+    eng.className = 'note' + (st.win ? '' : ' bad');
+    eng.textContent = !st.win ? 'Встроенный VPN работает только в Windows.' : st.downloading ? 'Скачиваю движок…' : st.engine ? `Движок sing-box ${st.version} установлен.` : 'Движок ещё не скачан. Нажмите «Скачать движок» (около 12 МБ, один раз).';
+    $('#tnDl').hidden = st.engine || !st.win; $('#tnDl').disabled = !!st.downloading; $('#tnDel').hidden = !st.engine;
+    if (!st.downloading) $('#tnBar').hidden = true;
+    const sel = $('#tnServer'); sel.innerHTML = '';
+    st.servers.forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = `${s.name} (${s.kind})`; sel.appendChild(o); });
+    if (!st.servers.length) { const o = document.createElement('option'); o.textContent = 'Серверов нет: добавьте ссылку выше'; o.value = ''; sel.appendChild(o); }
+    sel.value = st.active; sel.disabled = !st.servers.length;
+    $('#tnMode').value = st.mode; $('#tnScope').value = st.scope; $('#tnApps').value = (st.apps || []).join(', ');
+    $('#tnApps').disabled = st.scope !== 'apps'; $('#tnMode').disabled = st.scope === 'apps';
+    $('#tnConfirm').checked = !!st.confirm; $('#tnDirectRu').checked = !!st.direct_ru;
+    $('#tnRefresh').hidden = !st.has_sub; $('#tnRemove').disabled = $('#tnClear').disabled = !st.servers.length;
+    const run = st.status && st.status.running;
+    $('#tnStart').disabled = !st.servers.length || !st.engine || !st.win; $('#tnStart').textContent = run ? 'Перезапустить' : 'Включить'; $('#tnStop').disabled = !run;
+    $('#tnStatus').className = 'note' + (run ? ' ok' : ''); $('#tnStatus').textContent = st.text + ((!st.admin && (st.mode === 'vpn' || st.scope === 'apps')) ? ' Для режима VPN Карина должна быть запущена от имени администратора.' : '');
+  }
+  async function loadTunnel() { tnView(await call('tunnel_state')); }
+  const tnReply = r => { if (!r) return; if (r.state) tnView(r.state); tnMsg(r.ok ? '' : r.error, !r.ok); return r; };
+  async function tnSave() {
+    tnReply(await call('tunnel_set', { active: $('#tnServer').value, mode: $('#tnMode').value, scope: $('#tnScope').value, apps: $('#tnApps').value, confirm: $('#tnConfirm').checked, direct_ru: $('#tnDirectRu').checked }));
+  }
+  ['tnServer', 'tnMode', 'tnScope', 'tnConfirm', 'tnDirectRu'].forEach(id => $('#' + id).addEventListener('change', tnSave));
+  $('#tnApps').addEventListener('change', tnSave);
+  $('#tnAdd').onclick = async () => {
+    $('#tnAdd').disabled = true; tnMsg('Добавляю…');
+    const r = tnReply(await call('tunnel_add', $('#tnText').value)); $('#tnAdd').disabled = false;
+    if (r && r.ok) { $('#tnText').value = ''; tnMsg(`Добавлено серверов: ${r.result.added}.` + (r.result.errors.length ? ` Не поняла ссылок: ${r.result.errors.length}.` : '')); }
+  };
+  $('#tnRefresh').onclick = async () => { tnMsg('Обновляю…'); const r = tnReply(await call('tunnel_refresh')); if (r && r.ok) tnMsg(`Серверов в подписке: ${r.result.added}.`); };
+  $('#tnRemove').onclick = async () => tnReply(await call('tunnel_remove', $('#tnServer').value));
+  $('#tnClear').onclick = async () => { if (confirm('Убрать все серверы и выключить VPN?')) tnReply(await call('tunnel_clear')); };
+  $('#tnStart').onclick = async () => { $('#tnStart').disabled = true; tnMsg('Запускаю…'); const r = tnReply(await call('tunnel_start')); if (r && r.ok) tnMsg(''); };
+  $('#tnStop').onclick = async () => tnReply(await call('tunnel_stop'));
+  $('#tnDl').onclick = async () => { $('#tnDl').disabled = true; $('#tnEngine').textContent = 'Подключаюсь…'; if (!(await call('tunnel_download'))) loadTunnel(); };
+  $('#tnDel').onclick = async () => { const st = await call('tunnel_engine_delete'); if (st) tnView(st); };
+  function tnProgress(ev) {
+    const pb = $('#tnBar'); pb.hidden = false; $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%';
+    $('#tnEngine').textContent = ev.total ? `Скачано ${fmtMb(ev.done)} из ${fmtMb(ev.total)}` : 'Подключаюсь…';
+  }
+  function tnDlDone(ev) { if (ev.error && ev.error !== 'cancelled') tnMsg(ev.error, true); loadTunnel(); }
 
   // ---------- микшер и VPN ----------
   async function loadVpnStatus() {
@@ -1168,10 +1198,10 @@
     f.name.value = c.name; f.aliases.value = (c.name_aliases || []).join(', ');
     f.wake_required.checked = !!c.wake_required; f.followup_seconds.value = c.followup_seconds;
     f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold; f.assist.value = c.stt.assist || 'smart';
-    f.tts_enabled.checked = !!c.tts.enabled; f.engine.value = c.tts.engine; f.voice.value = c.tts.voice || 'svetlana_cute'; f.offline.value = c.tts.offline || 'auto'; f.background.checked = (c.ui || {}).background !== false; loadVoiceOffline(); loadSil(); f.rate.value = c.tts.rate;
+    f.tts_enabled.checked = !!c.tts.enabled; f.background.checked = (c.ui || {}).background !== false; loadSil(); f.rate.value = c.tts.rate;
     const mx = c.mixer || {}, vp = c.vpn || {};
     f.mixer_enabled.checked = mx.enabled !== false; f.mixer_prefer.checked = !!mx.prefer; f.mixer_pin.value = mx.pin || ''; f.mixer_port.value = mx.port || 0; f.mixer_step.value = mx.step_db || 3; f.vpn_enabled.checked = vp.enabled !== false; loadVpnStatus();
-    f.persona_rude.checked = !!(c.persona || {}).rude; f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
+    f.persona_rude.checked = !!(c.persona || {}).rude; loadTunnel(); f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
     f.search_mode.value = (c.search || {}).mode || 'auto'; f.search_depth.value = (c.search || {}).depth || 'normal'; showWeb();
     $('#apiKey').placeholder = c.llm.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : 'sk-ant-…';
     buildMics(slotsFromCfg(c));
@@ -1195,7 +1225,7 @@
       name_aliases: f.aliases.value.split(',').map(s => s.trim()).filter(Boolean),
       wake_required: f.wake_required.checked, followup_seconds: Number(f.followup_seconds.value),
       stt: { model: f.model.value, mics, assist: f.assist.value, vad_threshold: Number(f.vad_threshold.value) },
-      tts: { enabled: f.tts_enabled.checked, engine: f.engine.value, voice: f.voice.value, offline: f.offline.value, rate: Number(f.rate.value) },
+      tts: { enabled: f.tts_enabled.checked, voice: 'karina', rate: Number(f.rate.value) },
       search: { mode: f.search_mode.value, depth: f.search_depth.value },
       mixer: { enabled: f.mixer_enabled.checked, prefer: f.mixer_prefer.checked, pin: f.mixer_pin.value.trim(), port: Number(f.mixer_port.value) || 0, step_db: Number(f.mixer_step.value) },
       vpn: { enabled: f.vpn_enabled.checked },

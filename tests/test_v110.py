@@ -219,33 +219,22 @@ class SileroAuto(unittest.TestCase):
             a._voice_setup()
         return pre, ens
 
-    def test_old_default_voice_is_switched_once_and_model_downloaded(self):
-        a = self.make(voice="svetlana_cute", silero_migrated=False)
+    def test_voice_is_karina_and_model_downloaded_when_missing(self):
+        a = self.make(voice="karina")
         pre, ens = self.run_setup(a)
-        self.assertEqual(a.cfg["tts"]["voice"], "silero_xenia")
-        self.assertTrue(a.cfg["tts"]["silero_migrated"])
+        self.assertEqual(a.cfg["tts"]["voice"], "karina")
         ens.assert_called_once()
 
-    def test_voice_chosen_by_user_is_kept(self):
-        a = self.make(voice="dmitry", silero_migrated=False)
-        self.run_setup(a)
-        self.assertEqual(a.cfg["tts"]["voice"], "dmitry")
-        a2 = self.make(voice="svetlana_cute", silero_migrated=True)       # уже переключали, человек вернул Светлану — не трогаем
-        pre, ens = self.run_setup(a2)
-        self.assertEqual(a2.cfg["tts"]["voice"], "svetlana_cute")
-        ens.assert_not_called()
-
     def test_no_torch_or_disabled_does_nothing(self):
-        a = self.make(voice="svetlana_cute", silero_migrated=False)
+        a = self.make(voice="karina")
         pre, ens = self.run_setup(a, torch=False)
-        self.assertEqual(a.cfg["tts"]["voice"], "svetlana_cute")
         ens.assert_not_called()
-        b = self.make(voice="svetlana_cute", silero_migrated=False, auto_silero=False)
+        b = self.make(voice="karina", auto_silero=False)
         pre, ens = self.run_setup(b)
         ens.assert_not_called()
 
     def test_ready_model_is_only_preloaded(self):
-        a = self.make(voice="silero_xenia", silero_migrated=True)
+        a = self.make(voice="karina")
         pre, ens = self.run_setup(a, ready=True)
         pre.assert_called_once()
         ens.assert_not_called()
