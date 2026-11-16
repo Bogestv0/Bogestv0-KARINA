@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from karina import actions, winutil
+from karina import actions, music, winutil  # noqa: F401  (music регистрирует «включи музыку»)
 from karina.actions import Ctx, dispatch
 from karina.apps import AppIndex
 from karina.config import Config
@@ -15,7 +15,9 @@ from karina.wake import split_wake
 class FakeAssistant:
     sleeping = False
     pending = None
+    choice = None
     def ask_confirm(self, a): self.pending = a
+    def ask_choice(self, h): self.choice = h
 
 
 def make(tmp):
@@ -86,7 +88,11 @@ class T(unittest.TestCase):
         self.assertFalse(self.say("громкость тихо")[0] and "Громкость" in self.say("громкость тихо")[1])
 
     def test_media_before_open(self):
-        self.say("включи музыку"); self.assertEqual(self.pressed[-1][0], "play"); self.assertFalse(self.started)
+        # «включи музыку» — это не «открыть программу»: приложение ещё не выбрано, поэтому Карина его спрашивает, ничего не запуская
+        ok, reply = self.say("включи музыку")
+        self.assertTrue(ok); self.assertIn("В каком приложении", reply); self.assertFalse(self.started)
+        self.say("пауза"); self.assertEqual(self.pressed[-1][0], "play")
+        self.say("переключи"); self.assertEqual(self.pressed[-1][0], "next")
 
     def test_time_date(self):
         self.assertIn("Сейчас", self.say("который час")[1]); self.assertIn("Сегодня", self.say("какое сегодня число")[1])
@@ -101,7 +107,9 @@ class T(unittest.TestCase):
 
     def test_search(self):
         with mock.patch("karina.net.is_online", lambda *a: True):
-            self.say("Карина, найди в интернете погода в красноярске")
+            ok, reply = self.say("Карина, найди в интернете погода в красноярске")
+        self.assertIn("Искать в интернете", reply); self.assertFalse(self.started)         # сперва спрашивает
+        self.fa.pending()                                                                    # человек сказал «да»
         self.assertIn("google.com/search?q=", self.started[-1])
         with mock.patch("karina.net.is_online", lambda *a: False):
             self.assertIn("Нет интернета", self.say("найди кошек")[1])

@@ -50,10 +50,12 @@ class T(unittest.TestCase):
         return r, eng, steps, calls
 
     def test_intents(self):
-        for t in ("найди и напиши отчет про байкал", "какие сегодня новости", "поищи рецепт", "курс доллара", "что нового в python"):
+        for t in ("найди и напиши отчет про байкал", "найди в интернете новости", "поищи рецепт", "загугли курс доллара", "что нового в интернете про python"):
             self.assertTrue(research.wants_search(t), t)
-        for t in ("объясни что такое vulkan", "переведи на английский", "составь план тренировок"):
+        # обычные слова («сегодня», «курс», «что нового») поиском больше не считаются: интернет только по явной просьбе
+        for t in ("объясни что такое vulkan", "переведи на английский", "составь план тренировок", "какие сегодня новости", "курс доллара", "как дела сейчас", "что нового в python"):
             self.assertFalse(research.wants_search(t), t)
+        self.assertTrue(research.wants_search("какие сегодня новости", loose=True))
 
     def test_collect_reads_budget_and_dedups_queries(self):
         r, eng, steps, calls = self.make("quick")
