@@ -849,6 +849,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     const rs = await call('rec_status'); if (rs && rs.on) { rec.on = true; rec.t0 = rs.t0; paintRec(); render(); }
     const m = await call('media_get'); if (m && m.status !== 'none') { info.media = m; if (m.status === 'playing') info.lastPlay = Date.now(); render(); }
   }
+  // сторожок отрисовки: если браузер перестал выдавать кадры (окно «чёрное»), просим Python перерисовать окно
+  let lastFrame = performance.now();
+  (function frame() { lastFrame = performance.now(); requestAnimationFrame(frame); })();
+  setInterval(() => {
+    if (!api || !api.repaint) return;
+    if (document.visibilityState === 'hidden' || performance.now() - lastFrame > 1500) api.repaint().catch(() => {});
+  }, 2000);
+
   applyLook(); fillRange(); render();
   if (window.pywebview && window.pywebview.api) init(); else window.addEventListener('pywebviewready', init);
 })();

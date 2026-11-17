@@ -250,6 +250,16 @@ def run_gui(cfg):
             trace(f"жив ({i * 2} с), потоков: {threading.active_count()}")
     threading.Thread(target=heartbeat, daemon=True, name="heartbeat").start()
     trace("Окно создано, запускаю")
+    # WebView2 (Chromium) перестаёт рисовать окно, которое считает закрытым другим окном или спрятанным: остров (маленькое окно
+    # с подложкой под ним) из-за этого оставался чёрным. Отключаем эту проверку для всех окон приложения.
+    try:
+        import os
+        _flags = "--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
+        _cur = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+        if "CalculateNativeWinOcclusion" not in _cur:
+            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (_cur + " " + _flags).strip()
+    except Exception:
+        pass
     trace("webview.start: вход")
     # icon не передаём на Windows: окно принимает только .ico, а PNG даёт System.ArgumentException в Icon.Initialize
     # и роняет весь процесс (код 0xE0434352). Значок окна и так берётся из exe (build/karina.spec: icon=logo.ico).
