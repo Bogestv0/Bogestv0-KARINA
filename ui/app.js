@@ -148,7 +148,7 @@
       else if (ev.type === 'out_test') { flash($('#outMsg'), ev.error || 'Звук проигран', !!ev.error); $('#outTest').disabled = false; }
       else if (ev.type === 'winstate') setMaxed(ev.max);
       else if (ev.type === 'log') addLog(ev.kind, ev.text, ev.ts);
-      else if (ev.type === 'goto') { const b = $(`#tabs [data-tab="${ev.tab}"]`); if (b) b.click(); }
+      else if (ev.type === 'goto') { const b = $(`#tabs [data-tab="${ev.tab}"]`); if (b) b.click(); if (ev.focus === 'tnCard') openVpnSettings(); }
       else if (ev.type === 'chat_open') { chOpenId = ev.chat; const b = $('#tabs [data-tab="chat"]'); if (b) b.click(); }
       else if (ev.type === 'chat_start') chatStart(ev);
       else if (ev.type === 'chat_step') { if (ev.chat === chCur) setStep(ev.text); }
@@ -1060,8 +1060,54 @@
     $('#tnRefresh').hidden = !st.has_sub; $('#tnRemove').disabled = $('#tnClear').disabled = !st.servers.length;
     const run = st.status && st.status.running;
     $('#tnStart').disabled = !st.servers.length || !st.engine || !st.win; $('#tnStart').textContent = run ? 'Перезапустить' : 'Включить'; $('#tnStop').disabled = !run;
+    hvView(st);
     $('#tnStatus').className = 'note' + (run ? ' ok' : ''); $('#tnStatus').textContent = st.text + ((!st.admin && (st.mode === 'vpn' || st.scope === 'apps')) ? ' Для режима VPN Карина должна быть запущена от имени администратора.' : '');
   }
+  // ---------- VPN на главной ----------
+  let hvBusy = false;
+  function hvView(st) {
+    if (!st) return;
+    const run = !!(st.status && st.status.running), has = st.servers.length > 0;
+    const stEl = $('#hvState'); stEl.dataset.on = hvBusy ? 'busy' : run ? '1' : '0';
+    $('#hvTitle').textContent = hvBusy ? 'Подключаюсь…' : run ? 'VPN включён' : 'VPN выключен';
+    $('#hvSub').textContent = run ? st.text : has ? 'Сервер выбран, можно включать' : 'Серверов пока нет';
+    const sel = $('#hvServer');
+    if (document.activeElement !== sel) {
+      sel.innerHTML = '';
+      st.servers.forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = s.name; sel.appendChild(o); });
+      if (!has) { const o = document.createElement('option'); o.value = ''; o.textContent = 'Нет серверов'; sel.appendChild(o); }
+      sel.value = st.active;
+    }
+    sel.disabled = !has;
+    if (document.activeElement !== $('#hvScope')) $('#hvScope').value = st.scope;
+    $('#hvScope').disabled = !has;
+    const tg = $('#hvToggle'); tg.classList.toggle('on', run); tg.textContent = run ? 'Выключить VPN' : 'Включить VPN';
+    tg.disabled = hvBusy || !has || !st.win || (!run && !st.engine);
+    let note = '';
+    if (!st.win) note = 'Встроенный VPN работает только в Windows.';
+    else if (!has) note = 'Добавьте сервер или подписку в настройках VPN.';
+    else if (!st.engine) note = 'Движок VPN ещё не скачан: откройте настройки VPN и нажмите «Скачать движок».';
+    else if (st.scope === 'apps' && !(st.apps || []).length) note = 'Список приложений пуст. Скажите «Карина, добавь приложения в впн» или впишите их в настройках VPN.';
+    else if (!st.admin && (st.mode === 'vpn' || st.scope === 'apps')) note = 'Для режима VPN Карина должна быть запущена от имени администратора (Настройки → «Окно и оформление»).';
+    const n = $('#hvNote'); n.hidden = !note; n.className = 'note warn'; n.textContent = note;
+  }
+  async function hvLoad() { hvView(await call('tunnel_state')); }
+  function openVpnSettings() {
+    const b = $('#tabs [data-tab="settings"]'); if (b) b.click();
+    setTimeout(() => { const c = $('#tnCard'); if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'start' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1600); } }, 80);
+  }
+  $('#hvSettings').onclick = openVpnSettings;
+  $('#hvServer').addEventListener('change', async () => tnReply(await call('tunnel_set', { active: $('#hvServer').value })));
+  $('#hvScope').addEventListener('change', async () => tnReply(await call('tunnel_set', { scope: $('#hvScope').value })));
+  $('#hvToggle').onclick = async () => {
+    const run = tnSt && tnSt.status && tnSt.status.running;
+    hvBusy = true; $('#hvToggle').disabled = true; if (tnSt) hvView(tnSt);
+    const r = await call(run ? 'tunnel_stop' : 'tunnel_start');
+    hvBusy = false;
+    if (r && r.state) { tnView(r.state); }
+    const note = $('#hvNote');
+    if (r && !r.ok) { note.hidden = false; note.className = 'note bad'; note.textContent = r.error; } else hvLoad();
+  };
   async function loadTunnel() { tnView(await call('tunnel_state')); }
   const tnReply = r => { if (!r) return; if (r.state) tnView(r.state); tnMsg(r.ok ? '' : r.error, !r.ok); return r; };
   async function tnSave() {
@@ -1252,7 +1298,8 @@
     api = window.pywebview.api;
     await refresh(); loadBrain(); loadAdmin(); loadProfile();
     setTimeout(() => checkUpdate(false), 3000);
-    setInterval(async () => { const s = await call('get_status'); if (s) renderStatus(s); loadBrain(); }, 5000);
+    setInterval(async () => { const s = await call('get_status'); if (s) renderStatus(s); loadBrain(); if ($('#tab-home').classList.contains('on') && !hvBusy) hvLoad(); }, 5000);
+    hvLoad();
     let t = null; try { t = localStorage.getItem('karina.tab'); } catch (_) {}
     if (t) { const b = $(`#tabs [data-tab="${t}"]`); if (b) b.click(); }
   }

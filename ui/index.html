@@ -83,6 +83,22 @@
       <div class="note bad" id="pluginWarn" hidden></div>
     </div>
 
+    <div class="card vpn-card" id="hvCard">
+      <div class="vpn-head">
+        <div class="eyebrow">VPN</div>
+        <button class="link" id="hvSettings" type="button">Настройки VPN →</button>
+      </div>
+      <div class="vpn-body">
+        <div class="vpn-state" id="hvState" data-on="0"><i></i><div><b id="hvTitle">VPN выключен</b><span id="hvSub">—</span></div></div>
+        <label class="vpn-pick">Сервер
+          <select id="hvServer"></select></label>
+        <label class="vpn-pick">Куда
+          <select id="hvScope"><option value="all">Весь компьютер</option><option value="apps">Только выбранные приложения</option></select></label>
+        <button class="btn primary vpn-toggle" id="hvToggle" type="button">Включить VPN</button>
+      </div>
+      <div class="note" id="hvNote" hidden></div>
+    </div>
+
     <div class="card log-card">
       <div class="log-head"><div class="eyebrow">Разговор</div><button class="link" id="btnClear">Очистить</button></div>
       <div class="log" id="log"><div class="empty">Скажите «<span class="nm">Карина</span>, открой блокнот» или напишите команду ниже.</div></div>
@@ -510,7 +526,7 @@
     </div>
     <div class="card" id="tnCard">
       <div class="eyebrow">VPN и прокси</div>
-      <p class="muted small">«Карина, включи впн», «включи прокси», «включи впн только для хрома», «выключи впн», «смени сервер». Перед включением Карина спросит «да или нет». Работает на движке sing-box: он скачивается один раз и запускается Кариной сама.</p>
+      <p class="muted small">«Карина, включи впн», «включи прокси», «включи впн только для хрома», «выключи впн», «смени сервер». Перед включением Карина спросит «да или нет» и будет ждать ответ (можно «стоп»). Приложения можно добавить голосом: «добавь приложения в впн». Работает на движке sing-box: он скачивается один раз и запускается Кариной сама.</p>
       <div class="form">
         <div class="note" id="tnEngine"></div>
         <div class="row"><button type="button" class="btn" id="tnDl">Скачать движок</button><button type="button" class="btn danger" id="tnDel" hidden>Удалить движок</button></div>

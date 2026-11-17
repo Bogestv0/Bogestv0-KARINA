@@ -199,7 +199,7 @@ class Prefilter(unittest.TestCase):
         a.cfg.update({"stt": {"prefilter": True}})
         a.followup_until = time.time() + 5
         self.assertFalse(a._prefilter_reject(self.audio))
-        a.followup_until, a._pending = 0.0, (lambda: "да", time.time() + 5)
+        a.followup_until, a._pending = 0.0, {"action": lambda: "да", "on_no": None, "until": time.time() + 5, "tries": 0}
         self.assertFalse(a._prefilter_reject(self.audio))
         self.assertEqual(Config(Path(tempfile.mkdtemp()) / "x.json")["stt"]["prefilter"], False)
 

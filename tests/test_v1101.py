@@ -120,9 +120,9 @@ class InternetOnlyOnRequest(unittest.TestCase):
     def test_chat_search_waits_for_yes(self):
         a = self.make_assistant()
         a._to_chat("найди в интернете рецепт борща и расскажи")
-        self.assertIn("Искать в интернете", a.said[0])
+        self.assertIn("посмотрю в интернете", a.said[0])
         a.chat.send.assert_not_called()                              # пока не сказали «да» — ничего не ушло в интернет
-        action, _ = a._pending
+        action = a._pending["action"]
         self.assertEqual(action(), "Хорошо, поищу в интернете.")
         self.assertEqual(a.chat.send.call_args.kwargs["search"], True)
 
