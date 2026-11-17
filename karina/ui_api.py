@@ -18,6 +18,7 @@ class Api:
         self.uploads = Uploads()
         self._downloads: dict = {}
         self.frame = None               # FrameControl безрамочного окна (None — обычное окно с рамкой Windows)
+        self.island = None              # karina.island.Island (динамический остров), создаётся в main.run_gui
         self.quitting = False           # True — окну можно закрыться по-настоящему (выход из трея, обновление)
         self._events: queue.Queue = queue.Queue(maxsize=500)
         threading.Thread(target=self._emit_loop, daemon=True, name="karina-emit").start()
@@ -38,6 +39,12 @@ class Api:
         first = True
         while True:
             ev = self._events.get()
+            isl = self.island
+            if isl is not None:
+                try:
+                    isl.forward(ev)             # остров получает копию событий в своём потоке
+                except Exception:
+                    pass
             w = self._win()
             if not w:
                 continue
@@ -462,7 +469,12 @@ class Api:
             stt["mic_device"] = stt["mics"][0]["device"]          # старый ключ держим в согласии с первым микрофоном
         if "assist" in stt and stt["assist"] not in ("smart", "all", "best"):
             stt.pop("assist")
+        ui_p = patch.get("ui")
+        if isinstance(ui_p, dict) and "island" in ui_p:
+            ui_p["island"] = bool(ui_p["island"])
         self.cfg.update(patch)
+        if self.island is not None and isinstance(ui_p, dict) and "island" in ui_p:
+            threading.Thread(target=self.island.apply, args=(bool(ui_p["island"]),), daemon=True, name="karina-island-toggle").start()
         if bool(self.cfg["vpn"].get("enabled", True)) != old_vpn:
             self.assistant.vpn.stop()
             self.assistant.vpn.start()

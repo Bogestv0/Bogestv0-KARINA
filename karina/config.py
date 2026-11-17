@@ -20,8 +20,8 @@ DEFAULTS: dict = {
     "followup_seconds": 8,        # после имени слушаем без повторного обращения
     "followup_max_words": 10,     # в этом окне без имени принимаем только короткие фразы (команды); длинная речь из фона игнорируется
     "wake_tail_words": 7,         # имя в КОНЦЕ фразы («открой хром, Карина») считается обращением только в фразе до стольких слов
-    "ui": {"theme": "auto", "background": True, "frameless": True,
-           "admin": False, "admin_asked": False},   # admin: запускать Карину с правами администратора (через задачу планировщика)   # frameless: свой заголовок вместо рамки Windows   # background: закрытие окна сворачивает Карину в трей, а не выключает
+    "ui": {"theme": "auto", "background": True, "frameless": True, "island": False,
+           "admin": False, "admin_asked": False},   # admin: запускать Карину с правами администратора (через задачу планировщика)   # island: динамический остров у верхнего края экрана (karina/island.py)   # frameless: свой заголовок вместо рамки Windows   # background: закрытие окна сворачивает Карину в трей, а не выключает
     # mics — до 4 микрофонов сразу: {"enabled","device","name"} (пусто = старая настройка mic_device, слот 1);
     # assist — как микрофоны помогают друг другу: smart (лучший слушает, остальные помогают при плохом распознавании) | all (распознать со всех, выбрать лучшее) | best (только самый чистый)
     "stt": {"model": "small", "mic_device": None, "vad_threshold": 0.012, "mics": [], "assist": "smart",
@@ -39,6 +39,8 @@ DEFAULTS: dict = {
     "tts": {"enabled": True, "voice": "karina", "rate": 0, "auto_silero": True, "barge_in": True,
             "pronounce": {"discord": "дискорд", "vpn": "вэ пэ эн", "впн": "вэ пэ эн", "youtube": "ютуб", "steam": "стим", "telegram": "телеграм", "chrome": "хром",
                           "карина": "Кари́на", "карины": "Кари́ны", "карине": "Кари́не", "карину": "Кари́ну", "кариной": "Кари́ной"}},
+    # динамический остров (karina/island.py): character — logo|eyes|spark|bot|cat|blob|pixel; holiday — dates|always|off; garland — off|blink|wave
+    "island": {"character": "logo", "holiday": "dates", "snow": True, "garland": "off", "city": ""},
     "search_engine": "google",    # google | yandex
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-5-5"},
     # встроенные модели (llama.cpp): active — id выбранной модели; gpu: auto | cpu; ctx/threads: 0 = по умолчанию
