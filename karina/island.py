@@ -43,6 +43,39 @@ FORWARD_TYPES = ("state", "level", "log")      # какие события гл�
 DOCKS = tools.DOCKS
 
 
+# Атрибуты DWM, которые отключают всё, что Windows 11 рисует «от себя» вокруг окна (материал Mica/Acrylic, тень, рамка, скругление).
+# В тёмной теме именно этот системный фон (#202020) заливал весь прямоугольник окна острова, хотя регион уже был правильным.
+DWM_FLAT = ((2, 1, "NCRENDERING_POLICY=DISABLED"),          # DWMNCRP_DISABLED: без несущей рамки и тени
+            (20, 0, "USE_IMMERSIVE_DARK_MODE=0"),            # окно всегда «светлое» для DWM: тёмный фон системы не подставляется
+            (33, 1, "WINDOW_CORNER_PREFERENCE=DONOTROUND"),  # скругляет только наш регион
+            (34, 0xFFFFFFFE, "BORDER_COLOR=NONE"),           # DWMWA_COLOR_NONE: без цветной рамки
+            (38, 1, "SYSTEMBACKDROP_TYPE=NONE"),             # DWMSBT_NONE: без Mica/Acrylic
+            (1029, 0, "MICA_EFFECT=0"))                      # старый (до 22621) способ включить Mica
+
+
+def dwm_flat(h, trace=None) -> list:
+    """Выключает системные эффекты DWM у окна острова. Возвращает список (имя, HRESULT) для журнала. Безопасно вызывать много раз."""
+    out = []
+    if not IS_WIN or not h:
+        return out
+    try:
+        dwm = ctypes.WinDLL("dwmapi")
+        dwm.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwm.DwmSetWindowAttribute.restype = ctypes.c_long
+        for attr, val, name in DWM_FLAT:
+            v = ctypes.c_uint(val & 0xFFFFFFFF)
+            out.append((name, int(dwm.DwmSetWindowAttribute(h, attr, ctypes.byref(v), 4)) & 0xFFFFFFFF))
+        class _MARGINS(ctypes.Structure):
+            _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
+        dwm.DwmExtendFrameIntoClientArea.argtypes = [wintypes.HWND, ctypes.POINTER(_MARGINS)]
+        dwm.DwmExtendFrameIntoClientArea.restype = ctypes.c_long
+        out.append(("EXTEND_FRAME=0", int(dwm.DwmExtendFrameIntoClientArea(h, ctypes.byref(_MARGINS(0, 0, 0, 0)))) & 0xFFFFFFFF))
+    except Exception as e:
+        if trace:
+            trace(f"Остров: DWM не настроен ({e.__class__.__name__}: {e})")
+    return out
+
+
 def is_side(dock: str) -> bool:
     return dock in ("left", "right")
 
@@ -1288,6 +1321,10 @@ class Island:
             if not self._painting:
                 self._show_native(h)
             self._paint_black(h)
+            res = dwm_flat(h, self.trace)
+            if res and not getattr(self, "_dwm_logged", False):
+                self._dwm_logged = True
+                self.trace("Остров: DWM: " + ", ".join(f"{n}={'ok' if c == 0 else hex(c)}" for n, c in res))
         except Exception as e:
             self.trace(f"Остров: стили окна не применены ({e})")
         try:
@@ -1706,6 +1743,9 @@ class Island:
         h = self._hwnd_of(refresh=True)
         if not h or not user32.IsWindow(h):
             return
+        if time.time() - getattr(self, "_dwm_t", 0.0) > 1.0:   # смена темы Windows сбрасывает атрибуты DWM: возвращаем их раз в секунду (7 дешёвых вызовов)
+            self._dwm_t = time.time()
+            dwm_flat(h)
         bad = force or h != old
         if not bad:
             tmp = gdi32.CreateRectRgn(0, 0, 0, 0)
