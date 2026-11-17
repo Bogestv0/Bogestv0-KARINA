@@ -14,6 +14,7 @@ MIN_W, MIN_H = 640, 460
 FILL = 0.92            # окно занимает не больше этой доли рабочей области
 
 SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010
+SWP_ASYNCWINDOWPOS = 0x4000      # запрос уходит потоку окна и не блокирует вызывающий поток (иначе возможно «залипание»)
 SW_MINIMIZE = 6
 WM_CLOSE = 0x0010
 GWL_STYLE = -16
@@ -102,6 +103,15 @@ def _size_for(work, scale):
     return w, h
 
 
+def clamp_rect(x, y, w, h, work):
+    """Окно целиком внутри рабочей области: не больше неё и не выходит за края (чтобы заголовок всегда был доступен)."""
+    ww, wh = max(1, work[2] - work[0]), max(1, work[3] - work[1])
+    w, h = min(int(w), ww), min(int(h), wh)
+    x = min(max(int(x), work[0]), work[2] - w)
+    y = min(max(int(y), work[1]), work[3] - h)
+    return x, y, w, h
+
+
 def initial_logical_size():
     """Размер для create_window в логических пикселях (точная подгонка делается позже, когда есть окно)."""
     if not IS_WIN:
@@ -130,21 +140,27 @@ class FrameControl:
         self.maximized = False
         self._normal = None            # прежний размер до разворачивания: (x, y, w, h)
         self._dragging = False
+        self._drag_t0 = 0.0
         self._lock = threading.Lock()
 
     # ---- дескриптор ----
     def hwnd(self):
         w = self._get_window()
         nat = getattr(w, "native", None) if w else None
-        if nat is None:
-            return 0
-        try:
-            return int(nat.Handle.ToInt64())
-        except Exception:
+        if nat is not None:
             try:
-                return int(nat.Handle.ToInt32())
+                return int(nat.Handle.ToInt64())
             except Exception:
-                return 0
+                try:
+                    return int(nat.Handle.ToInt32())
+                except Exception:
+                    pass
+        try:                                    # запасной путь: найти окно по заголовку
+            user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+            user32.FindWindowW.restype = wintypes.HWND
+            return int(user32.FindWindowW(None, "Bogestv0 KARINA") or 0)
+        except Exception:
+            return 0
 
     def _rect(self, h):
         r = _RECT()
@@ -152,7 +168,7 @@ class FrameControl:
         return r.left, r.top, r.right - r.left, r.bottom - r.top
 
     def _place(self, h, x, y, w, ht):
-        user32.SetWindowPos(h, None, int(x), int(y), int(w), int(ht), SWP_NOZORDER | SWP_NOACTIVATE)
+        user32.SetWindowPos(h, None, int(x), int(y), int(w), int(ht), SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
 
     # ---- настройка при показе ----
     def setup(self):
@@ -187,10 +203,29 @@ class FrameControl:
             w, ht = _size_for(work, s)
             x = work[0] + ((work[2] - work[0]) - w) // 2
             y = work[1] + ((work[3] - work[1]) - ht) // 2
-            self._place(h, x, y, w, ht)
+            self._place(h, *clamp_rect(x, y, w, ht, work))
             self._trace(f"Окно: рабочая область {work[2]-work[0]}×{work[3]-work[1]}, масштаб {s:.2f}, окно {w}×{ht}")
         except Exception as e:
             self._trace(f"Окно: подгонка размера не удалась ({e})")
+
+    def ensure_visible(self):
+        """Если окно вылезло за рабочую область (или заголовок ушёл за край) — вернуть на экран. Безопасно вызывать в любой момент."""
+        if not IS_WIN or self.maximized:
+            return False
+        h = self.hwnd()
+        if not h or user32.IsIconic(h):
+            return False
+        try:
+            x, y, w, ht = self._rect(h)
+            work = _monitor_work(h)
+            nx, ny, nw, nh = clamp_rect(x, y, w, ht, work)
+            if (nx, ny, nw, nh) != (x, y, w, ht):
+                self._place(h, nx, ny, nw, nh)
+                self._trace(f"Окно: вернула на экран ({x},{y},{w}×{ht}) → ({nx},{ny},{nw}×{nh})")
+                return True
+        except Exception as e:
+            self._trace(f"Окно: ensure_visible не удалось ({e})")
+        return False
 
     # ---- кнопки ----
     def minimize(self):
@@ -208,6 +243,7 @@ class FrameControl:
             if user32.IsIconic(h):
                 user32.ShowWindow(h, 9)                     # SW_RESTORE
             user32.SetForegroundWindow(h)
+            self.ensure_visible()
             return True
         except Exception:
             return False
@@ -252,14 +288,22 @@ class FrameControl:
     # ---- перетаскивание и растягивание ----
     def begin_drag(self, edge: str):
         """Ведёт окно за курсором, пока зажата левая кнопка мыши. edge: move, n, s, e, w, ne, nw, se, sw."""
-        if not IS_WIN or self._dragging:
+        if not IS_WIN:
             return False
+        if self._dragging:
+            # предыдущее перетаскивание «зависло» (кнопка уже отпущена, а поток не вышел) — сбрасываем, чтобы окно не залипало
+            if time.time() - self._drag_t0 > 0.5 and not (user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000):
+                self._trace("Окно: сброс залипшего перетаскивания")
+                self._dragging = False
+            else:
+                return False
         if edge != "move" and self.maximized:
             return False
         h = self.hwnd()
         if not h:
             return False
         self._dragging = True
+        self._drag_t0 = time.time()
         threading.Thread(target=self._drag_loop, args=(h, edge), daemon=True, name="karina-drag").start()
         return True
 
@@ -281,12 +325,14 @@ class FrameControl:
             min_w = min(int(MIN_W * s), work[2] - work[0])
             min_h = min(int(MIN_H * s), work[3] - work[1])
             last = None
-            while user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000:
+            t_end = time.time() + 120               # страховка: перетаскивание не может длиться вечно
+            vtop = user32.GetSystemMetrics(77)      # верх виртуального экрана (всех мониторов)
+            while user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000 and time.time() < t_end:
                 user32.GetCursorPos(ctypes.byref(pt))
                 dx, dy = pt.x - sx, pt.y - sy
                 x, y, w, ht = x0, y0, w0, h0
                 if edge == "move":
-                    x, y = x0 + dx, y0 + dy
+                    x, y = x0 + dx, max(vtop, y0 + dy)       # заголовок не уходит выше экрана
                 else:
                     if "e" in edge:
                         w = max(min_w, w0 + dx)
@@ -307,6 +353,9 @@ class FrameControl:
                     with self._lock:
                         self._maximize(h)
                     self._on_state(True)
+            else:
+                time.sleep(0.08)                    # асинхронное перемещение должно успеть примениться
+                self.ensure_visible()
         except Exception as e:
             self._trace(f"Окно: перетаскивание прервано ({e})")
         finally:
