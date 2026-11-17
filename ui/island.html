@@ -14,9 +14,19 @@ button,input,textarea{font:inherit;color:inherit;border:0;background:none}
 button{cursor:pointer}
 input,textarea{user-select:text;-webkit-user-select:text;cursor:text;outline:0}
 [hidden]{display:none!important}
-/* --r — тот же радиус, что считает Python (island.py: RADIUS_MAX): min(30px, половина высоты). Кромка в 1px — сглаженный контур окна (halo.py) */
-#root{--r:min(30px,50vh);position:relative;width:100%;height:100%;overflow:hidden;border-radius:var(--r)}
-#root::after{content:"";position:absolute;inset:1px;border-radius:calc(var(--r) - 1px);pointer-events:none;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 38%,transparent);transition:box-shadow .35s;z-index:9}
+/* Окно с запасом (под самую большую панель), а видимую форму ему задаёт регион Win32 (island.py), его анимирует Python.
+   #stage — то место внутри окна, где сейчас плашка; Python присылает его размеры и радиус (--sx --sy --sw --sh --r), панель — свои (--fx --fy).
+   Содержимое сразу стоит на конечном месте, а регион плавно до него дорастает: страница на каждом кадре не перерисовывается.
+   Кромка в 1px — сглаженный контур окна (halo.py). */
+#root{--r:18px;position:relative;width:100%;height:100%;overflow:hidden}
+#stage{position:absolute;left:var(--sx,0px);top:var(--sy,0px);width:var(--sw,100%);height:var(--sh,100%);overflow:hidden;border-radius:var(--r);transition:opacity .16s}
+#rim{position:absolute;left:var(--sx,0px);top:var(--sy,0px);width:var(--sw,100%);height:var(--sh,100%);border-radius:var(--r);pointer-events:none;z-index:30;transition:opacity .2s}
+#rim::after{content:"";position:absolute;inset:1px;border-radius:calc(var(--r) - 1px);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 38%,transparent);transition:box-shadow .35s}
+#root:not(.ready) #stage,#root:not(.ready) .full,#root:not(.ready) #rim{visibility:hidden}     /* пока Python не прислал раскладку */
+#root.anim #rim{opacity:0}                                                   /* пока регион растёт, кромка по конечному месту была бы не к месту */
+#root.fly #stage,#root.fly .full,#root.fly #rim{opacity:0!important;transition:opacity .12s}          /* плашку тащат или она летит к краю */
+.compact{cursor:grab}.pinned .compact,.m-full .compact{cursor:pointer}
+.grab,.grab *{cursor:grabbing!important}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#3a3a44;border-radius:3px}
 
 /* ---------- персонаж ---------- */
@@ -68,8 +78,21 @@ input,textarea{user-select:text;-webkit-user-select:text;cursor:text;outline:0}
 .m-info .txt,.m-info .bars,.m-music .txt,.m-music .bars,.m-music .chr{display:none}
 .m-music .compact{padding-right:8px}
 #p-look{overflow:auto}
+/* ---------- вертикальная плашка (остров у левого или правого края) ---------- */
+.vert .compact{flex-direction:column;justify-content:center;gap:8px;padding:12px 0}
+.vert.m-music .compact{padding:10px 0}
+.vert .txt{display:none}
+.vert .bars{margin:0}
+.vert .info{flex-direction:column;gap:7px}
+.vert .info span{flex-direction:column;gap:1px;font-size:11px}
+.vert .mus{flex-direction:column;gap:6px}
+.vert .mus .t{display:none}
+.vert .mbs{flex-direction:column;margin-left:0;gap:4px}
+.vert .recind{flex-direction:column;gap:3px}
+.fold.on{background:var(--card2);color:var(--c)}
+.fold.on svg{fill:currentColor;fill-opacity:.25}
 /* ---------- панель ---------- */
-.full{position:absolute;left:50%;top:0;width:480px;height:330px;transform:translateX(-50%);opacity:0;pointer-events:none;transition:opacity .2s;z-index:3}
+.full{position:absolute;left:var(--fx,0px);top:var(--fy,0px);width:480px;height:330px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:3}
 .m-full .full{opacity:1;pointer-events:auto;transition-delay:.12s}
 .bar{display:flex;align-items:center;gap:2px;height:46px;padding:8px 12px 0 14px}
 .tab{width:34px;height:30px;border-radius:10px;display:grid;place-items:center;color:var(--muted);transition:background .15s,color .15s}
@@ -274,6 +297,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 </head>
 <body>
 <div id="root" class="m-mini s-loading">
+ <div id="stage">
   <canvas id="snow" hidden></canvas>
   <div class="garland" id="garland" hidden></div>
 
@@ -298,6 +322,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     </div>
     <div class="bars" id="bars"><i></i><i></i><i></i><i></i><i></i></div>
   </div>
+ </div>
 
   <div class="full">
     <div class="bar" id="tabs">
@@ -310,6 +335,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <button class="tab" data-t="tools" title="Инструменты"><svg viewBox="0 0 20 20" style="width:15px;height:15px"><path d="M3 3h5v5H3zM12 3h5v5h-5zM3 12h5v5H3zM12 12h5v5h-5z"/></svg></button>
       <button class="tab" data-t="shelf" title="Полка: файлы и текст под рукой"><svg viewBox="0 0 16 16"><path d="M2 9.5h12v3.5H2zM3.5 9.5V6.5h9v3M5.5 6.5V3.5h5v3"/></svg></button>
       <div class="chip" id="chip"><i></i><span id="chipT">Запуск</span></div>
+      <button class="fold" id="pin" title="Закрепить на этом месте" aria-label="Закрепить" style="margin-left:2px"><svg viewBox="0 0 16 16"><path d="M9.8 2.2l4 4-1.7.9-2 2 .2 2.6-1 1L6.9 9.600 3.600 12.900l-.5-.5 3.300-3.300L3.200 6l1-1 2.600.2 2-2z"/></svg></button>
       <button class="fold" id="fold" title="Свернуть" aria-label="Свернуть"><svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4"/></svg></button>
     </div>
 
@@ -382,6 +408,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <div class="set"><span>Когда показывать (по датам: 15 дек – 15 янв)</span><div class="seg" id="sHol"><button data-v="dates">По датам</button><button data-v="always">Всегда</button><button data-v="off">Нет</button></div></div>
       <div class="set"><span>Снег</span><div class="seg" id="sSnow"><button data-v="1">Да</button><button data-v="0">Нет</button></div></div>
       <div class="set"><span>Гирлянда</span><div class="seg" id="sGar"><button data-v="off">Нет</button><button data-v="blink">Мигает</button><button data-v="wave">Волна</button></div></div>
+      <h4>Положение</h4>
+      <div class="set"><span>Перетащите плашку к любому краю экрана: у бокового она встанет вертикально, а панель откроется к центру. Кнопка с булавкой в панели закрепляет её на месте.</span></div>
+      <div class="row" style="margin-bottom:10px"><button class="btn" id="dockReset" type="button">Вернуть наверх по центру</button></div>
       <h4>Свёрнутая плашка</h4>
       <div class="set"><span>Что показывать, пока Карина молчит</span></div>
       <div class="seg" id="sIdle"><button data-k="idle_time">Время</button><button data-k="idle_battery">Заряд</button><button data-k="idle_temp">Температура</button><button data-k="idle_music">Музыка</button></div>
@@ -431,6 +460,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     <div id="res"><h4><span id="resH">Текст с экрана</span><button id="resX" title="Закрыть">✕</button></h4><div id="resT"></div><div id="resA"></div></div>
     <div class="toast" id="toast"></div>
   </div>
+  <div id="rim"></div>
 </div>
 <script>
 (() => {
@@ -448,6 +478,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   let set = { character: 'logo', holiday: 'dates', snow: true, garland: 'off', city: '', idle_time: true, idle_battery: true, idle_temp: true, idle_music: true, tools: [], links: [] };
   const info = { bat: null, temp: null, media: null, lastPlay: 0, tw: 0 };      // данные для свёрнутой плашки
   let dragging = false, full = false, mode = '', errUntil = 0, toastUntil = 0, toastText = '', level = 0, foldTimer = 0, tab = 'home';
+  let dock = 'top', pinned = false, sideDock = false, animT = 0, grabbing = false;       // положение острова: край экрана и «закреплён ли»
 
   const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const key = () => (st.sleeping && st.state === 'idle') ? 'sleep' : (STATES[st.state] ? st.state : 'idle');
@@ -509,8 +540,16 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       $('mPlay').innerHTML = m.status === 'playing' ? ICON_PAUSE : ICON_PLAY;
     }
   }
-  // ширина плашки по содержимому: сама плашка просит у окна ровно столько места, сколько нужно
+  // размер плашки по содержимому: сама плашка просит у окна ровно столько места, сколько нужно
+  // (у бокового края плашка стоит, и «длинная сторона» — высота: тогда считаем её)
+  const vertFor = m => sideDock && (m === 'mini' || m === 'info' || m === 'music');
   function idleWidth(m) {
+    if (vertFor(m)) {
+      if (m === 'mini') return 0;
+      const c = $('compact'), kids = [...c.children].filter(el => getComputedStyle(el).display !== 'none');
+      const cs = getComputedStyle(c), gap = parseFloat(cs.rowGap) || 0, pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+      return Math.ceil(pad + kids.reduce((a, el) => a + el.getBoundingClientRect().height, 0) + gap * Math.max(0, kids.length - 1));
+    }
     const w = el => el.getBoundingClientRect().width;
     const rw = rec.on ? w($('cRec')) + 9 : 0;
     if (m === 'info') return Math.ceil(7 + 12 + 24 + 9 + w($('cInfo')) + 2 + rw);
@@ -545,17 +584,39 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     $('bStop').hidden = k !== 'speaking';
     const m = wanted();
     paintIdle();
-    root.className = 'm-' + m + ' s-' + k + (dragging ? ' dragging' : '');
+    const keep = ['ready', 'fly', 'anim'].filter(c => root.classList.contains(c));
+    root.className = ['m-' + m, 's-' + k, ...keep, dragging && 'dragging', vertFor(m) && 'vert', pinned && 'pinned', 'dock-' + dock].filter(Boolean).join(' ');
     $('lnkTitle').textContent = dragging ? 'Бросьте на «+» — будет ярлык, рядом — на полку' : 'Ярлыки';
     $('dropov').classList.toggle('home', tab === 'home');
     setMode(m, idleWidth(m));
   }
 
   let modeW = 0;
-  function setMode(m, w = 0) {
+  // Python анимирует форму окна, а в ответ говорит, где внутри окна стоит плашка в этом режиме
+  async function setMode(m, w = 0) {
     if (m === mode && w === modeW) return;
     mode = m; modeW = w;
-    if (api) api.set_mode(m, w || null).catch(() => {});
+    if (!api) return;
+    root.classList.add('anim'); clearTimeout(animT); animT = setTimeout(() => root.classList.remove('anim'), 520);
+    const L = await call('set_mode', m, w || null);
+    if (L && L.s && L.mode === mode) applyGeo(L);
+  }
+  function applyGeo(L) {
+    const st = root.style, px = v => v + 'px';
+    st.setProperty('--sx', px(L.s[0])); st.setProperty('--sy', px(L.s[1])); st.setProperty('--sw', px(L.s[2])); st.setProperty('--sh', px(L.s[3]));
+    st.setProperty('--r', px(L.r)); st.setProperty('--fx', px(L.f[0])); st.setProperty('--fy', px(L.f[1]));
+    if (!root.classList.contains('ready')) root.classList.add('ready');
+  }
+  // край экрана, закреплённость и раскладка пришли от Python (при загрузке, после перетаскивания, по кнопке с булавкой)
+  function applyLayout(L) {
+    if (!L || !L.s) return;
+    const side = L.dock === 'left' || L.dock === 'right', turned = side !== sideDock;
+    dock = L.dock; pinned = !!L.pinned; sideDock = side;
+    $('pin').classList.toggle('on', pinned);
+    $('pin').title = pinned ? 'Открепить: плашку снова можно перетащить' : 'Закрепить на этом месте';
+    applyGeo(L);
+    if (turned) { mode = ''; modeW = 0; }                    // длинная сторона сменилась: размер по содержимому пересчитаем заново
+    render();
   }
 
   function toast(text, ms = 5000) {
@@ -567,6 +628,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 
   // ---------- события ----------
   window.karina = {
+    layout: applyLayout,
+    fly(v) { root.classList.toggle('fly', !!v); },
     event(ev) {
       if (!ev) return;
       if (ev.type === 'state') {
@@ -620,7 +683,26 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 
   // ---------- раскрытие, вкладки ----------
   const setFull = v => { full = v; clearTimeout(foldTimer); if (v) openTab(tab); render(); };
-  $('compact').addEventListener('click', () => setFull(true));
+  $('compact').addEventListener('click', () => { if (!grabbing) setFull(true); });
+  // плашку можно взять и перенести: после 6 пикселей движения при зажатой кнопке Python водит окно за курсором и прилепляет к краю
+  let press = null;
+  $('compact').addEventListener('mousedown', e => { press = (e.button === 0 && !full && !pinned && !e.target.closest('button,input,textarea')) ? { x: e.screenX, y: e.screenY } : null; });
+  window.addEventListener('mouseup', () => { press = null; }, true);
+  window.addEventListener('mousemove', async e => {
+    if (!press) return;
+    if (!(e.buttons & 1)) { press = null; return; }
+    if (Math.hypot(e.screenX - press.x, e.screenY - press.y) < 6) return;
+    press = null; grabbing = true; root.classList.add('grab');
+    const r = await call('drag');
+    root.classList.remove('grab');
+    setTimeout(() => { grabbing = false; }, 150);               // нажатие, которым закончилось перетаскивание, не должно раскрывать панель
+  }, true);
+  $('pin').addEventListener('click', async e => {
+    e.stopPropagation();
+    const L = await call('pin_set', !pinned);
+    if (L) { applyLayout(L); toast(pinned ? 'Закреплён: откроется только здесь' : 'Откреплён: его можно перетащить', 2800); }
+  });
+  $('dockReset').addEventListener('click', async () => { const L = await call('dock_reset'); if (L) applyLayout(L); });
   $('fold').addEventListener('click', e => { e.stopPropagation(); setFull(false); });
   root.addEventListener('mouseenter', () => clearTimeout(foldTimer));
   root.addEventListener('mouseleave', () => { if (full) { clearTimeout(foldTimer); foldTimer = setTimeout(() => { if (!document.activeElement || !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) setFull(false); }, 6000); } });
@@ -1025,7 +1107,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   }
   function snowLoop() {
     if (!snowRun) return;
-    const w = root.clientWidth, h = root.clientHeight, dpr = window.devicePixelRatio || 1;
+    const stg = $('stage'), w = stg.clientWidth, h = stg.clientHeight, dpr = window.devicePixelRatio || 1;
     if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
     cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, w, h);
     const want = Math.max(6, Math.round(w * h / (mode === 'full' ? 5200 : 1800)));
@@ -1056,7 +1138,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     api = window.pywebview.api;
     const s = await call('get_state');
     if (s) { st.state = s.state || 'idle'; st.sleeping = !!s.sleeping; st.listening = s.listening !== false; st.name = s.name || 'Карина'; if (s.settings) set = s.settings; if (s.volume != null) { vol.value = s.volume; $('volV').textContent = s.volume; fillRange(); } }
-    mode = ''; applyLook(); render(); paintLinks();
+    mode = ''; if (s && s.layout) applyLayout(s.layout);
+    applyLook(); render(); paintLinks();
     loadBat(); loadTemp();
     const rs = await call('rec_status'); if (rs && rs.on) { rec.on = true; rec.t0 = rs.t0; paintRec(); render(); }
     const m = await call('media_get'); if (m && m.status !== 'none') { info.media = m; if (m.status === 'playing') info.lastPlay = Date.now(); render(); }
@@ -1069,6 +1152,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (document.visibilityState === 'hidden' || performance.now() - lastFrame > 1500) api.repaint().catch(() => {});
   }, 2000);
 
+  // раскладку присылает Python; если она запоздала (окно ещё ставится), спрашиваем снова. Без Python (просто страница в браузере) показываем как есть
+  const readyT = setInterval(async () => {
+    if (root.classList.contains('ready')) { clearInterval(readyT); return; }
+    if (!api) { if (performance.now() > 3000) root.classList.add('ready'); return; }
+    const s = await call('get_state'); if (s && s.layout) applyLayout(s.layout);
+  }, 700);
   applyLook(); fillRange(); render();
   if (window.pywebview && window.pywebview.api) init(); else window.addEventListener('pywebviewready', init);
 })();
