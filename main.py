@@ -254,7 +254,7 @@ def run_gui(cfg):
     # с подложкой под ним) из-за этого оставался чёрным. Отключаем эту проверку для всех окон приложения.
     try:
         import os
-        _flags = "--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
+        _flags = "--disable-features=CalculateNativeWinOcclusion,WebContentsForceDark --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
         _cur = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
         if "CalculateNativeWinOcclusion" not in _cur:
             os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (_cur + " " + _flags).strip()

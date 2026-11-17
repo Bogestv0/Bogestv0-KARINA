@@ -56,8 +56,8 @@ def test_store_reminders_timer_note(tmp_path):
 
 
 def test_clean_settings_rejects_garbage():
-    out = t.clean_settings({"character": "evil", "holiday": "x", "garland": "wave", "snow": 0, "city": " Омск "}, {"character": "cat"})
-    assert out["character"] == "cat" and out["holiday"] == "dates" and out["garland"] == "wave" and out["snow"] is False and out["city"] == "Омск"
+    out = t.clean_settings({"character": "evil", "holiday": "x", "garland": "wave", "snow": 0, "city": " Омск "}, {"character": "eyes"})
+    assert out["character"] == "eyes" and out["holiday"] == "dates" and out["garland"] == "wave" and out["snow"] is False and out["city"] == "Омск"
 
 
 def test_clip_history_dedup_and_limits():
