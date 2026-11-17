@@ -16,6 +16,7 @@ from pathlib import Path
 from .config import ROOT
 from . import island_tools as tools
 from . import screen_tools as st
+from . import shelf as shf
 from .halo import Halo
 from .media import Media
 
@@ -25,7 +26,7 @@ SNIP_TITLE = "Область экрана Карины"
 SNIP_TIMEOUT = 180       # если выбор области забыли закончить, окно закрывается само
 
 # режим -> (ширина, высота, радиус скругления) в логических пикселях
-SIZES = {"mini": (150, 36, 18), "info": (232, 36, 18), "music": (300, 36, 18), "wide": (290, 40, 20), "full": (480, 330, 30)}
+SIZES = {"mini": (150, 36, 18), "info": (232, 36, 18), "music": (300, 36, 18), "wide": (290, 40, 20), "drop": (300, 96, 30), "full": (480, 330, 30)}
 WIDTH_MIN, WIDTH_MAX = 150, 420        # страница сама сообщает нужную ширину для режимов «info» и «music» (по содержимому)
 RADIUS_MAX = 30         # то же число в ui/island.html: --r = min(30px, 50vh)
 TOP_MARGIN = 6          # отступ от верхнего края экрана
@@ -98,7 +99,7 @@ class IslandApi:
     def get_state(self):
         a = self._api.assistant
         return {"state": a.state, "sleeping": bool(a.sleeping), "listening": bool(a.listening), "name": a.cfg["name"],
-                "settings": self._island.settings(), "volume": self.volume_get()}
+                "settings": self._island.settings(), "volume": self.volume_get(), "admin": self._island.is_admin()}
 
     def set_mode(self, mode: str, width=None):
         self._island.set_mode(str(mode), width)
@@ -117,6 +118,105 @@ class IslandApi:
     def open_main(self):
         threading.Thread(target=self._show_main, daemon=True).start()
         return True
+
+    # ---- полка и ярлыки ----
+    def drop_target(self, name):
+        """Страница сообщает, над чем сейчас файл: «link» — плитка «+» (ярлык), иначе полка."""
+        self._island._drop_target = "link" if name == "link" else "shelf"
+        return True
+
+    def shelf_get(self):
+        return {"items": self._island.shelf.view(), "admin": self._island.is_admin()}
+
+    def shelf_thumb(self, item_id):
+        it = self._island.shelf.get(int(item_id))
+        return shf.thumb(it["path"]) if it and it.get("type") == "path" else ""
+
+    def shelf_open(self, item_id):
+        it = self._island.shelf.get(int(item_id))
+        if not it:
+            return {"ok": False, "error": "Нет такого элемента."}
+        if it.get("type") == "text":
+            st.clip_set_text(it.get("text", ""))
+            return {"ok": True, "copied": True}
+        try:
+            if shf.open_target(it["path"]):
+                return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e) or e.__class__.__name__}
+        return {"ok": False, "error": "Файл не найден: возможно, его переместили или удалили."}
+
+    def shelf_reveal(self, item_id):
+        it = self._island.shelf.get(int(item_id))
+        return bool(it and it.get("type") == "path" and shf.reveal(it["path"]))
+
+    def shelf_copy(self, item_id):
+        it = self._island.shelf.get(int(item_id))
+        if not it:
+            return False
+        return st.clip_set_text(it.get("text") if it.get("type") == "text" else it.get("path", ""))
+
+    def shelf_del(self, item_id):
+        return self._island.shelf.remove(int(item_id))
+
+    def shelf_clear(self):
+        self._island.shelf.clear()
+        return True
+
+    def shelf_paste(self):
+        """«Из буфера»: файлы, скопированные в проводнике (Ctrl+C), либо путь или текст из буфера."""
+        paths = shf.clipboard_paths()
+        if paths:
+            return {"ok": True, "n": self._island.shelf.add_paths(paths)}
+        text = st.clip_get_text().strip()
+        if not text:
+            return {"ok": False, "error": "В буфере обмена пусто: скопируйте файл (Ctrl+C) или текст."}
+        one = text.strip('"')
+        if "\n" not in one and os.path.exists(one):
+            return {"ok": True, "n": self._island.shelf.add_paths([one])}
+        return {"ok": self._island.shelf.add_text(text), "n": 1, "text": True}
+
+    def shelf_add_text(self, text):
+        return self._island.shelf.add_text(str(text or ""))
+
+    def shelf_pick(self, kind="file"):
+        """Окно выбора файлов или папки → на полку."""
+        got = self._island.pick(kind)
+        return {"ok": True, "n": self._island.shelf.add_paths(got)} if got else {"ok": False, "n": 0}
+
+    def shelf_drag(self, item_id):
+        """Начать перетаскивание файла с полки в другое окно (письмо, чат, папка)."""
+        return self._island.drag_out(int(item_id))
+
+    def link_pick(self, kind="file"):
+        got = self._island.pick(kind)
+        return self._island.links_add(got) if got else {"ok": False, "n": 0}
+
+    def link_add(self, text):
+        t = str(text or "").strip()
+        if shf.is_url(t) or os.path.exists(t.strip('"')):
+            return self._island.links_add([t])
+        return {"ok": False, "n": 0, "error": "Нужна ссылка (https://…) или путь к файлу или папке."}
+
+    def link_run(self, i):
+        links = self._island.settings().get("links", [])
+        try:
+            p = links[int(i)]["path"]
+        except Exception:
+            return {"ok": False, "error": "Нет такого ярлыка."}
+        try:
+            if shf.open_target(p):
+                return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e) or e.__class__.__name__}
+        return {"ok": False, "error": "Не нашла: «" + p + "». Возможно, его переместили."}
+
+    def links_set(self, items):
+        return self._island.settings_set({"links": items if isinstance(items, list) else []}).get("links", [])
+
+    def link_kinds(self):
+        """Вид значка для каждого ярлыка (папка, программа, документ…)."""
+        return [shf.path_kind(l["path"]) for l in self._island.settings().get("links", [])]
 
     def repaint(self):
         """Страница острова заметила, что не рисуется (нет кадров): просим окно перерисоваться."""
@@ -423,6 +523,10 @@ class Island:
         self._rec_shown = False                      # страница уже знает, что запись идёт
         self._snip: dict | None = None               # открытое окно выбора области
         self._painting = False                       # окно показано средствами WinForms (иначе WebView2 считает себя невидимым и не рисует)
+        self.shelf = shf.Shelf()                     # полка: файлы и текст «в руках» (karina/shelf.py)
+        self._drop_target = "shelf"                  # куда упадёт файл: полка или новый ярлык («+»)
+        self._drop_hooked = False
+        self._drag_until = 0.0                       # пока тащим файл с полки наружу, свои же «падения» не принимаем
         self._hidden_by_us = False                   # остров спрятан намеренно (снимок экрана, выбор области): страница в это время «не рисуется» законно
         self._last_repaint = 0.0
         self._repaints = 0
@@ -469,7 +573,7 @@ class Island:
                     self.trace(f"Остров: create_window без {', '.join(drop) or '-'} ({e})")
             if w is None:
                 return False
-            self.window, self.ready, self._hwnd, self._painting = w, False, 0, True       # окно уже показано средствами WinForms
+            self.window, self.ready, self._hwnd, self._painting, self._drop_hooked = w, False, 0, True, False       # окно уже показано средствами WinForms
             self._halo = Halo(self.trace)
             self._q = queue.Queue(maxsize=200)
             threading.Thread(target=self._pump, args=(w, self._q), daemon=True, name="karina-island").start()
@@ -497,6 +601,105 @@ class Island:
                 except Exception:
                     pass
             return False
+
+    # ---- полка: приём файлов, выбор файлов, перетаскивание наружу ----
+    def is_admin(self) -> bool:
+        try:
+            from . import elevate
+            return bool(elevate.is_admin())
+        except Exception:
+            return False
+
+    def _hook_drop(self):
+        """Приём файлов, брошенных на остров. Пути файлов даёт pywebview (pywebviewFullPath); без него (старая версия) полка принимает только текст."""
+        if self._drop_hooked or self.window is None:
+            return
+        try:
+            from webview.dom import DOMEventHandler
+            self.window.dom.document.events.drop += DOMEventHandler(self._on_drop, True, True)
+            self._drop_hooked = True
+            self.trace("Остров: приём файлов подключён")
+        except Exception as e:
+            self.trace(f"Остров: приём файлов недоступен ({e.__class__.__name__}: {e}); нужен pywebview 5 или новее")
+
+    def _on_drop(self, e):
+        if time.time() < self._drag_until:
+            return
+        try:
+            files = ((e or {}).get("dataTransfer") or {}).get("files") or []
+            paths = [f.get("pywebviewFullPath") for f in files if isinstance(f, dict) and f.get("pywebviewFullPath")]
+        except Exception:
+            paths, files = [], []
+        if not paths:
+            if files:
+                self.push({"type": "shelf", "n": 0, "error": "Не получилось узнать путь файла: обновите pywebview (нужна версия 5 или новее)."})
+            return
+        target, self._drop_target = self._drop_target, "shelf"
+        if target == "link":
+            r = self.links_add(paths)
+            self.push({"type": "shelf", "n": r.get("n", 0), "link": True, "links": self.settings().get("links", [])})
+        else:
+            self.push({"type": "shelf", "n": self.shelf.add_paths(paths)})
+
+    def links_add(self, paths) -> dict:
+        cur = self.settings().get("links", [])
+        new = [{"path": str(p).strip().strip('"')} for p in paths if p]
+        out = self.settings_set({"links": cur + new}).get("links", [])
+        return {"ok": len(out) > len(cur), "n": len(out) - len(cur), "links": out, "full": len(cur) >= shf.MAX_LINKS}
+
+    def pick(self, kind="file") -> list:
+        """Системное окно выбора: файлы (kind=file) или папка (kind=folder). Пустой список — отмена."""
+        w = self.window
+        if w is None:
+            return []
+        try:
+            import webview
+            fd = getattr(webview, "FileDialog", None)
+            if kind == "folder":
+                mode = fd.FOLDER if fd is not None else webview.FOLDER_DIALOG
+                r = w.create_file_dialog(mode)
+            else:
+                mode = fd.OPEN if fd is not None else webview.OPEN_DIALOG
+                r = w.create_file_dialog(mode, allow_multiple=True)
+        except Exception as e:
+            self.trace(f"Остров: окно выбора не открылось ({e})")
+            return []
+        return [str(x) for x in (r or [])]
+
+    def drag_out(self, item_id: int) -> bool:
+        """Перетаскивание файла с полки в другое окно: настоящий drag-and-drop Windows (WinForms DoDragDrop) на потоке окна."""
+        it = self.shelf.get(item_id)
+        if not IS_WIN or it is None or it.get("type") != "path" or not os.path.exists(it.get("path", "")):
+            return False
+        form = getattr(self.window, "native", None)
+        if form is None:
+            return False
+        try:
+            from System import Action
+            from System.Collections.Specialized import StringCollection
+            from System.Windows.Forms import DataObject, DragDropEffects
+        except Exception as e:
+            self.trace(f"Остров: перетаскивание недоступно ({e})")
+            return False
+        done = {"ok": False}
+
+        def run():
+            try:
+                data, files = DataObject(), StringCollection()
+                files.Add(it["path"])
+                data.SetFileDropList(files)
+                form.DoDragDrop(data, DragDropEffects.Copy | DragDropEffects.Link)
+                done["ok"] = True
+            except Exception as e:
+                self.trace(f"Остров: DoDragDrop не удался ({e.__class__.__name__}: {e})")
+        self._drag_until = time.time() + 600
+        try:
+            form.Invoke(Action(run))
+        except Exception as e:
+            self.trace(f"Остров: перетаскивание не началось ({e})")
+        finally:
+            self._drag_until = time.time() + 1.0
+        return done["ok"]
 
     def _start_xy(self):
         """Где создать окно: сверху по центру основного экрана (точное положение потом ставит _place)."""
@@ -878,6 +1081,7 @@ class Island:
         if not self.ready:
             self.ready = True
             self.trace("Остров: страница загружена")
+        self._hook_drop()
         self._setup_window()
 
     # ---- положение и форма ----
@@ -954,6 +1158,7 @@ class Island:
         if not self.ready:
             self.ready = True
             self.trace("Остров: страница загружена (проверка потока)")
+        self._hook_drop()
         for pause in (0.3, 0.7, 1.5, 3.0):
             time.sleep(pause)
             if self.window is not w:

@@ -21,7 +21,7 @@ CHARACTERS = ("logo", "eyes", "spark", "bot", "cat", "blob", "pixel")
 HOLIDAY_MODES = ("dates", "always", "off")
 GARLANDS = ("off", "blink", "wave")
 IDLE_KEYS = ("idle_time", "idle_battery", "idle_temp", "idle_music")       # что показывать на свёрнутой плашке
-ISLAND_DEFAULTS = {"character": "logo", "holiday": "dates", "snow": True, "garland": "off", "city": "", "tools": [], **{k: True for k in IDLE_KEYS}}
+ISLAND_DEFAULTS = {"character": "logo", "holiday": "dates", "snow": True, "garland": "off", "city": "", "tools": [], "links": [], **{k: True for k in IDLE_KEYS}}
 
 
 # ---------------------------------------------------------------- настройки острова
@@ -46,6 +46,9 @@ def clean_settings(patch: dict, old: dict | None = None) -> dict:
     if "tools" in p:
         from .screen_tools import clean_custom                  # «Ещё»: свои инструменты (имя + команда)
         out["tools"] = clean_custom(p["tools"])
+    if "links" in p:
+        from .shelf import clean_links                          # ярлыки на главной (программа, папка, файл, сайт)
+        out["links"] = clean_links(p["links"])
     return out
 
 
