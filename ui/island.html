@@ -33,6 +33,8 @@ input,textarea{user-select:text;-webkit-user-select:text;cursor:text;outline:0}
 .chr{display:block;flex:none;position:relative}
 .chr svg{width:100%;height:100%;display:block;overflow:visible}
 .chr img{width:100%;height:100%;border-radius:28%;display:block}
+.chr img.an{border-radius:0;filter:drop-shadow(0 0 1px rgba(255,255,255,.35))}
+.s-thinking .chr:has(.an),.s-speaking .chr:has(.an),.s-loading .chr:has(.an){animation:none}      /* у этого персонажа меняются кадры (глаза, рот, волосы), а не весь значок крутится */
 .sm{width:24px;height:24px}.lg{width:30px;height:30px}.xl{width:54px;height:54px}
 .eye{transform-box:fill-box;transform-origin:center;animation:blink 4.6s infinite}
 @keyframes blink{0%,94%,100%{transform:scaleY(1)}97%{transform:scaleY(.12)}}
@@ -284,6 +286,25 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 .shint{color:var(--muted);font-size:11.5px;line-height:1.4}
 .shint.warn{color:#f5c56b}
 
+/* чат с Кариной */
+.aiwrap{position:absolute;left:14px;right:14px;top:8px;bottom:14px;display:flex;flex-direction:column;gap:8px}
+.aimsgs{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;justify-content:flex-start;scrollbar-width:none}
+.aimsgs::-webkit-scrollbar{display:none}
+.aimsgs>:first-child{margin-top:auto}
+.aib{max-width:84%;padding:8px 12px;line-height:1.42;white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text}
+.aib.u{align-self:flex-end;max-width:78%;background:var(--card3);border-radius:16px 16px 4px 16px}
+.aib.a{align-self:flex-start;background:var(--card);border-radius:16px 16px 16px 4px}
+.aib.a.wait{color:var(--muted)}
+.aiacts{align-self:flex-start;display:flex;gap:6px}.aiacts .btn{padding:5px 10px;font-weight:500}
+.aiempty{margin:auto;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.5;max-width:300px}
+.aiin{display:flex;gap:8px;align-items:center}
+.aiin input{flex:1;min-width:0;height:38px;border-radius:19px;background:var(--card);padding:0 14px}
+.aiin input::placeholder{color:var(--muted)}
+.aiin button{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--card2);flex:none}
+.aiin button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.aiin button.go{background:var(--c);color:#06121f}
+.aiin button.go.stop{background:#5a2420;color:#ffd7d3}
+
 /* праздник */
 #snow{position:absolute;inset:0;pointer-events:none;z-index:7}
 .garland{position:absolute;left:14px;right:14px;bottom:1px;height:7px;display:flex;justify-content:space-between;pointer-events:none;z-index:8}
@@ -327,6 +348,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   <div class="full">
     <div class="bar" id="tabs">
       <button class="tab on" data-t="home" title="Главная"><svg viewBox="0 0 16 16"><path d="M2 7.5 8 2.5l6 5M3.5 6.5V13h3.2V9.5h2.6V13h3.2V6.5"/></svg></button>
+      <button class="tab" data-t="ai" title="Чат с Кариной"><svg viewBox="0 0 20 20"><path d="M10 2l1.8 5.2L17 9l-5.2 1.8L10 16l-1.8-5.2L3 9l5.2-1.8z"/></svg></button>
       <button class="tab" data-t="notes" title="Заметка, таймер, напоминания"><svg viewBox="0 0 16 16"><path d="M3 2.5h8l2 2V13.5H3zM5.5 6.5h5M5.5 9h5M5.5 11.5h3"/></svg></button>
       <button class="tab" data-t="clip" title="Буфер обмена"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="11" rx="1.6"/><path d="M6 3V2h4v1M5.5 7h5M5.5 9.5h5"/></svg></button>
       <button class="tab" data-t="weather" title="Погода"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg></button>
@@ -362,6 +384,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     </div>
 
     <!-- заметки -->
+    <!-- чат с Кариной -->
+    <div class="pane" id="p-ai">
+      <div class="aiwrap">
+        <div class="aimsgs" id="aiMsgs"></div>
+        <div class="aiin">
+          <input id="aiText" type="text" placeholder="Напишите Карине…" spellcheck="false" autocomplete="off" maxlength="4000">
+          <button id="aiMic" type="button" title="Говорить"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+          <button id="aiGo" class="go" type="button" title="Отправить"><svg viewBox="0 0 24 24" style="stroke-width:2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        </div>
+      </div>
+    </div>
+
     <div class="pane" id="p-notes">
       <div class="two">
         <textarea class="note" id="note" placeholder="Пиши сюда что угодно: номер заказа, список дел, кусок кода. Сохраняется само." spellcheck="false"></textarea>
@@ -487,13 +521,32 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   const E = (x, y, w, h, r, f) => `<rect class="eye" x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="${f}"/>`;
   const CHR = {
     eyes:  `<svg viewBox="0 0 32 32">${E(8, 7, 6, 16, 3, '#f3f3f6')}${E(18, 7, 6, 16, 3, '#f3f3f6')}</svg>`,
-    spark: `<svg viewBox="0 0 32 32"><circle class="fillc" cx="16" cy="16" r="14"/><circle cx="16" cy="16" r="14" fill="#fff" opacity=".35"/>${E(10.5, 12, 3.4, 7, 1.7, '#1b1b22')}${E(18.1, 12, 3.4, 7, 1.7, '#1b1b22')}</svg>`,
-    bot:   `<svg viewBox="0 0 32 32"><circle class="fillc" cx="16" cy="3" r="2"/><path d="M16 5v3" stroke="#bbb" stroke-width="1.5"/><rect x="3" y="8" width="26" height="20" rx="8" fill="#e8e5da"/><rect x="6.5" y="11.5" width="19" height="13" rx="5.5" fill="#15151a"/>${E(10.5, 14.5, 3.6, 6.5, 1.8, 'var(--c)')}${E(17.9, 14.5, 3.6, 6.5, 1.8, 'var(--c)')}</svg>`,
-    cat:   `<svg viewBox="0 0 32 32"><path d="M4 14V3l7 5.2h10L28 3v11c0 8-5 13-12 13S4 22 4 14z" fill="#f4f1ea"/>${E(10, 13, 3, 6, 1.5, '#262630')}${E(19, 13, 3, 6, 1.5, '#262630')}<path d="M14.6 21l1.4 1.2 1.4-1.2z" fill="#e58b94"/><path d="M3 20l6 1M3 23l6-1M29 20l-6 1M29 23l-6-1" stroke="#c9c5bb" stroke-width="1"/><circle class="fillc" cx="16" cy="28.5" r="2.4"/></svg>`,
-    blob:  `<svg viewBox="0 0 32 32"><path d="M16 5c8 0 13 5 13 12 0 6.5-5 10.5-13 10.5S3 23.500 3 17C3 10 8 5 16 5z" fill="#f2c88f"/><ellipse cx="9" cy="19.500" rx="2.6" ry="1.7" fill="#ee8f8a" opacity=".7"/><ellipse cx="23" cy="19.500" rx="2.6" ry="1.7" fill="#ee8f8a" opacity=".7"/>${E(11, 13, 2.8, 5.5, 1.4, '#4a3320')}${E(18.2, 13, 2.8, 5.5, 1.4, '#4a3320')}</svg>`,
     pixel: `<svg viewBox="0 0 32 32" shape-rendering="crispEdges"><path fill="#ff6a1a" d="M10 4h12v2h4v2h2v18h-4v-4h-4v4h-4v-4h-4v4H8v-4H4v4H2V8h2V6h4V4z"/>${E(9, 11, 5, 6, 0, '#15151a')}${E(18, 11, 5, 6, 0, '#15151a')}</svg>`,
+    anime: `<img class="an" data-an src="an_idle.png" alt="">`,
     logo:  `<img src="logo.png" alt="">`,
   };
+  // «Аниме»: готовые кадры (an_*.png). Кадр выбирается по состоянию Карины, см. animeFrame().
+  const ANF = {}; ['idle', 'closed', 'left', 'right', 'up', 'down', 'hair', 'talk'].forEach(n => { ANF[n] = 'an_' + n + '.png'; const im = new Image(); im.src = ANF[n]; });
+  const aT0 = Date.now();
+  function animeFrame() {
+    const k = key(), t = Date.now() - aT0;
+    if (k === 'sleep') return 'closed';
+    if (k === 'error') return 'talk';
+    if (k === 'speaking') return ['talk', 'idle', 'talk', 'hair'][Math.floor(t / 210) % 4];                              // рот открывается, волосы подхватывает ветер
+    if (k === 'thinking' || k === 'loading') return ['up', 'hair', 'right', 'idle', 'left', 'hair', 'up', 'idle'][Math.floor(t / 420) % 8];   // думает: глаза бегают, волосы раздуваются
+    const b = t % 5200, w = t % 12000;                                                                                       // слушает: моргает и иногда смотрит по сторонам
+    if (b < 130) return 'closed';
+    if (w >= 1500 && w < 2500) return 'left';
+    if (w >= 4800 && w < 5800) return 'right';
+    if (w >= 7600 && w < 8500) return 'up';
+    if (w >= 10200 && w < 11000) return 'down';
+    return 'idle';
+  }
+  setInterval(() => {
+    if (set.character !== 'anime') return;
+    const f = animeFrame();
+    $$('img[data-an]').forEach(i => { if (i.dataset.f !== f) { i.dataset.f = f; i.src = ANF[f]; } });
+  }, 90);
   function paintChars() {
     const html = CHR[set.character] || CHR.logo;
     $$('[data-chr]').forEach(n => { n.innerHTML = html; });
@@ -682,7 +735,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   mediaBtn('mPlay', 'toggle'); mediaBtn('mNext', 'next');
 
   // ---------- раскрытие, вкладки ----------
-  const setFull = v => { full = v; clearTimeout(foldTimer); if (v) openTab(tab); render(); };
+  const setFull = v => { full = v; clearTimeout(foldTimer); if (v) openTab(tab); else aiClose(); render(); };
   $('compact').addEventListener('click', () => { if (!grabbing) setFull(true); });
   // плашку можно взять и перенести: после 6 пикселей движения при зажатой кнопке Python водит окно за курсором и прилепляет к краю
   let press = null;
@@ -713,6 +766,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     $$('.pane').forEach(p => p.classList.toggle('on', p.id === 'p-' + t));
     if (t === 'home') { loadVol(); paintLinks(); }
     if (t === 'shelf') loadShelf();
+    if (t === 'ai') aiOpen(); else aiClose();
     if (t === 'notes') { loadNote(); loadRem(); loadTimer(); }
     if (t === 'clip') loadClip();
     if (t === 'weather') loadWeather();
@@ -732,6 +786,59 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   $('bMute').addEventListener('click', async () => { muted = !muted; await call('mute_set', muted); $('bMute').style.color = muted ? '#ff8a80' : ''; });
   $('bShot').addEventListener('click', async () => { const r = await call('screenshot'); toast(r && r.ok ? 'Снимок сохранён в Изображения\\Karina' : 'Не получилось: ' + ((r && r.error) || ''), 4000); });
   $('bShots').addEventListener('click', () => call('open_shots'));
+
+  // ---------- чат с Кариной (вкладка «ИИ») ----------
+  let aiTimer = 0, aiBusy = false, aiSig = '', aiNote = '';
+  const aiBox = $('aiMsgs');
+  function aiPaint(r) {
+    const msgs = (r && r.msgs) || [];
+    aiBusy = !!(r && r.busy);
+    const sig = JSON.stringify([msgs, aiBusy, aiNote]);
+    $('aiGo').classList.toggle('stop', aiBusy);
+    $('aiGo').title = aiBusy ? 'Стоп' : 'Отправить';
+    $('aiGo').innerHTML = aiBusy ? '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>' : '<svg viewBox="0 0 24 24" style="stroke-width:2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+    if (sig === aiSig) return;
+    aiSig = sig;
+    const atEnd = aiBox.scrollHeight - aiBox.scrollTop - aiBox.clientHeight < 40;
+    aiBox.textContent = '';
+    if (!msgs.length) {
+      const e = document.createElement('div'); e.className = 'aiempty';
+      e.textContent = aiNote || 'Пишите прямо отсюда, ответ придёт в этой же панели. Длинные ответы удобнее открыть в окне Карины.';
+      aiBox.append(e); return;
+    }
+    msgs.forEach((m, i) => {
+      const d = document.createElement('div'); d.className = 'aib ' + (m.role === 'user' ? 'u' : 'a');
+      const last = i === msgs.length - 1;
+      if (m.role !== 'user' && !m.text.trim()) { d.classList.add('wait'); d.textContent = 'Думаю…'; }
+      else d.textContent = m.text;
+      aiBox.append(d);
+      if (last && m.role !== 'user' && m.text.trim() && !aiBusy) {
+        const a = document.createElement('div'); a.className = 'aiacts';
+        [['Открыть в окне', () => call('ai_open')], ['Прочитать вслух', () => call('ai_say', m.text)]].forEach(([t, f]) => {
+          const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.textContent = t; b.onclick = f; a.append(b);
+        });
+        aiBox.append(a);
+      }
+    });
+    if (aiBusy && msgs[msgs.length - 1].role === 'user') {
+      const d = document.createElement('div'); d.className = 'aib a wait'; d.textContent = 'Думаю…'; aiBox.append(d);
+    }
+    if (aiNote) { const n = document.createElement('div'); n.className = 'aiempty'; n.style.margin = '0'; n.textContent = aiNote; aiBox.append(n); }
+    if (atEnd || aiSig) aiBox.scrollTop = aiBox.scrollHeight;
+  }
+  async function aiRefresh() { aiPaint(await call('ai_poll')); }
+  function aiOpen() { aiRefresh(); clearInterval(aiTimer); aiTimer = setInterval(aiRefresh, 700); setTimeout(() => $('aiText').focus(), 60); }
+  function aiClose() { clearInterval(aiTimer); aiTimer = 0; }
+  async function aiSend() {
+    if (aiBusy) { await call('ai_stop'); return; }
+    const t = $('aiText').value.trim(); if (!t) return;
+    const r = await call('ai_send', t);
+    if (r && r.ok) { $('aiText').value = ''; aiNote = ''; aiSig = ''; } else aiNote = (r && r.error) || 'Не получилось отправить.';
+    aiRefresh();
+  }
+  $('aiGo').addEventListener('click', aiSend);
+  $('aiText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); aiSend(); } });
+  $('aiMic').addEventListener('click', async () => { await call('wake_up'); toast('Слушаю', 1800); });
 
   // ---------- заметка, таймер, напоминания ----------
   let noteT = 0, tEnd = 0, tTotal = 300, tSel = 300;
@@ -1070,7 +1177,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   setInterval(() => { if (dragging && Date.now() - lastOver > 1500) setDrag(false); }, 500);
 
   // ---------- вид острова ----------
-  const CNAMES = { logo: 'Карина', eyes: 'Глазки', spark: 'Искра', bot: 'Бот', cat: 'Котик', blob: 'Капля', pixel: 'Пиксель' };
+  const CNAMES = { logo: 'Карина', eyes: 'Глазки', pixel: 'Пиксель', anime: 'Аниме' };
   function paintLook() {
     const g = $('chars'); g.textContent = '';
     Object.keys(CNAMES).forEach(k => {

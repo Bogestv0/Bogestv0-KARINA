@@ -172,6 +172,7 @@ class IslandApi:
 
     def __init__(self, island: "Island", api, show_main):
         self._island, self._api, self._show_main = island, api, show_main
+        self._ai_cid = None             # диалог вкладки «ИИ»: один на запуск, «Новый» начинает следующий
 
     # ---- состояние и режимы ----
     def get_state(self):
@@ -208,6 +209,49 @@ class IslandApi:
     def open_main(self):
         threading.Thread(target=self._show_main, daemon=True).start()
         return True
+
+    # ---- вкладка «ИИ»: чат с Кариной прямо с острова ----
+    AI_SHOW = 12                        # сколько последних сообщений показывать
+
+    def ai_send(self, text):
+        """Отправить сообщение в чат (режим «только ответ», без кодера). Ответ страница забирает через ai_poll."""
+        text = str(text or "").strip()[:4000]
+        if not text:
+            return {"ok": False, "error": "Пустое сообщение."}
+        chat = self._api.assistant.chat
+        if chat.busy:
+            return {"ok": False, "error": "Я ещё отвечаю. Нажмите «Стоп» или подождите."}
+        if not self._ai_cid or chat.store.get(self._ai_cid) is None:
+            self._ai_cid = chat.store.new()["id"]
+        r = chat.send(self._ai_cid, text, mode="ask")
+        return {"ok": r is not None, "error": "" if r else "Я ещё отвечаю. Нажмите «Стоп» или подождите."}
+
+    def ai_poll(self):
+        """Последние сообщения диалога и «идёт ли ответ»."""
+        chat = self._api.assistant.chat
+        c = chat.store.get(self._ai_cid) if self._ai_cid else None
+        msgs = [{"role": "user" if m.get("role") == "user" else "assistant", "text": str(m.get("text") or "")[:3000]}
+                for m in (c or {}).get("messages", [])][-self.AI_SHOW:]
+        return {"cid": self._ai_cid, "busy": bool(chat.busy), "msgs": msgs}
+
+    def ai_new(self):
+        self._ai_cid = None
+        return True
+
+    def ai_stop(self):
+        self._api.assistant.chat.stop()
+        return True
+
+    def ai_open(self):
+        """«Открыть в окне»: главное окно Карины (длинные ответы удобнее читать там)."""
+        threading.Thread(target=self._show_main, daemon=True).start()
+        return True
+
+    def ai_say(self, text):
+        t = str(text or "").strip()[:1500]
+        if t:
+            threading.Thread(target=self._api.assistant.say, args=(t,), daemon=True).start()
+        return bool(t)
 
     # ---- полка и ярлыки ----
     def drop_target(self, name):

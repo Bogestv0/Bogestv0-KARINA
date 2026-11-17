@@ -1,2 +1,2 @@
 """Bogestv0 KARINA — голосовой ассистент для Windows."""
-__version__ = "1.17.0"
+__version__ = "1.18.0"

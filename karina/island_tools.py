@@ -17,7 +17,7 @@ from .config import DATA
 IS_WIN = sys.platform == "win32"
 NO_WINDOW = 0x08000000
 
-CHARACTERS = ("logo", "eyes", "spark", "bot", "cat", "blob", "pixel")
+CHARACTERS = ("logo", "eyes", "pixel", "anime")                    # Карина (логотип), Глазки, Пиксель, Аниме (своя картинка ui/chr_anime.png)
 HOLIDAY_MODES = ("dates", "always", "off")
 GARLANDS = ("off", "blink", "wave")
 IDLE_KEYS = ("idle_time", "idle_battery", "idle_temp", "idle_music")       # что показывать на свёрнутой плашке
@@ -33,6 +33,8 @@ def clean_settings(patch: dict, old: dict | None = None) -> dict:
     out = dict(ISLAND_DEFAULTS)
     out.update({k: v for k, v in (old or {}).items() if k in ISLAND_DEFAULTS})
     p = patch or {}
+    if out.get("character") not in CHARACTERS:                 # убранные персонажи (искра, бот, котик, капля, пряник, олень) → Карина
+        out["character"] = "logo"
     if p.get("character") in CHARACTERS:
         out["character"] = p["character"]
     if p.get("holiday") in HOLIDAY_MODES:
