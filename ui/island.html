@@ -158,6 +158,54 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 .set{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0}
 .set>span{font-size:12.5px;flex:1}.set .seg{width:210px}
 
+/* инструменты */
+#p-tools{display:none;flex-direction:column;gap:8px}
+#p-tools.on{display:flex}
+.tview{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
+.tools4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+.tools4 .tile{min-height:0;height:78px}.tools4 .tile svg{flex:none}.tools4 .tile small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.rec{background:#3a1c1a}.tile.rec svg{color:#ff8a80}.tile.rec:hover{background:#4a2420}
+.tile.lay{background:#1d2c3f}.tile.lay svg{color:var(--c)}.tile.lay:hover{background:#243850}
+.cmd{display:flex;gap:8px;align-items:center}
+.cmd label{flex:1;height:38px;border-radius:19px;background:var(--card);display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--muted)}
+.cmd label svg{width:14px;height:14px;flex:none;fill:none;stroke:var(--c);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.cmd input{flex:1;min-width:0;height:100%;color:var(--fg)}
+.cmd .btn{height:38px;border-radius:19px}
+.thead{display:flex;align-items:center;gap:8px}
+.back{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;color:var(--muted);flex:none}
+.back:hover{background:var(--card2);color:var(--fg)}
+.back svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.thead .chip{margin-left:0;color:var(--fg)}
+.thead .seg{margin-left:6px}.thead .seg button{padding:5px 12px;font-size:12px;white-space:nowrap}
+.qrw{display:flex;gap:16px;align-items:flex-start;flex:1;min-height:0}
+.qrimg{width:126px;height:126px;padding:8px;box-sizing:content-box;background:#fff;border-radius:8px;image-rendering:pixelated;flex:none}
+.qrcol{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;height:100%}
+.qrtext{width:100%;height:62px;resize:none;background:var(--card);border-radius:12px;padding:9px 11px;line-height:1.4;font-size:12px;word-break:break-all}
+.codes{display:flex;flex-direction:column;gap:6px;overflow:auto;min-height:0;flex:1}
+.codes div{background:var(--card);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.codes span{word-break:break-all;font-size:12px;line-height:1.4;user-select:text;-webkit-user-select:text}
+.recbar{display:none;align-items:center;gap:10px;background:#3a1c1a;border-radius:14px;padding:8px 10px;flex:none}
+.recbar.on{display:flex}
+.recbar i{width:10px;height:10px;border-radius:50%;background:#ff5a4f;display:block;flex:none;box-shadow:0 0 0 4px rgba(255,90,79,.25);animation:recb 1.4s ease-in-out infinite}
+.recbar b{font:600 13px 'JetBrains Mono',monospace;color:#ffd7d3;font-variant-numeric:tabular-nums}
+.recbar span{flex:1;font-size:11.5px;color:var(--muted)}
+@keyframes recb{50%{opacity:.45}}
+.recind{display:none;align-items:center;gap:7px;flex:none}
+.m-info .recind.on,.m-music .recind.on,.m-wide .recind.on{display:flex}
+.recind i{width:8px;height:8px;border-radius:50%;background:#ff5a4f;box-shadow:0 0 0 3px rgba(255,90,79,.25);animation:recb 1.4s ease-in-out infinite}.recind b{font:600 12px 'JetBrains Mono',monospace;color:#ffd7d3;font-variant-numeric:tabular-nums}
+.clist{display:flex;flex-direction:column;gap:5px;overflow:auto;min-height:0;flex:1}
+.clist .it{display:flex;align-items:center;gap:6px;background:var(--card);border-radius:12px;padding:3px 4px 3px 11px;min-height:36px}
+.clist .it button.go{flex:1;text-align:left;min-width:0;padding:4px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.clist .it small{color:var(--muted);margin-left:8px;font-size:11px}
+.clist .it button.x{width:26px;height:26px;border-radius:8px;color:var(--muted)}.clist .it button.x:hover{color:#ff8a80;background:var(--card2)}
+.add{display:grid;grid-template-columns:110px 1fr auto;gap:6px}
+#res{position:absolute;left:14px;right:14px;bottom:12px;max-height:230px;background:#000;border-radius:16px;padding:12px 14px;z-index:8;box-shadow:0 0 0 1px color-mix(in srgb,var(--c) 40%,transparent),0 8px 28px rgba(0,0,0,.6);display:none;flex-direction:column;gap:8px}
+#res.on{display:flex;animation:in .22s ease both}
+#res h4{margin:0;display:flex;justify-content:space-between;align-items:center}
+#res h4 button{color:var(--muted);width:22px;height:22px;border-radius:7px}#res h4 button:hover{background:var(--card2);color:var(--fg)}
+#resT{line-height:1.5;overflow:auto;min-height:0;user-select:text;-webkit-user-select:text;white-space:pre-wrap;word-break:break-word;font-size:12.5px}
+#resA{display:flex;gap:6px;flex-wrap:wrap}#resA .btn{padding:5px 10px}
+
 /* подсказка */
 .toast{position:absolute;left:14px;right:14px;bottom:12px;padding:9px 12px;border-radius:14px;background:var(--c);color:#06121f;font-weight:600;font-size:12.5px;z-index:8;opacity:0;transform:translateY(8px);pointer-events:none;transition:.25s}
 .toast.on{opacity:1;transform:none}
@@ -181,6 +229,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   <div class="compact" id="compact">
     <span class="chr sm" data-chr></span>
     <div class="txt" id="cTxt"><b id="cLab">Запуск</b><span id="cSub"></span></div>
+    <div class="recind" id="cRec" title="Идёт запись экрана"><i></i><b id="cRecT">00:00</b></div>
     <div class="info" id="cInfo">
       <b id="iTime"></b>
       <span id="iBat" hidden></span>
@@ -205,6 +254,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <button class="tab" data-t="weather" title="Погода"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg></button>
       <button class="tab" data-t="system" title="Система"><svg viewBox="0 0 16 16"><path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6"/><circle cx="10" cy="4.5" r="1.5"/><circle cx="6" cy="11.5" r="1.5"/></svg></button>
       <button class="tab" data-t="look" title="Вид острова"><svg viewBox="0 0 16 16"><path d="M8 1.8l1.5 3.7 3.9.3-3 2.5 1 3.8L8 10l-3.4 2.1 1-3.8-3-2.5 3.9-.3z"/></svg></button>
+      <button class="tab" data-t="tools" title="Инструменты"><svg viewBox="0 0 20 20" style="width:15px;height:15px"><path d="M3 3h5v5H3zM12 3h5v5h-5zM3 12h5v5H3zM12 12h5v5h-5z"/></svg></button>
       <div class="chip" id="chip"><i></i><span id="chipT">Запуск</span></div>
       <button class="fold" id="fold" title="Свернуть" aria-label="Свернуть"><svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4"/></svg></button>
     </div>
@@ -269,6 +319,48 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <div class="set"><span>Что показывать, пока Карина молчит</span></div>
       <div class="seg" id="sIdle"><button data-k="idle_time">Время</button><button data-k="idle_battery">Заряд</button><button data-k="idle_temp">Температура</button><button data-k="idle_music">Музыка</button></div>
     </div>
+
+    <!-- инструменты -->
+    <div class="pane" id="p-tools">
+      <div class="tview" id="tMain">
+        <div class="tools4" id="tGrid">
+          <button class="tile" data-k="area"><svg viewBox="0 0 20 20"><path d="M3 7V4h3M14 4h3v3M17 13v3h-3M6 16H3v-3"/></svg><div><b>Область</b><small>Снимок части</small></div></button>
+          <button class="tile" data-k="text"><svg viewBox="0 0 20 20"><path d="M4 5V3h12v2M10 3v14M7.5 17h5"/></svg><div><b>Текст</b><small>С экрана</small></div></button>
+          <button class="tile" data-k="qr"><svg viewBox="0 0 20 20"><path d="M3 3h5v5H3zM12 3h5v5h-5zM3 12h5v5H3zM12 12h2v2h-2zM16 12h1v5h-5v-1"/></svg><div><b>QR-код</b><small>Считать, создать</small></div></button>
+          <button class="tile" data-k="pick"><svg viewBox="0 0 20 20"><path d="M12 4l4 4-8 8H4v-4zM11 5l4 4M14.5 2.5l3 3"/></svg><div><b>Пипетка</b><small>Цвет пикселя</small></div></button>
+          <button class="tile" data-k="clean"><svg viewBox="0 0 20 20"><path d="M6 3h8v3H6zM5 5h10v12H5zM8 10h4M8 13h3"/></svg><div><b>Чистый текст</b><small title="Без форматирования">Без стилей</small></div></button>
+          <button class="tile rec" data-k="rec" id="tRec"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6"/><circle cx="10" cy="10" r="2.5" fill="currentColor"/></svg><div><b id="tRecB">Запись</b><small id="tRecS">Экран в видео</small></div></button>
+          <button class="tile lay" data-k="lay"><svg viewBox="0 0 20 20"><path d="M3 6h14M3 10h14M3 14h9"/></svg><div><b>RU / EN</b><small id="tLay">Сейчас: …</small></div></button>
+          <button class="tile" data-k="more"><svg viewBox="0 0 20 20"><path d="M4 10h12M10 4v12"/></svg><div><b>Ещё</b><small title="Свои инструменты">Свои</small></div></button>
+        </div>
+        <div class="cmd"><label><svg viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 17h7"/></svg><input id="cmdIn" placeholder="Команда Карине: открой хром…" spellcheck="false"></label><button class="btn p" id="cmdGo">Выполнить</button></div>
+      </div>
+
+      <div class="tview" id="tQr" hidden>
+        <div class="thead"><button class="back" data-back title="Назад"><svg viewBox="0 0 16 16"><path d="M10 3L5 8l5 5"/></svg></button><div class="chip">QR-код</div>
+          <div class="seg" id="qrSeg"><button data-v="make" class="on">Создать</button><button data-v="scan">Считать с экрана</button></div></div>
+        <div class="qrw" id="qrMake">
+          <img class="qrimg" id="qrImg" alt="">
+          <div class="qrcol"><h4 style="margin:0">Текст или ссылка</h4>
+            <textarea class="qrtext" id="qrText" placeholder="Вставьте или напишите что угодно" spellcheck="false"></textarea>
+            <div class="row" style="flex-wrap:wrap"><button class="btn p" id="qrCopy">Копировать</button><button class="btn" id="qrSave">Сохранить PNG</button><button class="btn" id="qrClip" title="Взять текст из буфера обмена">Из буфера</button></div>
+          </div>
+        </div>
+        <div class="qrcol" id="qrScan" hidden style="gap:8px">
+          <div class="row"><button class="btn p" id="qrFind">Найти QR на экране</button><span class="muted" id="qrMsg" style="font-size:12px">Остров спрячется на секунду.</span></div>
+          <div class="codes" id="qrCodes"></div>
+        </div>
+      </div>
+
+      <div class="tview" id="tMore" hidden>
+        <div class="thead"><button class="back" data-back title="Назад"><svg viewBox="0 0 16 16"><path d="M10 3L5 8l5 5"/></svg></button><div class="chip">Свои инструменты</div></div>
+        <div class="clist" id="cList"></div>
+        <div class="add"><input class="inp" id="cName" placeholder="Название" maxlength="24"><input class="inp" id="cCmd" placeholder="Сайт, путь к программе/папке или фраза для Карины" maxlength="300"><button class="btn p" id="cAdd">Добавить</button></div>
+      </div>
+
+      <div class="recbar" id="recBar"><i></i><b id="recT">00:00</b><span>Запись экрана</span><button class="btn warn" id="recStop" style="padding:5px 10px">Стоп</button></div>
+    </div>
+    <div id="res"><h4><span id="resH">Текст с экрана</span><button id="resX" title="Закрыть">✕</button></h4><div id="resT"></div><div id="resA"></div></div>
     <div class="toast" id="toast"></div>
   </div>
 </div>
@@ -285,7 +377,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     paused:   ['Пауза', '#9a9cae'], error: ['Ошибка', '#ff8a80'], sleep: ['Сплю', '#9a9cae'],
   };
   const st = { state: 'loading', sleeping: false, listening: true, detail: '', name: 'Карина', you: '', reply: '', err: '' };
-  let set = { character: 'logo', holiday: 'dates', snow: true, garland: 'off', city: '', idle_time: true, idle_battery: true, idle_temp: true, idle_music: true };
+  let set = { character: 'logo', holiday: 'dates', snow: true, garland: 'off', city: '', idle_time: true, idle_battery: true, idle_temp: true, idle_music: true, tools: [] };
   const info = { bat: null, temp: null, media: null, lastPlay: 0, tw: 0 };      // данные для свёрнутой плашки
   let full = false, mode = '', errUntil = 0, toastUntil = 0, toastText = '', level = 0, foldTimer = 0, tab = 'home';
 
@@ -316,7 +408,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (k === 'thinking' || k === 'speaking' || k === 'loading') return 'wide';
     if (k === 'error' && Date.now() < errUntil) return 'wide';
     if (musicOn()) return 'music';
-    if (infoOn()) return 'info';
+    if (infoOn() || rec.on) return 'info';
     return 'mini';
   }
 
@@ -330,6 +422,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   const ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>', ICON_PAUSE = '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
   function batColor(b) { return b.plugged || b.pct > 30 ? '#7ee0a1' : b.pct > 15 ? '#f5c56b' : '#ff8a80'; }
   function paintIdle() {
+    paintRec();
     $('iTime').textContent = hhmm(); $('iTime').hidden = !set.idle_time;
     const bt = $('iBat'), tp = $('iTemp');
     bt.hidden = !hasBat();
@@ -350,8 +443,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   // ширина плашки по содержимому: сама плашка просит у окна ровно столько места, сколько нужно
   function idleWidth(m) {
     const w = el => el.getBoundingClientRect().width;
-    if (m === 'info') return Math.ceil(7 + 12 + 24 + 9 + w($('cInfo')) + 2);
-    if (m === 'music') return Math.ceil(7 + 8 + w(document.querySelector('.mico')) + 10 + w($('mTitle')) + 10 + w(document.querySelector('.mbs')) + 2);
+    const rw = rec.on ? w($('cRec')) + 9 : 0;
+    if (m === 'info') return Math.ceil(7 + 12 + 24 + 9 + w($('cInfo')) + 2 + rw);
+    if (m === 'music') return Math.ceil(7 + 8 + w(document.querySelector('.mico')) + 10 + w($('mTitle')) + 10 + w(document.querySelector('.mbs')) + 2 + rw);
     return 0;
   }
 
@@ -422,7 +516,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         if (ev.status === 'playing') { info.lastPlay = Date.now(); }
         else if (info.media) setTimeout(render, 30100);
         render();
-      } else if (ev.type === 'toast') { toast((ev.kind === 'timer' ? '⏱ ' : '⏰ ') + ev.text, 8000); if (ev.kind === 'timer') { tEnd = 0; paintTimer(); } if (ev.kind === 'reminder' && tab === 'notes') loadRem(); }
+      } else if (ev.type === 'rec') { setRec(ev.on, ev.t0);
+      } else if (ev.type === 'tool') { if (ev.kind === 'text') { setFull(true); openTab('tools'); showRes('Текст с экрана · русский, английский', ev.text, [['Скопировать', 'copy', 1], ['Прочитать вслух', 'speak'], ['Перевести', 'tr']]); }
+      } else if (ev.type === 'toast') { toast((ev.kind === 'timer' ? '⏱ ' : ev.kind === 'reminder' ? '⏰ ' : '') + ev.text, ev.kind === 'tool' ? 5000 : 8000); if (ev.kind === 'timer') { tEnd = 0; paintTimer(); } if (ev.kind === 'reminder' && tab === 'notes') loadRem(); }
     }
   };
 
@@ -463,6 +559,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (t === 'weather') loadWeather();
     if (t === 'system') loadSys();
     if (t === 'look') paintLook();
+    if (t === 'tools') loadTools(); else clearInterval(layTimer);
   }
 
   // ---------- главная ----------
@@ -573,6 +670,111 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     setTimeout(() => { b.classList.remove('ask'); b.innerHTML = old; }, 3000);
   });
 
+
+  // ---------- инструменты ----------
+  const rec = { on: false, t0: 0 };
+  const fmtT = sec => { sec = Math.max(0, Math.floor(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + String(s).padStart(2, '0'); };
+  let recLen = 0;
+  function paintRec() {
+    const t = fmtT(rec.on ? Date.now() / 1000 - rec.t0 : 0);
+    $('cRec').classList.toggle('on', rec.on); $('cRecT').textContent = t; $('recT').textContent = t;
+    $('recBar').classList.toggle('on', rec.on);
+    $('tRec').querySelector('b').textContent = rec.on ? 'Стоп' : 'Запись'; $('tRecS').textContent = rec.on ? t : 'Экран в видео';
+    if (rec.on && t.length !== recLen) { recLen = t.length; if (!full) setTimeout(render, 0); } else if (!rec.on) recLen = 0;
+  }
+  function setRec(on, t0) { rec.on = !!on; rec.t0 = t0 || rec.t0 || Date.now() / 1000; paintRec(); render(); }
+  setInterval(() => { if (rec.on) paintRec(); }, 500);
+
+  let layTimer = 0;
+  async function loadLay() { const l = await call('layout_get'); if (l) $('tLay').textContent = 'Сейчас: ' + l; }
+  async function loadTools() {
+    showView('tMain'); loadLay(); clearInterval(layTimer); layTimer = setInterval(() => { if (full && tab === 'tools') loadLay(); }, 1500);
+    const r = await call('rec_status'); if (r) { rec.on = !!r.on; rec.t0 = r.t0 || 0; paintRec(); }
+  }
+  const VIEWS = ['tMain', 'tQr', 'tMore'];
+  const showView = id => VIEWS.forEach(v => { $(v).hidden = v !== id; });
+  $$('[data-back]').forEach(b => b.onclick = () => showView('tMain'));
+
+  async function runTool(k) {
+    if (k === 'area' || k === 'text' || k === 'pick') {
+      const r = await call('snip_start', k); if (r && r.ok === false) toast(r.error || 'Не получилось', 4000);
+    } else if (k === 'qr') { showView('tQr'); qrMode('make'); qrFromClip(); }
+    else if (k === 'clean') { const r = await call('clean_paste'); toast(r && r.ok ? 'Вставлено без форматирования' : (r && r.error) || 'Не получилось', 2500); }
+    else if (k === 'rec') { const r = await call('rec_toggle'); if (r && r.ok === false) toast(r.error || 'Не получилось', 5000); else if (r && r.on) { setRec(true, r.t0); } }
+    else if (k === 'lay') { const l = await call('layout_toggle'); if (l) $('tLay').textContent = 'Сейчас: ' + l; }
+    else if (k === 'more') { showView('tMore'); loadCustom(); }
+  }
+  $('tGrid').addEventListener('click', e => { const b = e.target.closest('.tile'); if (b) runTool(b.dataset.k); });
+  const runCmd = async () => { const v = $('cmdIn').value.trim(); if (!v) return; $('cmdIn').value = ''; await call('command_run', v); toast('Отправила Карине', 1800); };
+  $('cmdGo').onclick = runCmd; $('cmdIn').onkeydown = e => { if (e.key === 'Enter') runCmd(); };
+  $('recStop').onclick = () => runTool('rec');
+
+  // ---- результат (текст с экрана, QR) ----
+  let resText = '';
+  function showRes(head, text, acts) {
+    resText = text; $('resH').textContent = head; $('resT').textContent = text;
+    const box = $('resA'); box.textContent = '';
+    acts.forEach(([name, a, primary]) => { const b = document.createElement('button'); b.className = 'btn' + (primary ? ' p' : ''); b.textContent = name; b.onclick = () => resAct(a); box.append(b); });
+    $('res').classList.add('on');
+  }
+  async function resAct(a) {
+    if (a === 'copy') { await call('copy_text', resText); toast('Скопировано', 1500); }
+    else if (a === 'speak') { await call('speak', resText); $('res').classList.remove('on'); }
+    else if (a === 'tr') { await call('translate', resText); $('res').classList.remove('on'); toast('Перевожу…', 2500); }
+  }
+  $('resX').onclick = () => $('res').classList.remove('on');
+
+  // ---- QR ----
+  let qrTimer = 0;
+  function qrMode(m) { $$('#qrSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === m)); $('qrMake').hidden = m !== 'make'; $('qrScan').hidden = m !== 'scan'; }
+  $('qrSeg').onclick = e => { const b = e.target.closest('button'); if (b) qrMode(b.dataset.v); };
+  async function qrDraw() {
+    const t = $('qrText').value; $('qrImg').style.opacity = t.trim() ? 1 : .25;
+    if (!t.trim()) { $('qrImg').removeAttribute('src'); return; }
+    const r = await call('qr_make', t);
+    if (r && r.ok) $('qrImg').src = r.url; else { $('qrImg').removeAttribute('src'); toast((r && r.error) || 'Не получилось', 3000); }
+  }
+  async function qrFromClip() { const t = await call('qr_clipboard'); if (t && t.trim()) $('qrText').value = t.trim(); qrDraw(); }
+  $('qrText').oninput = () => { clearTimeout(qrTimer); qrTimer = setTimeout(qrDraw, 200); };
+  $('qrClip').onclick = qrFromClip;
+  $('qrCopy').onclick = async () => { const r = await call('qr_copy', $('qrText').value); toast(r && r.ok ? 'QR-код скопирован' : (r && r.error) || 'Не получилось', 2000); };
+  $('qrSave').onclick = async () => { const r = await call('qr_save', $('qrText').value); toast(r && r.ok ? 'Сохранено: ' + r.path.split(/[\\/]/).pop() : (r && r.error) || 'Не получилось', 3000); };
+  $('qrFind').onclick = async () => {
+    $('qrMsg').textContent = 'Ищу…'; $('qrCodes').textContent = '';
+    const r = await call('qr_scan');
+    if (!r || !r.ok) { $('qrMsg').textContent = (r && r.error) || 'Не получилось'; return; }
+    $('qrMsg').textContent = r.codes.length ? 'Найдено: ' + r.codes.length : 'QR-кодов на экране нет.';
+    r.codes.forEach(c => {
+      const d = document.createElement('div'), s = document.createElement('span'), row = document.createElement('div');
+      s.textContent = c; row.style.cssText = 'flex-direction:row;gap:6px;padding:0;background:none';
+      const cp = document.createElement('button'); cp.className = 'btn p'; cp.textContent = 'Копировать'; cp.style.padding = '5px 10px'; cp.onclick = async () => { await call('copy_text', c); toast('Скопировано', 1500); };
+      row.append(cp);
+      if (/^(https?:\/\/|www\.)\S+$/i.test(c)) { const o = document.createElement('button'); o.className = 'btn'; o.textContent = 'Открыть'; o.style.padding = '5px 10px'; o.onclick = () => call('custom_open', c); row.append(o); }
+      d.append(s, row); $('qrCodes').append(d);
+    });
+  };
+
+  // ---- свои инструменты ----
+  async function loadCustom() {
+    const list = (set.tools || []), box = $('cList'); box.textContent = '';
+    if (!list.length) { const d = document.createElement('div'); d.className = 'empty'; d.textContent = 'Пока пусто. Добавьте сайт, программу, папку или фразу, которую Карина выполнит как команду.'; box.append(d); return; }
+    list.forEach((t, i) => {
+      const d = document.createElement('div'), g = document.createElement('button'), x = document.createElement('button'), sm = document.createElement('small');
+      d.className = 'it'; g.className = 'go'; g.textContent = t.name; sm.textContent = t.cmd; g.append(sm); g.title = t.cmd;
+      g.onclick = async () => { const ok = await call('custom_run', i); if (ok === false) toast('Не получилось запустить', 3000); };
+      x.className = 'x'; x.textContent = '✕'; x.title = 'Удалить'; x.onclick = async () => { set.tools = (await call('custom_set', list.filter((_, j) => j !== i))) || list; loadCustom(); };
+      d.append(g, x); box.append(d);
+    });
+  }
+  async function addCustom() {
+    const name = $('cName').value.trim(), cmd = $('cCmd').value.trim();
+    if (!name || !cmd) { toast('Нужны название и команда', 2500); return; }
+    if ((set.tools || []).length >= 12) { toast('Можно не больше 12', 2500); return; }
+    const r = await call('custom_set', [...(set.tools || []), { name, cmd }]);
+    if (r) { set.tools = r; $('cName').value = $('cCmd').value = ''; loadCustom(); }
+  }
+  $('cAdd').onclick = addCustom; $('cCmd').onkeydown = e => { if (e.key === 'Enter') addCustom(); };
+
   // ---------- вид острова ----------
   const CNAMES = { logo: 'Карина', eyes: 'Глазки', spark: 'Искра', bot: 'Бот', cat: 'Котик', blob: 'Капля', pixel: 'Пиксель' };
   function paintLook() {
@@ -644,6 +846,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (s) { st.state = s.state || 'idle'; st.sleeping = !!s.sleeping; st.listening = s.listening !== false; st.name = s.name || 'Карина'; if (s.settings) set = s.settings; if (s.volume != null) { vol.value = s.volume; $('volV').textContent = s.volume; fillRange(); } }
     mode = ''; applyLook(); render();
     loadBat(); loadTemp();
+    const rs = await call('rec_status'); if (rs && rs.on) { rec.on = true; rec.t0 = rs.t0; paintRec(); render(); }
     const m = await call('media_get'); if (m && m.status !== 'none') { info.media = m; if (m.status === 'playing') info.lastPlay = Date.now(); render(); }
   }
   applyLook(); fillRange(); render();

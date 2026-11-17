@@ -17,6 +17,13 @@ winrt-runtime>=2.0; sys_platform == "win32"                       # музыка
 winrt-Windows.Media.Control>=2.0; sys_platform == "win32"
 winrt-Windows.Foundation>=2.0; sys_platform == "win32"
 winrt-Windows.Foundation.Collections>=2.0; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=2.0; sys_platform == "win32"            # «Текст с экрана»: распознавание средствами Windows (русский и английский)
+winrt-Windows.Graphics.Imaging>=2.0; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=2.0; sys_platform == "win32"
+winrt-Windows.Globalization>=2.0; sys_platform == "win32"
+segno>=1.6             # QR-коды: создание
+zxing-cpp>=2.2         # QR-коды: чтение с экрана
+imageio-ffmpeg>=0.5    # запись экрана (свой ffmpeg внутри пакета)
 websockets>=13        # связь с микшером и расширением VPN (голосовые команды)
 # Естественный голос Silero работает на torch (CPU-версия, ~200 МБ). Ставится вместе со всем остальным и входит в установщик.
 --extra-index-url https://download.pytorch.org/whl/cpu
