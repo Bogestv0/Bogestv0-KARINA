@@ -14,12 +14,14 @@ import time
 
 from .config import ROOT
 from . import island_tools as tools
+from .halo import Halo
 
 IS_WIN = sys.platform == "win32"
 TITLE = "Остров Карины"
 
 # режим -> (ширина, высота, радиус скругления) в логических пикселях
 SIZES = {"mini": (150, 36, 18), "wide": (290, 40, 20), "full": (480, 330, 30)}
+RADIUS_MAX = 30         # то же число в ui/island.html: --r = min(30px, 50vh)
 TOP_MARGIN = 6          # отступ от верхнего края экрана
 ANIM_SECONDS = 0.32
 FORWARD_TYPES = ("state", "level", "log")      # какие события главного окна нужны острову
@@ -28,9 +30,11 @@ if IS_WIN:
     import ctypes
     from ctypes import wintypes
 
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
+    # свои копии библиотек (не ctypes.windll.*): общие функции делит весь процесс, и чужие argtypes ломали главное окно
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
     GWL_STYLE, GWL_EXSTYLE = -16, -20
+    WS_EX_APPWINDOW = 0x00040000
     WS_CAPTION, WS_THICKFRAME = 0x00C00000, 0x00040000
     WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x00000080, 0x08000000
     SWP_NOACTIVATE, SWP_FRAMECHANGED, SWP_ASYNCWINDOWPOS = 0x0010, 0x0020, 0x4000
@@ -250,6 +254,8 @@ class Island:
         self.store = tools.Store()
         self.clip = tools.ClipHistory()
         self._stop_tick = threading.Event()
+        self._stopping = False               # True, пока мы сами закрываем окно: иначе «закрытие» отменяется
+        self._halo: Halo | None = None       # сглаженный контур под островом (karina/halo.py)
 
     # ---- включение / выключение ----
     @property
@@ -272,17 +278,20 @@ class Island:
             import webview
             kw = dict(url=str(ROOT / "ui" / "island.html"), js_api=IslandApi(self, self.api, self.show_main),
                       width=SIZES["mini"][0], height=SIZES["mini"][1], min_size=(40, 20),
-                      frameless=True, easy_drag=False, shadow=False, on_top=True, background_color="#000000")
+                      frameless=True, easy_drag=False, shadow=False, on_top=True, background_color="#000000",
+                      hidden=True, focus=False)      # создаём спрятанным и без фокуса: стили «не приложение» ставим до первого показа
             w = None
-            for drop in ((), ("shadow",), ("shadow", "easy_drag"), ("shadow", "easy_drag", "min_size"), ("shadow", "easy_drag", "min_size", "on_top")):
+            for drop in ((), ("hidden", "focus"), ("shadow", "hidden", "focus"), ("shadow", "easy_drag", "hidden", "focus"),
+                         ("shadow", "easy_drag", "min_size", "hidden", "focus"), ("shadow", "easy_drag", "min_size", "on_top", "hidden", "focus")):
                 try:
                     w = webview.create_window(TITLE, **{k: v for k, v in kw.items() if k not in drop})
                     break
                 except TypeError as e:
-                    self.trace(f"Остров: create_window без {drop[-1] if drop else '-'} ({e})")
+                    self.trace(f"Остров: create_window без {', '.join(drop) or '-'} ({e})")
             if w is None:
                 return False
             self.window, self.ready, self._hwnd = w, False, 0
+            self._halo = Halo(self.trace)
             self._q = queue.Queue(maxsize=200)
             threading.Thread(target=self._pump, args=(w, self._q), daemon=True, name="karina-island").start()
             self._stop_tick = threading.Event()
@@ -291,6 +300,8 @@ class Island:
             try:
                 w.events.shown += self._on_shown
                 w.events.loaded += self._on_loaded
+                w.events.closing += self._on_closing          # крестик/Alt+F4 остров не закрывают (иначе он «пропадал» и больше не открывался)
+                w.events.closed += lambda: self._on_closed(w)
             except Exception as e:
                 self.trace(f"Остров: не подписался на события ({e})")
             # события «показано»/«загружено» могли сработать до подписки — поэтому ещё и сами проверяем окно в отдельном потоке
@@ -308,10 +319,37 @@ class Island:
             return False
 
     def stop(self):
+        self._stopping = True
+        try:
+            self._stop()
+        finally:
+            self._stopping = False
+
+    def _on_closing(self):
+        """False — отменить закрытие. Остров закрывается только нами (выключили в настройках, выход из Карины, выключение Windows)."""
+        if self._stopping or getattr(self.api, "quitting", False):
+            return None
+        self.trace("Остров: попытку закрыть окно отменила")
+        return False
+
+    def _on_closed(self, w):
+        """Окно всё же закрылось (например, процесс завершают): сбрасываем состояние, чтобы остров можно было открыть заново."""
+        if self.window is w:
+            self.trace("Остров: окно закрыто, состояние сброшено")
+            self._stopping = True
+            try:
+                self._stop()
+            finally:
+                self._stopping = False
+
+    def _stop(self):
         w, self.window, self.ready, self._hwnd = self.window, None, False, 0
         self._gen += 1
         self._stop_tick.set()
         self.clip.stop()
+        halo, self._halo = self._halo, None
+        if halo is not None:
+            halo.stop()
         q, self._q = self._q, None
         if q is not None:
             try:
@@ -378,6 +416,8 @@ class Island:
         try:
             if h:
                 user32.ShowWindow(h, 0)
+                if self._halo is not None:
+                    self._halo.show(False)
                 time.sleep(0.3)
             path = tools.save_screenshot()
             return {"ok": True, "path": path}
@@ -386,6 +426,8 @@ class Island:
         finally:
             if h:
                 user32.ShowWindow(h, 8)
+                if self._halo is not None:
+                    self._halo.show(True)
 
     def _pump(self, w, q):
         while True:
@@ -437,7 +479,7 @@ class Island:
             st = user32.GetWindowLongPtrW(h, GWL_STYLE)
             user32.SetWindowLongPtrW(h, GWL_STYLE, st & ~(WS_CAPTION | WS_THICKFRAME))
             ex = user32.GetWindowLongPtrW(h, GWL_EXSTYLE)
-            user32.SetWindowLongPtrW(h, GWL_EXSTYLE, ex | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
+            user32.SetWindowLongPtrW(h, GWL_EXSTYLE, (ex | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW)     # не значок на панели задач
             user32.SetWindowPos(h, None, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS)
             if not user32.IsWindowVisible(h):
                 user32.ShowWindow(h, 8)                                                      # SW_SHOWNA
@@ -505,12 +547,21 @@ class Island:
         if not hwnd:
             return
         sc = self._scale(hwnd)
-        pw, ph, pr = max(20, int(w * sc)), max(16, int(h * sc)), max(4, int(r * sc))
+        pw, ph = max(20, int(w * sc)), max(16, int(h * sc))
+        pr = max(4.0, min(RADIUS_MAX * sc, ph / 2))      # та же формула, что в CSS страницы: min(30px, 50vh)
         left, top, right, _ = self._monitor()
         x = left + (right - left - pw) // 2
         y = top + int(TOP_MARGIN * sc)
         user32.SetWindowPos(hwnd, wintypes.HWND(HWND_TOPMOST), x, y, pw, ph, SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
-        rgn = gdi32.CreateRoundRectRgn(0, 0, pw + 1, ph + 1, pr * 2, pr * 2)
+        smooth = False
+        halo = self._halo
+        if halo is not None:
+            if not halo.ok and not halo.tried:
+                halo.tried = True
+                halo.start()
+            smooth = halo.update(hwnd, x, y, pw, ph, pr)
+        ins = 1 if smooth else 0                         # со сглаженной кромкой регион чуть меньше окна: по краю видна она
+        rgn = gdi32.CreateRoundRectRgn(ins, ins, pw - ins + 1, ph - ins + 1, int(2 * (pr - ins)), int(2 * (pr - ins)))
         user32.SetWindowRgn(hwnd, rgn, True)         # система сама освободит регион
 
     def set_mode(self, mode: str):

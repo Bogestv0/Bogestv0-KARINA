@@ -24,7 +24,9 @@ VK_LBUTTON = 0x01
 if IS_WIN:
     import ctypes
     from ctypes import wintypes
-    user32 = ctypes.windll.user32
+    # СВОЯ копия user32: ctypes.windll.user32 общий на весь процесс, и остров (island.py) переписывал бы argtypes
+    # у тех же функций (GetMonitorInfoW с другим классом структуры) — окно переставало двигаться и менять размер.
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
 
     class _RECT(ctypes.Structure):
         _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG), ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
