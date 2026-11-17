@@ -115,6 +115,7 @@ class Halo:
         self._lock = threading.Lock()
         self._key = None                # (w, h, r) последней нарисованной маски
         self._pix = b""
+        self._warm = None               # (ключ, пиксели): кромка, заранее посчитанная в другом потоке
         self.ok = False
         self.tried = False              # попытка создать окно уже была (повторять на каждом кадре анимации не нужно)
 
@@ -150,6 +151,17 @@ class Halo:
         self.ok = False
         self._hwnd = 0
 
+    def warm(self, w, h, r):
+        """Заранее считает кромку для большой панели (numpy, десятки миллисекунд), пока идёт анимация: к её концу всё готово."""
+        key = (max(1, int(round(w))), max(1, int(round(h))), round(float(r), 2))
+
+        def run():
+            try:
+                self._warm = (key, pill_bgra(key[0], key[1], key[2]))
+            except Exception:
+                self._warm = None
+        threading.Thread(target=run, daemon=True, name="karina-island-halo-warm").start()
+
     def update(self, island_hwnd: int, x: int, y: int, w: int, h: int, r: float) -> bool:
         """Поставить сглаженный контур под остров. False — не получилось (тогда остров рисуется с обычным краем)."""
         if not self.ok or not self._hwnd or w < 2 or h < 2:
@@ -158,7 +170,8 @@ class Halo:
             with self._lock:
                 key = (int(w), int(h), round(float(r), 2))
                 if key != self._key or not self._pix:
-                    self._pix, self._key = pill_bgra(w, h, r), key
+                    wm = self._warm
+                    self._pix, self._key = (wm[1] if wm and wm[0] == key else pill_bgra(w, h, r)), key
                 self._blit(int(x), int(y), int(w), int(h), self._pix)
                 _u32.SetWindowPos(self._hwnd, wintypes.HWND(island_hwnd), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)   # сразу под островом
                 _u32.ShowWindow(self._hwnd, SW_SHOWNA)

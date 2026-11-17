@@ -21,7 +21,10 @@ CHARACTERS = ("logo", "eyes", "spark", "bot", "cat", "blob", "pixel")
 HOLIDAY_MODES = ("dates", "always", "off")
 GARLANDS = ("off", "blink", "wave")
 IDLE_KEYS = ("idle_time", "idle_battery", "idle_temp", "idle_music")       # что показывать на свёрнутой плашке
-ISLAND_DEFAULTS = {"character": "logo", "holiday": "dates", "snow": True, "garland": "off", "city": "", "tools": [], "links": [], **{k: True for k in IDLE_KEYS}}
+DOCKS = ("top", "bottom", "left", "right")                                  # к какому краю экрана прилип остров
+ISLAND_DEFAULTS = {"character": "logo", "holiday": "dates", "snow": True, "garland": "off", "city": "", "tools": [], "links": [],
+                   "pinned": False, "dock": "top", "pos": 0.5, "mon": None,   # положение: край, место вдоль края (0..1), монитор; помним только если «закреплён»
+                   **{k: True for k in IDLE_KEYS}}
 
 
 # ---------------------------------------------------------------- настройки острова
@@ -49,6 +52,27 @@ def clean_settings(patch: dict, old: dict | None = None) -> dict:
     if "links" in p:
         from .shelf import clean_links                          # ярлыки на главной (программа, папка, файл, сайт)
         out["links"] = clean_links(p["links"])
+    if "pinned" in p:
+        out["pinned"] = bool(p["pinned"])
+    if p.get("dock") in DOCKS:
+        out["dock"] = p["dock"]
+    if "pos" in p:
+        out["pos"] = p["pos"]
+    if "mon" in p:
+        out["mon"] = p["mon"]
+    # положение проверяем всегда (в config.json могли править руками)
+    if out.get("dock") not in DOCKS:
+        out["dock"] = "top"
+    try:
+        out["pos"] = min(1.0, max(0.0, float(out.get("pos", 0.5))))
+    except (TypeError, ValueError):
+        out["pos"] = 0.5
+    m = out.get("mon")
+    try:
+        out["mon"] = [int(m[0]), int(m[1])] if isinstance(m, (list, tuple)) and len(m) == 2 else None
+    except (TypeError, ValueError):
+        out["mon"] = None
+    out["pinned"] = bool(out.get("pinned"))
     return out
 
 

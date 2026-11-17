@@ -2,7 +2,10 @@
 (слушает, думает, говорит), и по нажатию раскрывается в панель с кнопками.
 
 Остров — отдельное безрамочное окно pywebview (ui/island.html). Форму (скруглённую «таблетку») и плавное
-изменение размера делаем через Win32: меняем размер окна и его регион, поэтому прозрачность окна не нужна.
+изменение размера делаем через Win32 регион, поэтому прозрачность окна не нужна. Само окно при раскрытии и сворачивании
+НЕ меняет размер: оно с запасом, под самую большую панель, а видна только та часть, что внутри региона. Анимируется один регион
+(дёшево), а WebView2 не перерисовывается на каждом кадре, оттого плавно. Остров можно перетащить: он прилипает к ближайшему краю
+экрана (у боковых краёв «стоит», панель открывается к центру экрана) и закрепляется кнопкой в панели.
 Не на Windows модуль ничего не делает. Включается в «Настройки → Окно и оформление» (config: ui.island)."""
 from __future__ import annotations
 import json
@@ -27,11 +30,81 @@ SNIP_TIMEOUT = 180       # если выбор области забыли за�
 
 # режим -> (ширина, высота, радиус скругления) в логических пикселях
 SIZES = {"mini": (150, 36, 18), "info": (232, 36, 18), "music": (300, 36, 18), "wide": (290, 40, 20), "drop": (300, 96, 30), "full": (480, 330, 30)}
+# у левого и правого края плашка «стоит»: те же режимы, но вертикальные (высоту info/music задаёт содержимое). wide, drop и full остаются горизонтальными
+VSIZES = {"mini": (36, 76, 18), "info": (48, 120, 24), "music": (48, 112, 24)}
 WIDTH_MIN, WIDTH_MAX = 150, 420        # страница сама сообщает нужную ширину для режимов «info» и «music» (по содержимому)
-RADIUS_MAX = 30         # то же число в ui/island.html: --r = min(30px, 50vh)
-TOP_MARGIN = 6          # отступ от верхнего края экрана
-ANIM_SECONDS = 0.32
+VEXT_MIN, VEXT_MAX = 64, 260           # то же для вертикальной плашки: высота
+RADIUS_MAX = 30
+TOP_MARGIN = 6          # отступ от края экрана
+ANIM_GROW, ANIM_SHRINK, ANIM_FLY = 0.36, 0.28, 0.26      # раскрытие, сворачивание, перелёт к другому краю (секунды)
+ANIM_SECONDS = ANIM_GROW
+HALO_ANIM_AREA = 60000  # пока контур больше этой площади (px²), на время анимации его прячем: пересчёт сглаженной кромки на каждом кадре слишком дорог
 FORWARD_TYPES = ("state", "level", "log")      # какие события главного окна нужны острову
+DOCKS = tools.DOCKS
+
+
+def is_side(dock: str) -> bool:
+    return dock in ("left", "right")
+
+
+def is_vert(dock: str, mode: str) -> bool:
+    """Плашка стоит вертикально: остров у бокового края и режим свёрнутый (mini, info, music)."""
+    return is_side(dock) and mode in VSIZES
+
+
+def _num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def mode_size(dock: str, mode: str, ext=None):
+    """(ширина, высота, радиус) в логических пикселях. ext — нужный размер по длинной стороне от содержимого (ширина или, у боковых краёв, высота)."""
+    if is_vert(dock, mode):
+        w, h, r = VSIZES[mode]
+        if mode != "mini" and _num(ext):
+            h = max(VEXT_MIN, min(VEXT_MAX, float(ext)))
+        return w, h, r
+    w, h, r = SIZES[mode]
+    if mode in ("info", "music", "mini") and _num(ext):
+        w = max(WIDTH_MIN, min(WIDTH_MAX, float(ext)))
+    return w, h, r
+
+
+def pill_xy(dock: str, pos: float, w: int, h: int, work, margin: int):
+    """Левый верхний угол плашки w×h (физические пиксели): прижата к краю dock с отступом margin, центр на доле pos вдоль края,
+    но целиком внутри рабочей области work = (left, top, right, bottom)."""
+    L, T, R, B = work
+    pos = min(1.0, max(0.0, float(pos)))
+
+    def along(a0, a1, size):
+        x = round(a0 + pos * (a1 - a0) - size / 2)
+        lo, hi = a0 + margin, a1 - margin - size
+        return (a0 + (a1 - a0 - size) // 2) if hi < lo else max(lo, min(hi, x))
+    if dock == "bottom":
+        return along(L, R, w), B - margin - h
+    if dock == "left":
+        return L + margin, along(T, B, h)
+    if dock == "right":
+        return R - margin - w, along(T, B, h)
+    return along(L, R, w), T + margin
+
+
+def snap_dock(cx: float, cy: float, work):
+    """К какому краю рабочей области ближе всего точка (cx, cy) и где вдоль этого края она лежит (0..1; у середины прилипает к 0.5)."""
+    L, T, R, B = work
+    dist = {"left": cx - L, "right": R - cx, "top": cy - T, "bottom": B - cy}
+    dock = min(("top", "bottom", "left", "right"), key=lambda k: dist[k])
+    pos = (cx - L) / max(1, R - L) if dock in ("top", "bottom") else (cy - T) / max(1, B - T)
+    pos = min(1.0, max(0.0, pos))
+    return dock, (0.5 if abs(pos - 0.5) < 0.04 else pos)
+
+
+def union_rect(rects):
+    x0 = min(r[0] for r in rects)
+    y0 = min(r[1] for r in rects)
+    x1 = max(r[0] + r[2] for r in rects)
+    y1 = max(r[1] + r[3] for r in rects)
+    return int(x0), int(y0), int(x1 - x0), int(y1 - y0)
+
 
 if IS_WIN:
     import ctypes
@@ -44,7 +117,7 @@ if IS_WIN:
     WS_EX_APPWINDOW = 0x00040000
     WS_CAPTION, WS_THICKFRAME = 0x00C00000, 0x00040000
     WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x00000080, 0x08000000
-    SWP_NOACTIVATE, SWP_FRAMECHANGED, SWP_ASYNCWINDOWPOS = 0x0010, 0x0020, 0x4000
+    SWP_NOACTIVATE, SWP_FRAMECHANGED, SWP_ASYNCWINDOWPOS, SWP_NOSIZE = 0x0010, 0x0020, 0x4000, 0x0001
     HWND_TOPMOST = -1
 
     class _RECT(ctypes.Structure):
@@ -73,20 +146,25 @@ if IS_WIN:
         user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
         user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
         user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+        user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+        user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        user32.GetAsyncKeyState.restype = ctypes.c_short
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(_RECT)]
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.GetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN]
+        gdi32.CreateRectRgn.argtypes = [ctypes.c_int] * 4
+        gdi32.CreateRectRgn.restype = wintypes.HRGN
+        gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
     try:
         _fix_types()
     except Exception:
         pass
 
 
-def _ease(p: float, grow: bool) -> float:
-    """Пружинка при раскрытии (небольшой «перелёт»), мягкое торможение при сворачивании."""
+def _ease(p: float, grow: bool = True) -> float:
+    """Плавное торможение без «перелёта»: раскрытие чуть мягче (четвёртая степень), сворачивание резвее (третья)."""
     p = max(0.0, min(1.0, p))
-    if grow:
-        c1 = 1.25
-        c3 = c1 + 1
-        return 1 + c3 * (p - 1) ** 3 + c1 * (p - 1) ** 2
-    return 1 - (1 - p) ** 3
+    return 1 - (1 - p) ** (4 if grow else 3)
 
 
 class IslandApi:
@@ -99,11 +177,23 @@ class IslandApi:
     def get_state(self):
         a = self._api.assistant
         return {"state": a.state, "sleeping": bool(a.sleeping), "listening": bool(a.listening), "name": a.cfg["name"],
-                "settings": self._island.settings(), "volume": self.volume_get(), "admin": self._island.is_admin()}
+                "settings": self._island.settings(), "volume": self.volume_get(), "admin": self._island.is_admin(),
+                "layout": self._island.layout_info()}
 
     def set_mode(self, mode: str, width=None):
-        self._island.set_mode(str(mode), width)
-        return True
+        """Страница просит режим; в ответ получает, где внутри окна рисовать плашку (см. Island._target)."""
+        return self._island.set_mode(str(mode), width) or True
+
+    # ---- положение: перетаскивание, закрепление ----
+    def drag(self):
+        """Страница заметила, что плашку потащили: пока кнопка мыши нажата, окно ходит за курсором, потом прилипает к краю."""
+        return self._island.drag()
+
+    def pin_set(self, on):
+        return self._island.set_pinned(bool(on))
+
+    def dock_reset(self):
+        return self._island.dock_reset()
 
     def set_listening(self, on: bool):
         return self._api.set_listening(bool(on))
@@ -324,7 +414,9 @@ class IslandApi:
 
     def sys_action(self, name: str):
         if name == "dark":
-            return tools.dark_set(not bool(tools.dark_get()))
+            ok = tools.dark_set(not bool(tools.dark_get()))
+            self._island.reassert()                  # после смены темы Windows у окна острова слетала форма: проверяем и возвращаем
+            return ok
         if name in ("wifi", "bluetooth"):
             return tools.open_settings(name)
         if name == "vpn":
@@ -508,7 +600,14 @@ class Island:
         self.window = None
         self.ready = False
         self._hwnd = 0
-        self._cur = SIZES["mini"]            # текущий (ширина, высота, радиус) во время анимации
+        self._mode, self._ext = "mini", None  # какой режим просит страница и его размер по длинной стороне
+        self._dock, self._pos, self._mon = "top", 0.5, None    # край, доля вдоль края, левый верхний угол монитора (None — основной)
+        self._pinned = False                 # закреплён: стоит на своём месте и после перезапуска, перетащить нельзя
+        self._rect_cur = None                # видимая плашка сейчас (x, y, w, h, радиус) в физических пикселях экрана; во время анимации меняется
+        self._win = None                     # где стоит окно (x, y, w, h): с запасом, под самую большую панель
+        self._busy = False                   # плашку тащат или она летит к краю: режимы пока только запоминаем
+        self._animating = False
+        self._last_fix = 0.0
         self._gen = 0
         self._lock = threading.Lock()
         self._q: queue.Queue | None = None
@@ -553,6 +652,7 @@ class Island:
             # Окно создаём ПОКАЗАННЫМ (сразу наверху по центру), а не спрятанным: у спрятанного окна WebView2 запускается с выключенной
             # видимостью, страница работает (скрипт даже меняет размер плашки), но не рисуется: плашка остаётся чёрной и лишь на миг
             # вспыхивает при смене размера. Стили «не приложение» (без значка на панели задач) ставим сразу после создания.
+            self._load_place()
             x0, y0 = self._start_xy()
             self._prev_fg = 0
             try:
@@ -579,6 +679,7 @@ class Island:
             threading.Thread(target=self._pump, args=(w, self._q), daemon=True, name="karina-island").start()
             self._stop_tick = threading.Event()
             threading.Thread(target=self._tick, args=(self._stop_tick,), daemon=True, name="karina-island-tick").start()
+            threading.Thread(target=self._guard, args=(w, self._stop_tick), daemon=True, name="karina-island-guard").start()
             self.clip.start()
             self._sync_media()
             try:
@@ -701,11 +802,22 @@ class Island:
             self._drag_until = time.time() + 1.0
         return done["ok"]
 
+    def _load_place(self):
+        """Закреплённое положение берём из настроек; не закреплённый остров при каждом запуске стоит сверху по центру."""
+        cfg = self.settings()
+        if cfg.get("pinned"):
+            self._pinned, self._dock, self._pos = True, cfg["dock"], cfg["pos"]
+            self._mon = tuple(cfg["mon"]) if cfg.get("mon") else None
+        else:
+            self._pinned, self._dock, self._pos, self._mon = False, "top", 0.5, None
+        self._mode, self._ext, self._rect_cur, self._win = "mini", None, None, None
+
     def _start_xy(self):
-        """Где создать окно: сверху по центру основного экрана (точное положение потом ставит _place)."""
+        """Где создать окно: у выбранного края (точное положение потом ставит _apply, когда известен масштаб экрана)."""
         try:
-            sw = int(user32.GetSystemMetrics(0))
-            return max(0, (sw - SIZES["mini"][0]) // 2), TOP_MARGIN
+            _, work = self._monitor()
+            x, y = self._rect_for("mini", None, 1.0, work)[:2]
+            return x, y
         except Exception:
             return None, None
 
@@ -1085,8 +1197,8 @@ class Island:
         self._setup_window()
 
     # ---- положение и форма ----
-    def _hwnd_of(self) -> int:
-        if self._hwnd:
+    def _hwnd_of(self, refresh: bool = False) -> int:
+        if self._hwnd and not refresh:
             return self._hwnd
         h = 0
         nat = getattr(self.window, "native", None) if self.window else None
@@ -1103,8 +1215,9 @@ class Island:
                 h = int(user32.FindWindowW(None, TITLE) or 0)         # запасной путь: найти окно по заголовку
             except Exception:
                 h = 0
-        self._hwnd = h
-        return h
+        if h or not refresh:                                         # при обновлении не затираем прежний handle, если новый получить не удалось
+            self._hwnd = h
+        return self._hwnd
 
     def _setup_window(self) -> bool:
         """Без рамки и заголовка, без значка на панели задач и без кражи фокуса, поверх всех окон, по центру у верхнего края.
@@ -1125,7 +1238,7 @@ class Island:
         except Exception as e:
             self.trace(f"Остров: стили окна не применены ({e})")
         try:
-            self._place(*self._cur)
+            self._apply(force=True)
         except Exception as e:
             self.trace(f"Остров: не удалось поставить окно ({e})")
             return False
@@ -1185,69 +1298,334 @@ class Island:
             return 1.0
 
     def _monitor(self):
-        mon = user32.MonitorFromPoint(wintypes.POINT(0, 0), 1)       # основной монитор
+        """((левый, верхний) угол монитора, рабочая область (left, top, right, bottom)): основной монитор или тот, где остров закреплён."""
+        pt, flag = (wintypes.POINT(self._mon[0] + 1, self._mon[1] + 1), 2) if self._mon else (wintypes.POINT(0, 0), 1)
+        return self._monitor_at(pt, flag)
+
+    def _monitor_at(self, pt, flag=2):
+        mon = user32.MonitorFromPoint(pt, flag)
         mi = _MONITORINFO()
         mi.cbSize = ctypes.sizeof(_MONITORINFO)
         if mon and user32.GetMonitorInfoW(mon, ctypes.byref(mi)):
-            r = mi.rcMonitor
-            return r.left, r.top, r.right, r.bottom
-        return 0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+            r, w = mi.rcMonitor, mi.rcWork
+            return (r.left, r.top), (w.left, w.top, w.right, w.bottom)
+        return (0, 0), (0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))
 
-    def _place(self, w: float, h: float, r: float):
-        hwnd = self._hwnd_of()
-        if not hwnd:
+    # ---- геометрия: всё в физических пикселях экрана ----
+    def _rect_for(self, mode: str, ext, sc: float, work, dock=None, pos=None):
+        """Где и какой величины плашка в режиме mode: (x, y, w, h, радиус)."""
+        dock, pos = dock or self._dock, self._pos if pos is None else pos
+        w, h, r = mode_size(dock, mode, ext)
+        pw, ph = max(20, int(round(w * sc))), max(16, int(round(h * sc)))
+        pr = max(4.0, min(r * sc, ph / 2, pw / 2))
+        x, y = pill_xy(dock, pos, pw, ph, work, int(round(TOP_MARGIN * sc)))
+        return x, y, pw, ph, pr
+
+    def _win_rect(self, sc: float, work, dock=None, pos=None):
+        """Окно с запасом: накрывает плашку во всех режимах (в том числе самую большую панель). Видна только область региона."""
+        dock = dock or self._dock
+        rects = []
+        for m in SIZES:
+            ext = (VEXT_MAX if is_vert(dock, m) else WIDTH_MAX) if m in ("info", "music") else None
+            rects.append(self._rect_for(m, ext, sc, work, dock, pos))
+        return union_rect(rects)
+
+    def _target(self, mode: str, ext):
+        """(куда должна встать плашка, раскладка для страницы). Раскладка — размеры в CSS-пикселях относительно окна: страница
+        рисует содержимое сразу на конечном месте, а регион плавно до него «дорастает»."""
+        if not IS_WIN or self.window is None:
+            return None
+        h = self._hwnd_of()
+        if not h:
+            return None
+        sc = self._scale(h)
+        _, work = self._monitor()
+        W = self._win_rect(sc, work)
+        b = self._rect_for(mode, ext, sc, work)
+        fx, fy = self._rect_for("full", None, sc, work)[:2]
+        lay = {"mode": mode, "dock": self._dock, "pinned": self._pinned, "r": b[4] / sc,
+               "s": [(b[0] - W[0]) / sc, (b[1] - W[1]) / sc, b[2] / sc, b[3] / sc], "f": [(fx - W[0]) / sc, (fy - W[1]) / sc]}
+        return b, lay
+
+    def layout_info(self):
+        """Текущая раскладка для страницы (при загрузке и после смены края)."""
+        t = self._target(self._mode, self._ext)
+        return t[1] if t else None
+
+    def _apply(self, force: bool = False):
+        """Ставит окно на место (с запасом по размеру) и возвращает форму (регион) плашке. Можно вызывать сколько угодно раз."""
+        h = self._hwnd_of()
+        if not h:
             return
-        sc = self._scale(hwnd)
-        pw, ph = max(20, int(w * sc)), max(16, int(h * sc))
-        pr = max(4.0, min(RADIUS_MAX * sc, ph / 2))      # та же формула, что в CSS страницы: min(30px, 50vh)
-        left, top, right, _ = self._monitor()
-        x = left + (right - left - pw) // 2
-        y = top + int(TOP_MARGIN * sc)
-        user32.SetWindowPos(hwnd, wintypes.HWND(HWND_TOPMOST), x, y, pw, ph, SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
+        sc = self._scale(h)
+        _, work = self._monitor()
+        W = self._win_rect(sc, work)
+        r = _RECT()
+        user32.GetWindowRect(h, ctypes.byref(r))
+        if force or (r.left, r.top, r.right - r.left, r.bottom - r.top) != W:
+            user32.SetWindowPos(h, wintypes.HWND(HWND_TOPMOST), W[0], W[1], W[2], W[3], SWP_NOACTIVATE)      # без ASYNC: регион ниже должен лечь на уже готовое окно
+        self._win = W
+        if self._rect_cur is None:
+            self._rect_cur = self._rect_for(self._mode, self._ext, sc, work)
+        if not self._animating:
+            self._draw(self._rect_cur)
+
+    def _draw(self, rect, halo_ok: bool = True):
+        """Форма плашки: регион по прямоугольнику rect (экранные координаты) + сглаженная кромка под ней."""
+        h, W = self._hwnd_of(), self._win
+        if not h or W is None:
+            return
+        x, y, w, hh, r = rect
+        x, y, pw, ph = int(round(x)), int(round(y)), max(20, int(round(w))), max(16, int(round(hh)))
+        pr = max(4.0, min(float(r), ph / 2, pw / 2))
         smooth = False
         halo = self._halo
-        if halo is not None:
+        if halo is not None and halo_ok:
             if not halo.ok and not halo.tried:
                 halo.tried = True
                 halo.start()
-            smooth = halo.update(hwnd, x, y, pw, ph, pr)
+            smooth = halo.update(h, x, y, pw, ph, pr)
         ins = 1 if smooth else 0                         # со сглаженной кромкой регион чуть меньше окна: по краю видна она
-        rgn = gdi32.CreateRoundRectRgn(ins, ins, pw - ins + 1, ph - ins + 1, int(2 * (pr - ins)), int(2 * (pr - ins)))
-        user32.SetWindowRgn(hwnd, rgn, True)         # система сама освободит регион
+        rx, ry = x - W[0], y - W[1]
+        rgn = gdi32.CreateRoundRectRgn(rx + ins, ry + ins, rx + pw - ins + 1, ry + ph - ins + 1, int(2 * (pr - ins)), int(2 * (pr - ins)))
+        user32.SetWindowRgn(h, rgn, True)                # система сама освободит регион
+        self._rect_cur = (x, y, pw, ph, pr)
 
+    # ---- режимы и анимация ----
     def set_mode(self, mode: str, width=None):
+        """Страница просит другой режим (свёрнутая плашка, «думаю», панель…). Возвращает раскладку: где внутри окна рисовать содержимое."""
         if mode not in SIZES or not IS_WIN or self.window is None:
-            return
-        b = SIZES[mode]
-        if mode in ("info", "music", "mini") and isinstance(width, (int, float)) and not isinstance(width, bool):
-            b = (max(WIDTH_MIN, min(WIDTH_MAX, float(width))), b[1], b[2])        # ширину задаёт содержимое плашки
+            return None
+        self._mode, self._ext = mode, (float(width) if _num(width) else None)
+        return self._go()
+
+    def _go(self):
+        t = self._target(self._mode, self._ext)
+        if t is None:
+            return None
+        b, lay = t
         with self._lock:
-            if tuple(round(v) for v in b) == tuple(round(v) for v in self._cur):
-                return
+            if self._busy or self._win is None:
+                return lay                                       # тащат плашку или окно ещё не поставлено: применится потом
+            a = self._rect_cur or b
+            if all(abs(a[i] - b[i]) < 0.5 for i in range(5)):
+                return lay
             self._gen += 1
             gen = self._gen
-            a = self._cur
-        grow = b[0] * b[1] >= a[0] * a[1]
+        grow = b[2] * b[3] >= a[2] * a[3]
         threading.Thread(target=self._animate, args=(gen, a, b, grow), daemon=True, name="karina-island-anim").start()
+        return lay
+
+    @staticmethod
+    def _hires(on: bool):
+        """Таймер Windows с шагом 1 мс: иначе sleep спит по 15,6 мс, и анимация идёт рывками."""
+        try:
+            m = ctypes.WinDLL("winmm")
+            (m.timeBeginPeriod if on else m.timeEndPeriod)(1)
+        except Exception:
+            pass
 
     def _animate(self, gen, a, b, grow):
-        t0 = time.time()
-        while gen == self._gen and self.window is not None:
-            p = (time.time() - t0) / ANIM_SECONDS
-            e = _ease(p, grow)
-            cur = tuple(a[i] + (b[i] - a[i]) * e for i in range(3))
-            try:
-                self._place(*cur)
-            except Exception as ex:
-                self.trace(f"Остров: анимация прервана ({ex})")
-                return
-            self._cur = cur
-            if p >= 1:
-                break
-            time.sleep(0.012)
+        """Окно не трогаем, меняем только регион: от прежней плашки к новой. Время считаем по часам, а не по числу кадров."""
+        dur = ANIM_GROW if grow else ANIM_SHRINK
+        heavy = max(a[2] * a[3], b[2] * b[3]) > HALO_ANIM_AREA * self._scale(self._hwnd_of()) ** 2
+        halo = self._halo
+        if heavy and halo is not None:
+            halo.warm(b[2], b[3], b[4])                          # кромку большой панели готовим заранее, в другом потоке
+            halo.show(False)
+        self._animating = True
+        self._hires(True)
+        try:
+            t0 = time.perf_counter()
+            while gen == self._gen and self.window is not None:
+                p = (time.perf_counter() - t0) / dur
+                e = _ease(p, grow)
+                self._draw(tuple(a[i] + (b[i] - a[i]) * e for i in range(5)), halo_ok=not heavy)
+                if p >= 1:
+                    break
+                time.sleep(0.008)
+        except Exception as ex:
+            self.trace(f"Остров: анимация прервана ({ex})")
+        finally:
+            self._hires(False)
+            self._animating = False
         if gen == self._gen and self.window is not None:
-            self._cur = b
             try:
-                self._place(*b)
+                self._draw(b)                                    # итог: точный размер и сглаженная кромка
             except Exception:
                 pass
+
+    # ---- перетаскивание и прилипание к краю ----
+    def drag(self) -> dict:
+        """Страница заметила, что плашку потащили. Пока кнопка мыши нажата, окно ходит за курсором (мышь читаем сами, окно под курсором
+        уезжает, поэтому события страницы тут не помощники); отпустили — плашка прилипает к ближайшему краю экрана."""
+        if not IS_WIN or self.window is None or not self.ready or self._pinned or self._snip is not None:
+            return {"ok": False}
+        h = self._hwnd_of()
+        with self._lock:
+            if not h or self._busy or self._mode in ("full", "drop") or self._rect_cur is None or self._win is None:
+                return {"ok": False}
+            self._busy = True
+            self._gen += 1                                       # прерываем анимацию режима
+        try:
+            self._hires(True)
+            try:
+                return self._drag_loop(h)
+            finally:
+                self._hires(False)
+        except Exception as e:
+            self.trace(f"Остров: перетаскивание не удалось ({e.__class__.__name__}: {e})")
+            return {"ok": False}
+        finally:
+            self._busy = False
+            self._go()                                           # режим мог поменяться, пока тащили
+
+    def _drag_loop(self, h) -> dict:
+        p0, r0 = wintypes.POINT(), _RECT()
+        user32.GetCursorPos(ctypes.byref(p0))
+        user32.GetWindowRect(h, ctypes.byref(r0))
+        x0, y0, W = r0.left, r0.top, self._win
+        rect = self._rect_cur
+        ox, oy = rect[0] - x0, rect[1] - y0                      # где плашка внутри окна
+        vk = 0x02 if user32.GetSystemMetrics(23) else 0x01       # основная кнопка мыши (SM_SWAPBUTTON)
+        pt, moved, end = wintypes.POINT(), False, time.time() + 120
+        nx, ny = x0, y0
+        while user32.GetAsyncKeyState(vk) & 0x8000 and time.time() < end and self.window is not None:
+            user32.GetCursorPos(ctypes.byref(pt))
+            nx, ny = x0 + pt.x - p0.x, y0 + pt.y - p0.y
+            if not moved and abs(pt.x - p0.x) + abs(pt.y - p0.y) < 4:
+                time.sleep(0.008)
+                continue
+            moved = True
+            user32.SetWindowPos(h, wintypes.HWND(HWND_TOPMOST), nx, ny, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
+            self._win = (nx, ny, W[2], W[3])
+            halo = self._halo
+            if halo is not None and halo.ok:
+                halo.update(h, nx + ox, ny + oy, int(rect[2]), int(rect[3]), rect[4])
+            time.sleep(0.008)
+        if not moved:
+            return {"ok": True, "moved": False}
+        cx, cy = nx + ox + rect[2] / 2, ny + oy + rect[3] / 2
+        mon, work = self._monitor_at(wintypes.POINT(int(cx), int(cy)), 2)
+        dock, pos = snap_dock(cx, cy, work)
+        self._fly_to(dock, pos, mon)
+        return {"ok": True, "moved": True, "dock": dock, "pos": pos}
+
+    def _fly_to(self, dock: str, pos: float, mon):
+        """Плавно перелетает на новое место (край, доля вдоль края, монитор). Содержимое на время прячем: оно перерисуется уже на месте."""
+        h = self._hwnd_of()
+        a = self._rect_cur
+        old_vert = is_side(self._dock)
+        self._dock, self._pos, self._mon = dock, pos, (tuple(mon) if mon else None)
+        if is_side(dock) != old_vert:
+            self._ext = None                                     # длинная сторона была шириной, стала высотой (или наоборот): страница пришлёт заново
+        self._js("window.karina && window.karina.fly(true)")
+        time.sleep(0.14)
+        sc = self._scale(h)
+        _, work = self._monitor()
+        b = self._rect_for(self._mode, self._ext, sc, work)
+        # на время полёта окно = сама плашка: двигать маленькое окно дёшево, а содержимое спрятано
+        self._animating = True
+        try:
+            ax, ay, aw, ah, ar = a
+            user32.SetWindowPos(h, wintypes.HWND(HWND_TOPMOST), int(ax), int(ay), int(aw), int(ah), SWP_NOACTIVATE)
+            self._win = (int(ax), int(ay), int(aw), int(ah))
+            t0 = time.perf_counter()
+            while self.window is not None:
+                p = (time.perf_counter() - t0) / ANIM_FLY
+                e = _ease(p, True)
+                cur = tuple(a[i] + (b[i] - a[i]) * e for i in range(5))
+                user32.SetWindowPos(h, wintypes.HWND(HWND_TOPMOST), int(round(cur[0])), int(round(cur[1])), int(round(cur[2])), int(round(cur[3])), SWP_NOACTIVATE)
+                self._win = (int(round(cur[0])), int(round(cur[1])), int(round(cur[2])), int(round(cur[3])))
+                self._draw((cur[0], cur[1], cur[2], cur[3], cur[4]))
+                if p >= 1:
+                    break
+                time.sleep(0.008)
+        finally:
+            self._animating = False
+        self._rect_cur = b
+        self._apply(force=True)                                   # окно снова с запасом под самую большую панель
+        lay = self.layout_info()
+        self._js("window.karina && window.karina.layout(" + json.dumps(lay) + ")")
+        self._js("window.karina && window.karina.fly(false)")
+
+    def set_pinned(self, on: bool):
+        """Закрепить на этом месте: после перезапуска остров встанет сюда же, и перетащить его нельзя, пока не открепят."""
+        self._pinned = bool(on)
+        patch = {"pinned": self._pinned}
+        if self._pinned:
+            patch.update(dock=self._dock, pos=self._pos, mon=list(self._mon) if self._mon else None)
+        self.settings_set(patch)
+        return self.layout_info()
+
+    def dock_reset(self):
+        """Вернуть наверх по центру (и открепить)."""
+        if not IS_WIN or self.window is None:
+            return None
+        self._pinned = False
+        self.settings_set({"pinned": False})
+        with self._lock:
+            if self._busy:
+                return self.layout_info()
+            self._busy = True
+            self._gen += 1
+        try:
+            self._fly_to("top", 0.5, None)
+        finally:
+            self._busy = False
+            self._go()
+        return self.layout_info()
+
+    def _js(self, code: str):
+        w = self.window
+        if w is not None:
+            try:
+                w.evaluate_js(code)
+            except Exception:
+                pass
+
+    # ---- сторож: форма окна не должна слетать ----
+    def reassert(self):
+        """Вернуть остров в порядок после смены темы Windows и подобных событий (несколько проверок подряд: система реагирует не сразу)."""
+        def run():
+            for d in (0.05, 0.2, 0.4, 0.8, 1.5, 2.0):
+                time.sleep(d)
+                self._guard_once(True)
+        threading.Thread(target=run, daemon=True, name="karina-island-reassert").start()
+
+    def _guard(self, w, stop: threading.Event):
+        while not stop.wait(0.15):
+            if self.window is not w:
+                return
+            try:
+                self._guard_once()
+            except Exception as e:
+                self.trace(f"Остров: сторож: {e}")
+
+    def _guard_once(self, force: bool = False):
+        """Проверяем окно: цел ли регион (форма «таблетки»), нет ли рамки и заголовка, там ли стоит окно, тот же ли handle.
+        После смены темы Windows регион слетал, и остров становился прямоугольником с уголками."""
+        if not IS_WIN or self.window is None or not self.ready or self._busy or self._animating or self._hidden_by_us or self._snip is not None:
+            return
+        old = self._hwnd
+        h = self._hwnd_of(refresh=True)
+        if not h or not user32.IsWindow(h):
+            return
+        bad = force or h != old
+        if not bad:
+            tmp = gdi32.CreateRectRgn(0, 0, 0, 0)
+            try:
+                bad = user32.GetWindowRgn(h, tmp) == 0           # ERROR: региона нет
+            finally:
+                gdi32.DeleteObject(tmp)
+        if not bad:
+            bad = bool(user32.GetWindowLongPtrW(h, GWL_STYLE) & (WS_CAPTION | WS_THICKFRAME))
+        if not bad and self._win is not None:
+            r = _RECT()
+            user32.GetWindowRect(h, ctypes.byref(r))
+            bad = (r.left, r.top, r.right - r.left, r.bottom - r.top) != tuple(self._win)
+        if bad:
+            if not force and time.time() - self._last_fix > 2.0:
+                self.trace("Остров: форма окна слетела, возвращаю")
+            self._last_fix = time.time()
+            self._setup_window()
