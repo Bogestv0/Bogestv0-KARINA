@@ -32,10 +32,27 @@ def pill_alpha(w: int, h: int, r: float):
     return (np.clip(0.5 - d, 0.0, 1.0) * 255 + 0.5).astype(np.uint8)
 
 
-def pill_bgra(w: int, h: int, r: float) -> bytes:
-    """Чёрная «таблетка» в формате BGRA с заранее умноженной прозрачностью (для UpdateLayeredWindow)."""
+RING = 2.0      # толщина кромки в пикселях: внутри кромки подложка прозрачная
+
+
+def ring_alpha(w: int, h: int, r: float, ring: float = RING):
+    """Только кромка «таблетки» шириной ring пикселей; середина полностью прозрачная. Так подложка, даже если Windows поставит её
+    выше острова, не закрывает страницу (раньше целиком чёрная «таблетка» перекрывала остров: он то мигал, то был чёрным)."""
     import numpy as np
-    a = pill_alpha(w, h, r)
+    w, h = max(1, int(w)), max(1, int(h))
+    outer = pill_alpha(w, h, r).astype(np.float32)
+    if w <= 2 * ring + 2 or h <= 2 * ring + 2:
+        return outer.astype(np.uint8)
+    inner = np.zeros((h, w), dtype=np.float32)
+    k = int(ring)
+    inner[k:h - k, k:w - k] = pill_alpha(w - 2 * k, h - 2 * k, max(0.0, r - ring)).astype(np.float32)
+    return np.clip(outer - inner, 0, 255).astype(np.uint8)
+
+
+def pill_bgra(w: int, h: int, r: float) -> bytes:
+    """Чёрная кромка «таблетки» в формате BGRA с заранее умноженной прозрачностью (для UpdateLayeredWindow)."""
+    import numpy as np
+    a = ring_alpha(w, h, r)
     out = np.zeros((a.shape[0], a.shape[1], 4), dtype=np.uint8)      # цвет чёрный, значит умножать нечего
     out[..., 3] = a
     return out.tobytes()
