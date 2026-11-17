@@ -66,6 +66,7 @@ if IS_WIN:
         user32.IsWindowVisible.argtypes = [wintypes.HWND]
         user32.GetDpiForWindow.argtypes = [wintypes.HWND]
         user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
         user32.SetForegroundWindow.argtypes = [wintypes.HWND]
         user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
         user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
@@ -115,6 +116,11 @@ class IslandApi:
 
     def open_main(self):
         threading.Thread(target=self._show_main, daemon=True).start()
+        return True
+
+    def repaint(self):
+        """Страница острова заметила, что не рисуется (нет кадров): просим окно перерисоваться."""
+        threading.Thread(target=self._island.repaint, daemon=True, name="karina-island-repaint").start()
         return True
 
     def settings_set(self, patch: dict):
@@ -417,6 +423,9 @@ class Island:
         self._rec_shown = False                      # страница уже знает, что запись идёт
         self._snip: dict | None = None               # открытое окно выбора области
         self._painting = False                       # окно показано средствами WinForms (иначе WebView2 считает себя невидимым и не рисует)
+        self._hidden_by_us = False                   # остров спрятан намеренно (снимок экрана, выбор области): страница в это время «не рисуется» законно
+        self._last_repaint = 0.0
+        self._repaints = 0
 
     # ---- включение / выключение ----
     @property
@@ -437,13 +446,22 @@ class Island:
             return True
         try:
             import webview
+            # Окно создаём ПОКАЗАННЫМ (сразу наверху по центру), а не спрятанным: у спрятанного окна WebView2 запускается с выключенной
+            # видимостью, страница работает (скрипт даже меняет размер плашки), но не рисуется: плашка остаётся чёрной и лишь на миг
+            # вспыхивает при смене размера. Стили «не приложение» (без значка на панели задач) ставим сразу после создания.
+            x0, y0 = self._start_xy()
+            self._prev_fg = 0
+            try:
+                self._prev_fg = int(user32.GetForegroundWindow() or 0)
+            except Exception:
+                pass
             kw = dict(url=str(ROOT / "ui" / "island.html"), js_api=IslandApi(self, self.api, self.show_main),
-                      width=SIZES["mini"][0], height=SIZES["mini"][1], min_size=(40, 20),
-                      frameless=True, easy_drag=False, shadow=False, on_top=True, background_color="#000000",
-                      hidden=True, focus=False)      # создаём спрятанным и без фокуса: стили «не приложение» ставим до первого показа
+                      width=SIZES["mini"][0], height=SIZES["mini"][1], x=x0, y=y0, min_size=(40, 20),
+                      frameless=True, easy_drag=False, shadow=False, on_top=True, background_color="#000000", focus=False)
             w = None
-            for drop in ((), ("hidden", "focus"), ("shadow", "hidden", "focus"), ("shadow", "easy_drag", "hidden", "focus"),
-                         ("shadow", "easy_drag", "min_size", "hidden", "focus"), ("shadow", "easy_drag", "min_size", "on_top", "hidden", "focus")):
+            for drop in ((), ("focus",), ("shadow", "focus"), ("shadow", "easy_drag", "focus"),
+                         ("shadow", "easy_drag", "min_size", "focus"), ("shadow", "easy_drag", "min_size", "on_top", "focus"),
+                         ("x", "y", "shadow", "easy_drag", "min_size", "on_top", "focus")):
                 try:
                     w = webview.create_window(TITLE, **{k: v for k, v in kw.items() if k not in drop})
                     break
@@ -451,7 +469,7 @@ class Island:
                     self.trace(f"Остров: create_window без {', '.join(drop) or '-'} ({e})")
             if w is None:
                 return False
-            self.window, self.ready, self._hwnd, self._painting = w, False, 0, False
+            self.window, self.ready, self._hwnd, self._painting = w, False, 0, True       # окно уже показано средствами WinForms
             self._halo = Halo(self.trace)
             self._q = queue.Queue(maxsize=200)
             threading.Thread(target=self._pump, args=(w, self._q), daemon=True, name="karina-island").start()
@@ -479,6 +497,48 @@ class Island:
                 except Exception:
                     pass
             return False
+
+    def _start_xy(self):
+        """Где создать окно: сверху по центру основного экрана (точное положение потом ставит _place)."""
+        try:
+            sw = int(user32.GetSystemMetrics(0))
+            return max(0, (sw - SIZES["mini"][0]) // 2), TOP_MARGIN
+        except Exception:
+            return None, None
+
+    def repaint(self) -> bool:
+        """Страница перестала выдавать кадры (WebView2 считает окно скрытым или закрытым другим окном): прячем и снова показываем окно
+        средствами WinForms и ставим на место. Не чаще раза в 3 с; пока остров спрятан нарочно (снимок, выбор области) — не трогаем."""
+        if not IS_WIN or self.window is None or not self.ready or self._hidden_by_us or self._snip is not None:
+            return False
+        now = time.time()
+        if now - self._last_repaint < 3.0:
+            return False
+        self._last_repaint = now
+        self._repaints += 1
+        if self._repaints <= 5 or self._repaints % 20 == 0:
+            self.trace(f"Остров: страница не рисуется, перерисовываю (раз {self._repaints})")
+        w = self.window
+        try:
+            prev = int(user32.GetForegroundWindow() or 0)
+        except Exception:
+            prev = 0
+        try:
+            w.hide()
+            time.sleep(0.05)
+            w.show()
+        except Exception as e:
+            self.trace(f"Остров: перерисовка не удалась ({e})")
+            return False
+        try:
+            h = self._hwnd_of()
+            if h and prev and prev != h and int(user32.GetForegroundWindow() or 0) == h:
+                user32.SetForegroundWindow(prev)
+        except Exception:
+            pass
+        self._painting = True
+        self._setup_window()
+        return True
 
     def stop(self):
         self._stopping = True
@@ -623,6 +683,7 @@ class Island:
         """Прячет остров на время снимка. Возвращает True, если что-то спрятали."""
         h = self._hwnd_of() if IS_WIN else 0
         if h:
+            self._hidden_by_us = True
             try:
                 self.window.hide()                              # через WinForms: WebView2 узнаёт, что страница скрыта
             except Exception:
@@ -634,6 +695,7 @@ class Island:
 
     def _unhide(self, hidden: bool):
         if hidden:
+            self._hidden_by_us = False
             self._show_native(self._hwnd_of())
             if self._halo is not None:
                 self._halo.show(True)
@@ -878,6 +940,7 @@ class Island:
         if self.window is not w:
             return
         self.trace(f"Остров: окно найдено ({'hwnd ' + str(self._hwnd) if ok else 'НЕ найдено'}) за {time.time() - t0:.1f} с")
+        self._give_back_focus()
         ev = getattr(getattr(w, "events", None), "loaded", None)
         while self.window is w and not self.ready and time.time() - t0 < 45:
             try:
@@ -897,8 +960,18 @@ class Island:
                 return
             self._setup_window()
 
+    def _give_back_focus(self):
+        """Окно создано показанным: если оно успело забрать фокус, возвращаем его окну, где человек работал."""
+        try:
+            h, prev = self._hwnd_of(), int(getattr(self, "_prev_fg", 0) or 0)
+            if h and prev and prev != h and int(user32.GetForegroundWindow() or 0) == h:
+                user32.SetForegroundWindow(prev)
+        except Exception:
+            pass
+
     def _on_shown(self):
         self._setup_window()
+        self._give_back_focus()
 
     def _scale(self, h) -> float:
         try:
