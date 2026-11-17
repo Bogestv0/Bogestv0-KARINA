@@ -1245,7 +1245,7 @@
     f.name.value = c.name; f.aliases.value = (c.name_aliases || []).join(', ');
     f.wake_required.checked = !!c.wake_required; f.followup_seconds.value = c.followup_seconds;
     f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold; f.assist.value = c.stt.assist || 'smart';
-    f.tts_enabled.checked = !!c.tts.enabled; f.background.checked = (c.ui || {}).background !== false; loadSil(); f.rate.value = c.tts.rate;
+    f.tts_enabled.checked = !!c.tts.enabled; f.background.checked = (c.ui || {}).background !== false; f.island.checked = !!(c.ui || {}).island; loadSil(); f.rate.value = c.tts.rate;
     const mx = c.mixer || {}, vp = c.vpn || {};
     f.mixer_enabled.checked = mx.enabled !== false; f.mixer_prefer.checked = !!mx.prefer; f.mixer_pin.value = mx.pin || ''; f.mixer_port.value = mx.port || 0; f.mixer_step.value = mx.step_db || 3; f.vpn_enabled.checked = vp.enabled !== false; loadVpnStatus();
     f.persona_rude.checked = !!(c.persona || {}).rude; loadTunnel(); f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
@@ -1277,7 +1277,7 @@
       mixer: { enabled: f.mixer_enabled.checked, prefer: f.mixer_prefer.checked, pin: f.mixer_pin.value.trim(), port: Number(f.mixer_port.value) || 0, step_db: Number(f.mixer_step.value) },
       vpn: { enabled: f.vpn_enabled.checked },
       persona: { rude: f.persona_rude.checked },
-      updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value, background: f.background.checked },
+      updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value, background: f.background.checked, island: f.island.checked },
       llm: { enabled: f.llm_enabled.checked, api_key: $('#apiKey').value.trim() },
     };
     const c = await call('save_settings', patch);

@@ -198,6 +198,7 @@ def run_gui(cfg):
         api.quitting = True
         if state["tray"]:
             state["tray"].stop()
+        island.stop()
         try:
             holder["w"].destroy()
         except Exception as e:
@@ -209,6 +210,10 @@ def run_gui(cfg):
             tr = traymod.Tray("Bogestv0 KARINA", ROOT / "ui" / "logo.png", show_window, quit_app, trace)
             state["tray"] = tr if tr.start() else None
         return state["tray"]
+
+    from karina.island import Island
+    island = Island(cfg, api, show_window, trace)
+    api.island = island
 
     def on_closing():
         """False — отменить закрытие и спрятать окно в трей. Без трея или при «выходе» закрываем по-настоящему."""
@@ -253,12 +258,15 @@ def run_gui(cfg):
         trace("Окно открыто, запускаю ассистента")
         assistant.start()
         trace("Ассистент запущен")
+        if cfg["ui"].get("island"):
+            island.start()                          # динамический остров (Настройки → Окно и оформление)
         single.listen_for_show(show_window)         # повторный запуск Карины просто открывает это окно (в т.ч. из трея и свёрнутое)
         if start_hidden and ensure_tray() is None:
             show_window()                           # трея нет — прятать окно некуда, показываем
 
     webview.start(after_start, icon=icon)
     trace("Окно закрыто, завершение")
+    island.stop()
     if state["tray"]:
         state["tray"].stop()
     assistant.stop()
