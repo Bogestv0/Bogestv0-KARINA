@@ -367,6 +367,36 @@ def _tunnel_app_on(ctx, kind, app):
     return tc.on(ctx, _kind(kind), app)
 
 
+_APPS_W = r"(?:приложени\w*|программ\w*)"
+
+
+@command("vpn_apps_add", "Добавить приложения в список VPN: сама спрашивает какие (да/нет/стоп) и добавляет",
+         ["добавь приложения в впн", "добавь хром в впн", "настрой впн"],
+         rf"^(?:добавь|добавить|добавляй|внеси|запиши|закинь)\s+(?P<app>.+?)\s+(?:в|для|во)\s+(?:список\s+)?(?:{_APPS_W}\s+)?{_VPN}(?:\s+.*)?$",
+         rf"^(?:хочу|давай|надо|нужно)\s+(?:добавить|настроить)\s+(?P<app>.*?){_APPS_W}?\s*(?:в|для|во)?\s*{_VPN}(?:\s+.*)?$",
+         rf"^(?:настрой|настроить|настроим)\s+(?:{_APPS_W}\s+)?(?:для\s+|в\s+)?{_VPN}(?:\s+.*)?$", first=True, llm_args="app")
+def _vpn_apps_add(ctx, app=""):
+    return tc.add_apps(ctx, app or "")
+
+
+@command("vpn_apps_remove", "Убрать приложение из списка VPN", ["убери хром из впн"],
+         rf"^(?:убери|удали|выкинь|исключи)\s+(?P<app>.+?)\s+(?:из|с)\s+(?:списка\s+)?(?:{_APPS_W}\s+)?{_VPN}(?:\s+.*)?$", first=True, llm_args="app")
+def _vpn_apps_remove(ctx, app=""):
+    return tc.remove_apps(ctx, app or "")
+
+
+@command("vpn_apps_list", "Какие приложения в списке VPN", ["какие приложения в впн"],
+         rf"^(?:какие|что)\s+(?:за\s+)?{_APPS_W}\s+(?:сейчас\s+)?(?:в|для|есть\s+в)\s+(?:списке\s+)?{_VPN}", rf"^(?:список|перечисли)\s+(?:{_APPS_W}\s+)?(?:для\s+|в\s+)?{_VPN}", first=True)
+def _vpn_apps_list(ctx):
+    return tc.list_apps(ctx)
+
+
+@command("vpn_settings", "Открыть настройки VPN в окне Карины", ["открой настройки впн"],
+         rf"^(?:открой|покажи|перейди\s+в|перейди\s+к|зайди\s+в)\s+(?:мне\s+)?(?:настройки|настройку)\s+{_VPN}\b", rf"^настройки\s+{_VPN}\b", first=True)
+def _vpn_settings(ctx):
+    return tc.open_settings(ctx)
+
+
 @command("proxy_on", "Включить встроенный прокси (системный прокси Windows)", ["включи прокси"],
          rf"^{_ON}\s+(?:мне\s+)?{_PROXY}\b", first=True)
 def _proxy_on(ctx):

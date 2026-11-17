@@ -1259,6 +1259,22 @@ class ChatService:
         mode = self._search_cfg()["mode"]
         return mode == "always" or (mode == "auto" and research.wants_search(norm(text)))
 
+    def _speak_error(self, err: str):
+        """Ошибку вслух читаем коротко и по-человечески (без «[WinError 10054] Удалённый хост принудительно…»); полный текст остаётся в окне."""
+        from . import rude as rudemod
+        rude = bool((self.cfg.get("persona") or {}).get("rude"))
+        low = err.lower()
+        if "связи с моделью" in low or "winerror" in low or "движок" in low:
+            short = rudemod.pick("model_error") if rude else "Не получилось связаться с моделью. Подробности в окне чата."
+        elif len(err) <= 160 and "[" not in err and "Traceback" not in err:
+            short = ("Блин, не вышло: " if rude else "Не получилось: ") + err[:160]       # понятная причина («Ключ Claude не задан») — говорим как есть
+        else:
+            short = rudemod.pick("generic_error") if rude else "Не получилось. Подробности в окне чата."
+        try:
+            self.speak(short, shown="Не получилось: " + err[:300])
+        except TypeError:                       # озвучка без параметра shown (например, в тестах)
+            self.speak(short)
+
     def will_search(self, text: str) -> bool:
         return self._use_search(text, None) and net.is_online()
 
@@ -1487,7 +1503,7 @@ class ChatService:
         self.current = None
         if voice and self.speak:
             if err:
-                self.speak("Не получилось: " + err[:160])
+                self._speak_error(err)
             elif way == "image":
                 self.speak(spoken if spoken else "Картинку нарисовать не получилось, подробности в окне чата.")
             elif made:           # о файле говорим только то, что действительно создано

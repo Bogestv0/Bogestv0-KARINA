@@ -56,6 +56,7 @@ class Speaker:
         self.warning = ""
         self.out_warning = ""      # проблема с выбранным устройством вывода (вкладка «Звук»)
         self._stop = threading.Event()
+        self._lock = threading.Lock()      # один голос за раз: вторая реплика ждёт, пока договорит первая
         self.speaking = False
 
     def stop(self):
@@ -67,12 +68,13 @@ class Speaker:
         text = prep_text(text, t)
         if not t.get("enabled", True) or not text:
             return
-        self._stop.clear()
-        self.speaking = True
-        try:
-            self._speak(text, stressed, t)
-        finally:
-            self.speaking = False
+        with self._lock:
+            self._stop.clear()
+            self.speaking = True
+            try:
+                self._speak(text, stressed, t)
+            finally:
+                self.speaking = False
 
     def _speak(self, text: str, stressed: str, t: dict):
         if self._silero(stressed, VOICES[DEFAULT_VOICE]):

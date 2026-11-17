@@ -315,32 +315,43 @@ class Engine:
         req = urllib.request.Request(self._url("/v1/chat/completions"), data=json.dumps(body).encode("utf-8"), headers={
             "Content-Type": "application/json", "Authorization": f"Bearer {self.key}"})
         out: list[str] = []
-        try:
-            with _OPENER.open(req, timeout=600) as r:
-                for raw in r:
-                    if stop is not None and stop.is_set():
-                        break
-                    line = raw.decode("utf-8", "replace").strip()
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
+        for attempt in (1, 2):
+            try:
+                with _OPENER.open(req, timeout=600) as r:
+                    for raw in r:
+                        if stop is not None and stop.is_set():
+                            break
+                        line = raw.decode("utf-8", "replace").strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            d = json.loads(data)["choices"][0].get("delta", {})
+                        except (ValueError, KeyError, IndexError):
+                            continue
+                        piece = d.get("content") or ""
+                        if piece:
+                            out.append(piece)
+                            if on_delta:
+                                on_delta(strip_think("".join(out)))
+                break
+            except urllib.error.HTTPError as e:
+                raise EngineError(f"Модель вернула ошибку {e.code}: {e.read().decode('utf-8', 'replace')[:200]}")
+            except OSError as e:
+                if attempt == 1 and not out and not (stop is not None and stop.is_set()):
+                    # [WinError 10054] и подобные: сервер модели оборвал связь до первого слова (упал или закрыл «залежавшееся» соединение).
+                    # Один раз проверяем, жив ли он (при необходимости перезапускаем) и повторяем запрос.
+                    time.sleep(1.0)
                     try:
-                        d = json.loads(data)["choices"][0].get("delta", {})
-                    except (ValueError, KeyError, IndexError):
-                        continue
-                    piece = d.get("content") or ""
-                    if piece:
-                        out.append(piece)
-                        if on_delta:
-                            on_delta(strip_think("".join(out)))
-        except urllib.error.HTTPError as e:
-            raise EngineError(f"Модель вернула ошибку {e.code}: {e.read().decode('utf-8', 'replace')[:200]}")
-        except OSError as e:
-            if not self._alive():
-                self._set("error", "Движок остановился. Попробуйте ещё раз.")
-            raise EngineError(f"Нет связи с моделью: {e}")
+                        self.ensure()
+                    except EngineError:
+                        pass
+                    continue
+                if not self._alive():
+                    self._set("error", "Движок остановился. Попробуйте ещё раз.")
+                raise EngineError(f"Нет связи с моделью: {e}")
         return strip_think("".join(out)).strip()
 
 

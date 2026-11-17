@@ -18,12 +18,14 @@ DEFAULTS: dict = {
                       "карена", "каріна", "кариана", "карин", "каринна"],
     "wake_required": True,        # откликаться только на имя
     "followup_seconds": 8,        # после имени слушаем без повторного обращения
+    "followup_max_words": 10,     # в этом окне без имени принимаем только короткие фразы (команды); длинная речь из фона игнорируется
+    "wake_tail_words": 7,         # имя в КОНЦЕ фразы («открой хром, Карина») считается обращением только в фразе до стольких слов
     "ui": {"theme": "auto", "background": True, "frameless": True,
            "admin": False, "admin_asked": False},   # admin: запускать Карину с правами администратора (через задачу планировщика)   # frameless: свой заголовок вместо рамки Windows   # background: закрытие окна сворачивает Карину в трей, а не выключает
     # mics — до 4 микрофонов сразу: {"enabled","device","name"} (пусто = старая настройка mic_device, слот 1);
     # assist — как микрофоны помогают друг другу: smart (лучший слушает, остальные помогают при плохом распознавании) | all (распознать со всех, выбрать лучшее) | best (только самый чистый)
     "stt": {"model": "small", "mic_device": None, "vad_threshold": 0.012, "mics": [], "assist": "smart",
-            "vad": "neural", "end_silence": 0.55, "end_silence_long": 0.8, "device": "auto", "prefilter": False},
+            "vad": "neural", "min_conf": 0.42, "followup_conf": 0.55, "end_silence": 0.55, "end_silence_long": 0.8, "device": "auto", "prefilter": False},
     # vad — neural (Silero VAD, сам вернётся к energy, если нет модели) | energy; end_silence / end_silence_long — пауза (с) в конце короткой / долгой фразы;
     # device — auto (видеокарта NVIDIA, если сработает проба, иначе процессор) | cpu | cuda; prefilter — быстрая проверка имени моделью «tiny» до полного распознавания (экономит процессор)
     # music.services — свои сервисы музыки/видео: {"music": {"мой": {"name": "…", "aliases": ["…"], "kind": "web", "search": "https://…?q={q}"}}} (см. karina/music.py)

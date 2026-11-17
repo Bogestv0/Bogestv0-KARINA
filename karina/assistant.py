@@ -4,6 +4,8 @@ import queue, re, sys, threading, time, traceback
 from . import actions, chat as chatmod, llm, net
 from . import integrations, music, personal, profile as prof  # noqa: F401  (регистрируют команды микшера, VPN, музыки, погоды и профиля)
 from . import memory as memorymod
+from . import dialog
+from . import rude as rudemod
 from .mixer_remote import MixerRemote
 from .vpn_link import VpnLink
 from .tunnel import Tunnel
@@ -42,8 +44,9 @@ STATIC_PHRASES = [
 
 GOOD_CONF = 0.70       # от такой уверенности модели распознавание считаем хорошим и помощь остальных микрофонов не нужна
 
-YES = {"да", "давай", "подтверждаю", "конечно", "ага", "выполняй", "точно", "да да", "ищи", "ищи давай", "угу", "ок", "окей", "поищи", "искать"}
-NO = {"нет", "не надо", "отмена", "отменяю", "стоп", "не нужно"}
+YES, NO = dialog.YES, dialog.NO | dialog.STOP
+DIALOG_WAIT = 30.0     # сколько секунд ждём «да/нет» (или ответ на уточнение) ПОСЛЕ того, как Карина договорила вопрос
+REPROMPTS = 2          # сколько раз переспросить, если ответ не похож ни на «да», ни на «нет», ни на «стоп»
 
 
 # «Замолчи» посреди её речи: фраза целиком из этих слов, и хотя бы одно — из первой группы
@@ -59,6 +62,11 @@ def is_stop_phrase(text: str, names: list[str]) -> bool:
 
 
 class Assistant:
+    _say_lock = threading.Lock()        # одна речь за раз (общий на процесс: Карина одна)
+    _say_gen = 0
+    _repeats = None
+    _last_talk = 0.0
+
     def __init__(self, cfg, emit):
         self.cfg, self.emit = cfg, emit
         self.apps = AppIndex(cfg)
@@ -85,8 +93,12 @@ class Assistant:
         self.sleeping = False
         self.listening = True
         self.followup_until = 0.0
-        self._pending = None            # (действие, до какого времени ждём «да»)
-        self._choice = None             # (обработчик ответа, до какого времени ждём, сколько раз переспрашивали): «что сделать тише?» → «музыку»
+        self._conf = None
+        self._pending = None            # {"action", "on_no", "until", "tries"}: ждём «да/нет/стоп»; until=None, пока вопрос ещё звучит (отсчёт — после речи)
+        self._choice = None             # {"fn", "until", "tries", "max"}: ждём ответ на уточнение: «что сделать тише?» → «музыку», шаги мастера и т. д.
+        self._repeats = rudemod.RepeatGuard()
+        self._last_talk = 0.0
+        self._say_gen = 0                   # растёт при «замолчи»: реплики, стоявшие в очереди на озвучку, пропадают
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self.plugin_errors = actions.load_plugins()
@@ -218,6 +230,7 @@ class Assistant:
             try:
                 group = self.q.get(timeout=0.4)
             except queue.Empty:
+                self._expire_dialogs()
                 continue
             if not self.listening or self.stt.model is None:
                 continue
@@ -226,7 +239,7 @@ class Assistant:
                     continue
                 self._set_state("thinking")
                 text = self._recognize(group)
-                if text:
+                if text and not self._is_background(text):
                     self.handle(text)
             except Exception as e:
                 traceback.print_exc()
@@ -276,20 +289,44 @@ class Assistant:
         if self.state == "error" and self.stt.model is not None and any(s["state"] == "ok" for s in statuses):
             self._set_state("idle")
 
+    def _is_background(self, text: str) -> bool:
+        """True — это, скорее всего, фон (телевизор, чужой разговор, шум), а не команда: фразу пропускаем.
+        • неуверенное распознавание: с именем нужна уверенность stt.min_conf, без имени (окно «слушаю дальше») — stt.followup_conf;
+        • без имени принимаем только короткие фразы (followup_max_words): длинная речь из фона — не команда."""
+        st = self.cfg["stt"]
+        now = time.time()
+        addressed, rest = split_wake(text, self.cfg.wake_names(), int(self.cfg.get("wake_tail_words", 7)))
+        answering = bool(self._pending or self._choice)           # ответ «да/нет» или выбор на мой вопрос — короткий, имя не нужно
+        free = (not addressed) and (now < self.followup_until or not self.cfg["wake_required"] or answering)
+        if not addressed and not free:
+            return False                                           # обращения нет — handle() сам запишет «слышала, но не мне»
+        need = float(st.get("followup_conf", 0.55)) if (free and not answering) else float(st.get("min_conf", 0.42))
+        conf = getattr(self, "_conf", None)
+        if conf is not None and conf < need:
+            self.log("ignored", f"{text} (нечётко, уверенность {conf:.2f})")
+            return True
+        if free and not answering and self.cfg["wake_required"] and len(rest.split()) > int(self.cfg.get("followup_max_words", 10)):
+            self.log("ignored", f"{text} (длинная фраза без обращения)")
+            return True
+        return False
+
     def _addressed_ok(self, text: str) -> bool:
         """Фраза годится для команды: обращение по имени (или оно не нужно)."""
         if not self.cfg["wake_required"] or time.time() < self.followup_until:
             return True
-        return split_wake(text, self.cfg.wake_names())[0]
+        return split_wake(text, self.cfg.wake_names(), int(self.cfg.get("wake_tail_words", 7)))[0]
 
     def _recognize(self, group) -> str:
         """Лучший текст из записей одной фразы. Один микрофон — просто распознаём. Несколько — режим stt.assist:
         smart: сначала самый чистый микрофон; остальные подключаются, только если он расслышал плохо или пропустил имя;
         all: распознаём со всех и берём лучший; best: самый чистый, остальные — запасные, если он ничего не расслышал."""
+        self._conf = None
         if not isinstance(group, (list, tuple)):          # на случай прямой передачи звука
-            return self.stt.transcribe(group)
+            text, self._conf = self.stt.transcribe_ex(group)
+            return text
         if len(group) == 1:
-            return self.stt.transcribe(group[0].audio)
+            text, self._conf = self.stt.transcribe_ex(group[0].audio)
+            return text
         mode = self.cfg["stt"].get("assist", "smart")
         best = None          # (оценка, текст, номер микрофона, уверенность)
         tried = 0
@@ -308,6 +345,7 @@ class Assistant:
             return ""
         trace(f"Микрофоны: фраза на {len(group)} микр., распознано с {tried}; выбран №{best[2] + 1} (уверенность {best[3]:.2f}): {best[1]}")
         self.emit({"type": "mic_pick", "slot": best[2]})
+        self._conf = best[3]
         return best[1]
 
     # ---------- управление ----------
@@ -336,37 +374,81 @@ class Assistant:
                 self._set_state("error", "Модель не загружена")
         threading.Thread(target=run, daemon=True).start()
 
-    def ask_confirm(self, action):
-        self._pending = (action, time.time() + 12)
+    # ---------- вопросы к человеку ----------
+    @property
+    def rude(self) -> bool:
+        return bool((self.cfg.get("persona") or {}).get("rude"))
 
-    def ask_choice(self, handler):
-        """Следующая фраза (имя «Карина» не нужно) — ответ на мой вопрос. handler(текст) → (ответ, переспросить ли ещё раз)."""
-        self._choice = (handler, time.time() + 20, 0)
-        self.followup_until = max(self.followup_until, time.time() + 20)
+    def ask_confirm(self, action, on_no=None):
+        """Задаёт вопрос «да или нет»: слушаем (имя «Карина» не нужно), пока не услышим «да», «нет» или «стоп» — отсчёт времени начинается,
+        когда Карина договорила вопрос. «Да» → action() (возвращает фразу для озвучки; может задать следующий вопрос), «нет» и «стоп» → on_no() или «Хорошо, отменяю»."""
+        self._pending = {"action": action, "on_no": on_no, "until": None, "tries": 0}
+
+    def ask_choice(self, handler, tries: int = REPROMPTS):
+        """Следующая фраза (имя «Карина» не нужно) — ответ на мой вопрос. handler(текст) → (ответ, дальше): дальше=True — спросить то же ещё раз
+        (не больше tries раз подряд), дальше=функция — следующий шаг диалога, иначе (False) — диалог окончен. Отсчёт времени — после речи."""
+        self._choice = {"fn": handler, "until": None, "tries": 0, "max": tries}
+
+    @staticmethod
+    def _alive(d) -> bool:
+        return bool(d) and (d["until"] is None or time.time() < d["until"])
+
+    def _arm_dialogs(self):
+        """Карина договорила: теперь у ответа есть DIALOG_WAIT секунд, имя говорить не нужно."""
+        now = time.time()
+        for d in (self._pending, self._choice):
+            if d and d["until"] is None:
+                d["until"] = now + DIALOG_WAIT
+        if self._pending or self._choice:
+            self.followup_until = max(self.followup_until, now + DIALOG_WAIT)
+
+    def _expire_dialogs(self):
+        """Не дождались ответа: забываем вопрос и говорим об этом, чтобы человек не гадал, что происходит."""
+        dead = [n for n, d in (("_pending", self._pending), ("_choice", self._choice)) if d and not self._alive(d)]
+        if not dead:
+            return
+        for n in dead:
+            setattr(self, n, None)
+        if not (self._pending or self._choice):
+            self.say(rudemod.pick("no_answer") if self.rude else "Не услышала ответа, отменяю.")
+
+    def cancel_dialogs(self):
+        self._pending = self._choice = None
 
     # ---------- обработка фразы ----------
     def handle(self, text: str, direct: bool = False):
         """direct=True — введено вручную в окне: имя не требуется."""
         now = time.time()
         names = self.cfg.wake_names()
-        addressed, rest = (True, norm(text)) if direct else split_wake(text, names)
+        addressed, rest = (True, norm(text)) if direct else split_wake(text, names, int(self.cfg.get("wake_tail_words", 7)))
 
+        if self._pending and not self._alive(self._pending):
+            self._pending = None
         if self._pending:
-            action, until = self._pending
-            if now < until and (addressed or direct or now < self.followup_until):
-                w = rest.strip()
-                if w in YES or w.startswith("да "):
-                    self._pending = None
-                    self.log("you", text)
-                    self.say(action())
-                    return
-                if w in NO:
-                    self._pending = None
-                    self.log("you", text)
-                    self.say("Хорошо, отменяю.")
-                    return
-            elif now >= until:
+            d = self._pending
+            kind = dialog.classify(rest)
+            if kind:
                 self._pending = None
+                self.log("you", text)
+                if kind == "yes":
+                    self.say(self._run_dialog_action(d["action"]))
+                else:
+                    # «нет» → on_no (например, ответить без интернета); «стоп» — всегда просто отмена
+                    self.say(d["on_no"]() if (d.get("on_no") and kind == "no") else (rudemod.pick("cancel") if self.rude else "Хорошо, отменяю."))
+                return
+            if addressed and rest:
+                self._pending = None            # обратились по имени с другой командой — вопрос больше не нужен, разбираем новую команду
+            elif len(rest.split()) > dialog.MAX_WORDS:
+                self.log("ignored", text + " (длинная фраза, это не ответ)")
+                return
+            else:
+                d["tries"] += 1
+                self.log("you", text)
+                if d["tries"] <= REPROMPTS:
+                    self.say(rudemod.pick("reprompt") if self.rude else "Не поняла. Скажите «да» или «нет». Чтобы отменить, скажите «стоп».")
+                else:
+                    self.log("info", "Жду «да» или «нет» (или «стоп»).")
+                return
 
         if self.sleeping:
             if addressed and rest.startswith(("проснись", "просыпайся", "вернись", "подъем")):
@@ -384,22 +466,32 @@ class Assistant:
             return
 
         self.log("you", text)
+        prev_talk, self._last_talk = self._last_talk, now
         self.followup_until = now + float(self.cfg["followup_seconds"])
         if not rest:
-            self.say("Слушаю.")
+            self.say(self._wake_reply(now, prev_talk))
             return
-        if self._choice:
-            fn, until, tries = self._choice
+        if self._choice and not self._alive(self._choice):
             self._choice = None
-            if now < until:
-                try:
-                    reply, again = fn(rest)
-                except Exception as e:
-                    self.log("error", f"Ответ на уточнение не обработан: {e}")
-                    reply, again = "Не получилось.", False
-                if again and tries < 1:
-                    self._choice = (fn, now + 20, tries + 1)
-                    self.followup_until = max(self.followup_until, now + 20)
+        if self._choice:
+            c = self._choice
+            self._choice = None
+            if dialog.classify(rest) == "stop":
+                self.say(rudemod.pick("cancel") if self.rude else "Хорошо, отменяю.")
+                return
+            try:
+                reply, again = c["fn"](rest)
+            except Exception as e:
+                traceback.print_exc()
+                self.log("error", f"Ответ на уточнение не обработан: {e}")
+                reply, again = "Не получилось.", False
+            if reply is None:
+                pass                                                   # это не ответ на мой вопрос, а новая команда — разбираем как обычно (ниже)
+            else:
+                if callable(again):
+                    self.ask_choice(again, c["max"])                   # следующий шаг диалога
+                elif again and c["tries"] < c["max"] and not self._choice:
+                    self._choice = {"fn": c["fn"], "until": None, "tries": c["tries"] + 1, "max": c["max"]}     # переспрашиваем то же самое
                 self.say(reply)
                 return
         if chatmod.wants_open_chat(rest):
@@ -432,8 +524,41 @@ class Assistant:
         if not handled:
             handled, reply = self._try_llm(ctx, rest)
         if not handled:
-            reply = "Не поняла команду. Скажите «что ты умеешь», чтобы услышать список."
+            reply = rudemod.pick("not_understood") if self.rude else "Не поняла команду. Скажите «что ты умеешь», чтобы услышать список."
+        elif self.rude and not (self._pending or self._choice):
+            reply = rudemod.flavor(reply)                  # дерзкий режим: к обычному ответу добавляем недовольство
         self.say(reply)
+
+    # ---------- дерзкий режим: болтовня и повторные вопросы ----------
+    def _wake_reply(self, now: float, prev_talk: float) -> str:
+        """Одно имя без команды: «Слушаю.» (в дерзком режиме после долгого молчания — сама спрашивает, как дела, и разговор продолжается)."""
+        if not self.rude:
+            return "Слушаю."
+        if now - prev_talk > 1200:
+            self.start_rude_chat()
+            return rudemod.pick("wake_greet", name=(self.cfg.get("profile") or {}).get("name") or "дорогой")
+        return rudemod.pick("listening")
+
+    def _rude_handler(self, depth: int):
+        def handler(text: str):
+            reply, cont = rudemod.chat_turn(text, depth)
+            return reply, (self._rude_handler(depth + 1) if cont else False)
+        return handler
+
+    def start_rude_chat(self):
+        """Дерзкая Карина сама ведёт разговор: после её вопроса «как дела» слушаем ответ без имени и отвечаем по смыслу (не больше трёх реплик)."""
+        self.ask_choice(self._rude_handler(0), tries=0)
+
+    def repeat_gate(self, text: str):
+        """Дерзкий режим: тот же вопрос в который раз. → ("ok"|"again"|"refuse", реплика). Первый раз — отвечаем, второй — с руганью «ещё раз и всё»,
+        третий и дальше — отказ отвечать."""
+        if not self.rude:
+            return "ok", ""
+        if self._repeats is None:
+            self._repeats = rudemod.RepeatGuard()
+        n = self._repeats.hit(text)
+        r = rudemod.repeat_reply(n)
+        return ("ok", "") if r is None else ("again", r) if n == 2 else ("refuse", r)
 
     def _to_chat(self, text: str):
         """Голосовой вопрос: коротко отвечаем голосом, подробности показываем в окне «Чат»."""
@@ -442,22 +567,38 @@ class Assistant:
             self.say(why)                # выбранный мозг недоступен — говорим об этом сразу
             return
         if self.chat.busy:
-            self.say("Я ещё отвечаю на предыдущий вопрос.")
+            self.say(rudemod.pick("busy") if self.rude else "Я ещё отвечаю на предыдущий вопрос.")
             return
+        gate, said = self.repeat_gate(text)            # дерзкий режим: тот же вопрос по третьему разу — не отвечаем
+        if gate == "refuse":
+            self.say(said)
+            return
+        if gate == "again":
+            self.say(said)
         if self.chat.will_search(text) and (self.cfg.get("search") or {}).get("confirm", True):
             short = re.sub(r"\s+", " ", text).strip()[:90]
-            self.ask_confirm(lambda: self._chat_go(text, True))       # в интернет — только после «да»
-            self.say(f"Искать в интернете: {short}? Скажите «да» или «нет».")
+            self.ask_confirm(lambda: self._chat_go(text, True), on_no=lambda: self._chat_go(text, False))       # в интернет — только после «да»
+            self.say(rudemod.pick("search_ask", short=short) if self.rude else f"Хотите, посмотрю в интернете: {short}? Скажите «да» или «нет».")
             return
         self.say(self._chat_go(text, False))
 
+    def _run_dialog_action(self, action) -> str:
+        try:
+            return action()
+        except Exception as e:
+            traceback.print_exc()
+            self.log("error", f"Действие после «да» не выполнено: {e}")
+            return "Не получилось."
+
     def _chat_go(self, text: str, search: bool) -> str:
-        """Отправляет вопрос в чат. search=True — человек подтвердил поиск в интернете; иначе отвечаем без интернета."""
+        """Отправляет вопрос в чат. search=True — человек подтвердил поиск в интернете; иначе отвечаем без интернета (после «нет» — всё равно отвечаем, из головы)."""
         if self.chat.busy:
-            return "Я ещё отвечаю на предыдущий вопрос."
+            return rudemod.pick("busy") if self.rude else "Я ещё отвечаю на предыдущий вопрос."
         cid = self.chat.voice_chat_id()
         self.emit({"type": "chat_open", "chat": cid})
         self.chat.send(cid, text, voice=True, search=True if search else None)
+        if self.rude:
+            return rudemod.pick("searching" if search else "thinking")
         return "Хорошо, поищу в интернете." if search else "Хорошо, подумаю."
 
     _FAIL = ("не нашла", "не получилось", "ошибка", "не поняла", "не знаю", "нет интернета", "не выбрано", "не удалось", "окно «")
@@ -501,31 +642,41 @@ class Assistant:
             return True, str(r["say"])
         return False, ""
 
-    def say(self, text: str):
+    def say(self, text: str, shown: str | None = None):
+        """Говорит вслух. Всё, что произносится, встаёт в очередь: две реплики из разных потоков (например, «Хорошо, подумаю» и ошибка чата)
+        больше не звучат одновременно. shown — что показать в окне вместо озвученного (длинная ошибка: вслух коротко, в журнале полностью)."""
         if not text:
+            self._arm_dialogs()
             return
-        self.log("karina", text)
-        barge = bool(self.cfg["tts"].get("barge_in", True)) and self.stt.model is not None
-        if barge:
-            self.listener.speaking = True    # слушаем только короткое «стоп» — её можно перебить
-        else:
-            self.listener.muted = True       # не слушаем самих себя
-        self._set_state("speaking")
-        try:
-            self.tts.speak(text)
-        except Exception as e:
-            self.log("error", f"Не удалось озвучить: {e}")
-        finally:
-            self.listener.speaking = False
-            self.listener.muted = True       # на время «хвоста» эха после речи
-            time.sleep(0.2)
-            self.listener.muted = not self.listening
-            self.followup_until = max(self.followup_until, time.time() + float(self.cfg["followup_seconds"]))
-            self._set_state("idle")
+        gen = self._say_gen
+        self.log("karina", shown or text)
+        with self._say_lock:
+            if gen != self._say_gen:         # пока ждала очереди, сказали «замолчи» — эту реплику не произносим
+                self._arm_dialogs()
+                return
+            barge = bool(self.cfg["tts"].get("barge_in", True)) and self.stt.model is not None
+            if barge:
+                self.listener.speaking = True    # слушаем только короткое «стоп» — её можно перебить
+            else:
+                self.listener.muted = True       # не слушаем самих себя
+            self._set_state("speaking")
+            try:
+                self.tts.speak(text)
+            except Exception as e:
+                self.log("error", f"Не удалось озвучить: {e}")
+            finally:
+                self.listener.speaking = False
+                self.listener.muted = True       # на время «хвоста» эха после речи
+                time.sleep(0.2)
+                self.listener.muted = not self.listening
+                self.followup_until = max(self.followup_until, time.time() + float(self.cfg["followup_seconds"]))
+                self._arm_dialogs()              # ответ на вопрос ждём ОТ ЭТОГО момента, а не от начала речи
+                self._set_state("idle")
 
     # ---------- «замолчи» и «говорить без имени» ----------
     def hush(self):
         """Прервать речь (горячая клавиша или фраза «стоп»)."""
+        self._say_gen += 1                   # всё, что стояло в очереди на озвучку, отменяется
         if self.tts.speaking:
             self.tts.stop()
             self.log("info", "Замолчала.")
