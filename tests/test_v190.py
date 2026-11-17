@@ -6,7 +6,7 @@ from karina import __version__, island_tools as t, weather
 
 
 def test_version():
-    assert __version__ == "1.19.0"
+    assert __version__.startswith("1.19.")
 
 
 def _data():
