@@ -51,3 +51,17 @@ class RepaintTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RingTest(unittest.TestCase):
+    def test_halo_is_ring_not_filled_pill(self):
+        from karina import halo
+        a = halo.ring_alpha(150, 36, 18)
+        self.assertEqual(a[18, 75], 0)            # середина прозрачна: остров под/над подложкой виден
+        self.assertGreaterEqual(a[18, 0], 250)          # кромка непрозрачная
+        self.assertEqual(a[0, 0], 0)
+        self.assertEqual(a[0, 75], 255)
+
+    def test_ring_small_window_falls_back(self):
+        from karina import halo
+        self.assertEqual(halo.ring_alpha(4, 4, 2).shape, (4, 4))
