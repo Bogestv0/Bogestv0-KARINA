@@ -1,5 +1,7 @@
 """1.15.1: инструменты острова (karina/screen_tools.py): чистый текст, QR, цвет, область, запись, раскладка, свои инструменты."""
 import io
+import shutil
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -32,6 +34,7 @@ class ScreenToolsTest(unittest.TestCase):
 
     def test_crop_fraction(self):
         img = Image.new("RGB", (200, 100))
+        # углы можно задать в любом порядке
         self.assertEqual(st.crop_fraction(img, (0.5, 0.0, 0.25, 1.0)).size, (50, 100))
         self.assertEqual(st.crop_fraction(img, (-1, -1, 2, 2)).size, (200, 100))
         with self.assertRaises(st.ToolError):
@@ -56,7 +59,6 @@ class ScreenToolsTest(unittest.TestCase):
             st.qr_png("x" * 2000)
 
     def test_is_url_and_custom_kind(self):
-        import tempfile
         self.assertTrue(st.is_url("https://a.ru/x"))
         self.assertTrue(st.is_url("www.a.ru"))
         self.assertFalse(st.is_url("открой хром"))
@@ -68,10 +70,12 @@ class ScreenToolsTest(unittest.TestCase):
 
     def test_clean_custom_and_settings(self):
         items = (
-            [{"name": "  Блокнот ", "cmd": "открой блокнот"},
-             {"name": "", "cmd": "x"},
-             {"name": "y", "cmd": ""},
-             "bad"]
+            [
+                {"name": "  Блокнот ", "cmd": "открой блокнот"},
+                {"name": "", "cmd": "x"},
+                {"name": "y", "cmd": ""},
+                "bad",
+            ]
             + [{"name": f"n{i}", "cmd": "c"} for i in range(20)]
         )
         out = st.clean_custom(items)
@@ -80,11 +84,13 @@ class ScreenToolsTest(unittest.TestCase):
         self.assertEqual(st.clean_custom("nope"), [])
         s = tools.clean_settings({"tools": [{"name": "A", "cmd": "b"}]})
         self.assertEqual(s["tools"], [{"name": "A", "cmd": "b"}])
+        # без правки список сохраняется
         self.assertEqual(tools.clean_settings({}, s)["tools"], s["tools"])
         self.assertEqual(tools.clean_settings({}, None)["tools"], [])
 
     def test_pick_text_prefers_clean_language(self):
-        ru, en_garbage = "Счёт к оплате 18 400 рублей", "Cчёt к oплaтe 18 400 pублeй"
+        ru = "Счёт к оплате 18 400 рублей"
+        en_garbage = "Cчёt к oплaтe 18 400 pублeй"
         self.assertEqual(st.pick_text(["", en_garbage, ru]), ru)
         self.assertEqual(st.pick_text(["", "  "]), "")
 
@@ -114,7 +120,8 @@ class FakeProc:
         self.stderr = io.BytesIO(b"Could not find device\n")
         self._rc = 1 if dies else None
         if not dies:
-            open(cmd[-1], "wb").write(b"video")
+            with open(cmd[-1], "wb") as f:
+                f.write(b"video")
 
     def poll(self):
         return self._rc
@@ -135,6 +142,11 @@ class FakeProc:
 
 
 class RecorderTest(unittest.TestCase):
+    def setUp(self):
+        self._dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._dir, True)
+        self._out_dir = Path(self._dir)
+
     def test_recorder_start_stop(self):
         with mock.patch.object(time, "sleep", lambda s: None), \
              mock.patch("karina.screen_tools.time.sleep", lambda s: None):
@@ -142,14 +154,15 @@ class RecorderTest(unittest.TestCase):
             rec = st.Recorder(
                 popen=lambda cmd, **kw: made.append(FakeProc(cmd, **kw)) or made[-1],
                 ffmpeg="ff",
-                out_dir=Path(self._tmpdir()),
+                out_dir=self._out_dir,
             )
             self.assertFalse(rec.on)
             r = rec.start()
             self.assertTrue(rec.on)
             self.assertTrue(r["on"])
-            self.assertTrue(r["path"].startswith(str(self._tmpdir())))
+            self.assertTrue(r["path"].startswith(str(self._out_dir)))
             self.assertTrue(r["path"].endswith(".mp4"))
+            # второй старт ничего не запускает
             self.assertEqual(rec.start()["path"], r["path"])
             self.assertEqual(len(made), 1)
             done = rec.stop()
@@ -164,7 +177,7 @@ class RecorderTest(unittest.TestCase):
             rec = st.Recorder(
                 popen=lambda cmd, **kw: FakeProc(cmd, dies=True),
                 ffmpeg="ff",
-                out_dir=Path(self._tmpdir()),
+                out_dir=self._out_dir,
             )
             with self.assertRaises(st.ToolError) as e:
                 rec.start()
@@ -175,12 +188,6 @@ class RecorderTest(unittest.TestCase):
         with mock.patch.object(st, "find_ffmpeg", lambda: None):
             with self.assertRaises(st.ToolError):
                 st.Recorder().start()
-
-    def _tmpdir(self):
-        import tempfile
-        d = tempfile.mkdtemp()
-        self.addCleanup(__import__("shutil").rmtree, d, True)
-        return d
 
 
 class OcrPasteTest(unittest.TestCase):
