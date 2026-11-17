@@ -28,10 +28,12 @@ jobs:
       - name: Установка зависимостей
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt --upgrade pyinstaller pyinstaller-hooks-contrib
+          pip install -r requirements.txt --upgrade pyinstaller pyinstaller-hooks-contrib pytest
 
       - name: Тесты
-        run: python -m unittest discover -s tests -v
+        run: |
+          python -m unittest discover -s tests -v
+          python -m pytest tests/test_v170.py -v
 
       - name: Версия из кода
         id: ver
