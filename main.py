@@ -259,7 +259,15 @@ def run_gui(cfg):
         assistant.start()
         trace("Ассистент запущен")
         if cfg["ui"].get("island"):
-            island.start()                          # динамический остров (Настройки → Окно и оформление)
+            def start_island():                     # остров создаём, когда главное окно уже загрузилось: два WebView2 сразу стартуют хуже
+                import time
+                try:
+                    holder["w"].events.loaded.wait(20)
+                except Exception:
+                    time.sleep(2)
+                time.sleep(0.5)
+                island.start()                      # динамический остров (Настройки → Окно и оформление)
+            threading.Thread(target=start_island, daemon=True, name="karina-island-start").start()
         single.listen_for_show(show_window)         # повторный запуск Карины просто открывает это окно (в т.ч. из трея и свёрнутое)
         if start_hidden and ensure_tray() is None:
             show_window()                           # трея нет — прятать окно некуда, показываем
