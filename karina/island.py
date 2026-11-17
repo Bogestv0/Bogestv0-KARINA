@@ -15,12 +15,14 @@ import time
 from .config import ROOT
 from . import island_tools as tools
 from .halo import Halo
+from .media import Media
 
 IS_WIN = sys.platform == "win32"
 TITLE = "Остров Карины"
 
 # режим -> (ширина, высота, радиус скругления) в логических пикселях
-SIZES = {"mini": (150, 36, 18), "wide": (290, 40, 20), "full": (480, 330, 30)}
+SIZES = {"mini": (150, 36, 18), "info": (232, 36, 18), "music": (300, 36, 18), "wide": (290, 40, 20), "full": (480, 330, 30)}
+WIDTH_MIN, WIDTH_MAX = 150, 420        # страница сама сообщает нужную ширину для режимов «info» и «music» (по содержимому)
 RADIUS_MAX = 30         # то же число в ui/island.html: --r = min(30px, 50vh)
 TOP_MARGIN = 6          # отступ от верхнего края экрана
 ANIM_SECONDS = 0.32
@@ -91,8 +93,8 @@ class IslandApi:
         return {"state": a.state, "sleeping": bool(a.sleeping), "listening": bool(a.listening), "name": a.cfg["name"],
                 "settings": self._island.settings(), "volume": self.volume_get()}
 
-    def set_mode(self, mode: str):
-        self._island.set_mode(str(mode))
+    def set_mode(self, mode: str, width=None):
+        self._island.set_mode(str(mode), width)
         return True
 
     def set_listening(self, on: bool):
@@ -111,6 +113,16 @@ class IslandApi:
 
     def settings_set(self, patch: dict):
         return self._island.settings_set(patch if isinstance(patch, dict) else {})
+
+    # ---- музыка, заряд ----
+    def media_get(self):
+        return self._island.media.info or {"status": "none"}
+
+    def media_cmd(self, name: str):
+        return self._island.media.command(str(name))
+
+    def battery_get(self):
+        return tools.battery()
 
     # ---- громкость ----
     def volume_get(self):
@@ -256,6 +268,7 @@ class Island:
         self._stop_tick = threading.Event()
         self._stopping = False               # True, пока мы сами закрываем окно: иначе «закрытие» отменяется
         self._halo: Halo | None = None       # сглаженный контур под островом (karina/halo.py)
+        self.media = Media(self._on_media, trace)    # что играет сейчас (karina/media.py)
 
     # ---- включение / выключение ----
     @property
@@ -297,6 +310,7 @@ class Island:
             self._stop_tick = threading.Event()
             threading.Thread(target=self._tick, args=(self._stop_tick,), daemon=True, name="karina-island-tick").start()
             self.clip.start()
+            self._sync_media()
             try:
                 w.events.shown += self._on_shown
                 w.events.loaded += self._on_loaded
@@ -347,6 +361,7 @@ class Island:
         self._gen += 1
         self._stop_tick.set()
         self.clip.stop()
+        self.media.stop()
         halo, self._halo = self._halo, None
         if halo is not None:
             halo.stop()
@@ -389,7 +404,19 @@ class Island:
     def settings_set(self, patch: dict) -> dict:
         new = tools.clean_settings(patch, self.settings())
         self.cfg.update({"island": new})
+        self._sync_media()
         return new
+
+    def _sync_media(self):
+        """Читать музыку только пока остров работает и показ музыки включён."""
+        if self.window is not None and self.settings().get("idle_music", True):
+            self.media.start()
+        else:
+            self.media.stop()
+            self.push({"type": "media", "status": "none"})
+
+    def _on_media(self, info):
+        self.push({"type": "media", **(info or {"status": "none"})})
 
     def _say(self, text: str):
         try:
@@ -564,13 +591,18 @@ class Island:
         rgn = gdi32.CreateRoundRectRgn(ins, ins, pw - ins + 1, ph - ins + 1, int(2 * (pr - ins)), int(2 * (pr - ins)))
         user32.SetWindowRgn(hwnd, rgn, True)         # система сама освободит регион
 
-    def set_mode(self, mode: str):
+    def set_mode(self, mode: str, width=None):
         if mode not in SIZES or not IS_WIN or self.window is None:
             return
+        b = SIZES[mode]
+        if mode in ("info", "music", "mini") and isinstance(width, (int, float)) and not isinstance(width, bool):
+            b = (max(WIDTH_MIN, min(WIDTH_MAX, float(width))), b[1], b[2])        # ширину задаёт содержимое плашки
         with self._lock:
+            if tuple(round(v) for v in b) == tuple(round(v) for v in self._cur):
+                return
             self._gen += 1
             gen = self._gen
-            a, b = self._cur, SIZES[mode]
+            a = self._cur
         grow = b[0] * b[1] >= a[0] * a[1]
         threading.Thread(target=self._animate, args=(gen, a, b, grow), daemon=True, name="karina-island-anim").start()
 
