@@ -1,6 +1,6 @@
 """Погода через Open-Meteo (бесплатно, без ключа и регистрации): сначала ищем город, потом прогноз."""
 from __future__ import annotations
-import itertools, json, re, urllib.parse, urllib.request
+import itertools, json, re, time, urllib.parse, urllib.request
 
 GEO = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST = "https://api.open-meteo.com/v1/forecast"
@@ -17,12 +17,42 @@ class WeatherError(Exception):
     """Текст можно сразу произнести."""
 
 
-def _get(url: str, params: dict, timeout: float = 8.0) -> dict:
-    req = urllib.request.Request(url + "?" + urllib.parse.urlencode(params), headers=UA)
-    try:
-        return json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8"))
-    except Exception:
-        raise WeatherError("Не получилось связаться с сервисом погоды. Проверьте интернет.") from None
+LAST_ERROR = ""          # технические подробности последней неудачи (для журнала и подсказки в панели)
+
+
+def _reason(e: Exception) -> str:
+    import socket, ssl, urllib.error
+    r = getattr(e, "reason", e)
+    if isinstance(r, (socket.timeout, TimeoutError)) or "timed out" in str(r):
+        return "превышено время ожидания"
+    if isinstance(r, ssl.SSLError):
+        return "ошибка защищённого соединения (SSL)"
+    if isinstance(e, urllib.error.HTTPError):
+        return f"сервис ответил {e.code}"
+    if isinstance(e, (ValueError, json.JSONDecodeError)):
+        return "сервис вернул непонятный ответ"
+    return str(r)[:80] or e.__class__.__name__
+
+
+def _get(url: str, params: dict, timeout: float = 10.0) -> dict:
+    """Запрос к Open-Meteo. Три попытки: как настроен системный прокси → напрямую (без прокси: у VPN или прокси иногда «залипает» настройка и
+    всё через него не ходит) → ещё раз напрямую. Раньше любая неудача превращалась в «нет связи» без причины, и погода просто не показывалась."""
+    global LAST_ERROR
+    full = url + "?" + urllib.parse.urlencode(params)
+    last: Exception | None = None
+    for attempt, direct in enumerate((False, True, True)):
+        req = urllib.request.Request(full, headers=UA)
+        try:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if direct else urllib.request.build_opener()
+            data = json.loads(opener.open(req, timeout=timeout).read().decode("utf-8"))
+            LAST_ERROR = ""
+            return data
+        except Exception as e:
+            last = e
+            if attempt < 2:
+                time.sleep(0.4)
+    LAST_ERROR = f"{last.__class__.__name__}: {_reason(last) if last else ''}"
+    raise WeatherError(f"Не получилось связаться с сервисом погоды ({_reason(last) if last else 'нет связи'}). Проверьте интернет или VPN.") from None
 
 
 def _word_variants(w: str) -> list[str]:

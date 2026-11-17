@@ -259,7 +259,26 @@ def _icon(code: int) -> str:
     return "⛅"
 
 
+_WCACHE: dict = {}          # город (в нижнем регистре) → (время, результат): свежий кэш 10 минут, при сбое сети отдаём прошлый ответ
+
+
 def weather_week(city_name: str) -> dict:
+    """Погода на неделю. Недавний ответ берём из кэша; если сети нет, показываем прошлый (с пометкой stale), лишь бы не пустая вкладка."""
+    key = str(city_name or "").strip().lower()
+    hit = _WCACHE.get(key)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    try:
+        out = _weather_week(city_name)
+    except Exception:
+        if hit:
+            return {**hit[1], "stale": True}
+        raise
+    _WCACHE[key] = (time.time(), out)
+    return out
+
+
+def _weather_week(city_name: str) -> dict:
     from . import weather
     city = weather.find_city(city_name)
     data = weather._get(weather.FORECAST, {

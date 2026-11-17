@@ -155,6 +155,12 @@ if IS_WIN:
         gdi32.CreateRectRgn.argtypes = [ctypes.c_int] * 4
         gdi32.CreateRectRgn.restype = wintypes.HRGN
         gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+        gdi32.GetRgnBox.argtypes = [wintypes.HRGN, ctypes.POINTER(_RECT)]
+        gdi32.GetStockObject.argtypes = [ctypes.c_int]
+        gdi32.GetStockObject.restype = wintypes.HGDIOBJ
+        user32.SetClassLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        user32.SetClassLongPtrW.restype = ctypes.c_ssize_t
+        user32.InvalidateRect.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
     try:
         _fix_types()
     except Exception:
@@ -428,16 +434,18 @@ class IslandApi:
 
     # ---- погода ----
     def weather_get(self, city=""):
-        name = str(city or "").strip()
-        if name:
-            self._island.settings_set({"city": name})
-        name = name or self._island.settings().get("city") or self._profile_city()
+        typed = str(city or "").strip()
+        name = typed or self._island.settings().get("city") or self._profile_city()
         if not name:
             return {"ok": False, "need_city": True}
         try:
-            return {"ok": True, **tools.weather_week(name)}
+            out = tools.weather_week(name)
         except Exception as e:
+            self._island.trace(f"Остров: погода «{name}» не получена: {e.__class__.__name__}: {e}")
             return {"ok": False, "error": str(e) or e.__class__.__name__, "city": name}
+        if typed:
+            self._island.settings_set({"city": typed})       # запоминаем, только если такой город нашёлся
+        return {"ok": True, **out}
 
     def _profile_city(self):
         try:
@@ -1279,6 +1287,7 @@ class Island:
             user32.SetWindowPos(h, None, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS)
             if not self._painting:
                 self._show_native(h)
+            self._paint_black(h)
         except Exception as e:
             self.trace(f"Остров: стили окна не применены ({e})")
         try:
@@ -1632,7 +1641,7 @@ class Island:
     def reassert(self):
         """Вернуть остров в порядок после смены темы Windows и подобных событий (несколько проверок подряд: система реагирует не сразу)."""
         def run():
-            for d in (0.05, 0.2, 0.4, 0.8, 1.5, 2.0):
+            for d in (0.05, 0.2, 0.4, 0.8, 1.5, 2.0, 3.0, 4.0):
                 time.sleep(d)
                 self._guard_once(True)
         threading.Thread(target=run, daemon=True, name="karina-island-reassert").start()
@@ -1645,6 +1654,48 @@ class Island:
                 self._guard_once()
             except Exception as e:
                 self.trace(f"Остров: сторож: {e}")
+
+    def _region_wrong(self, h) -> bool:
+        """Регион окна не совпадает с формой плашки (по габаритам). Раньше сторож замечал только «региона нет вообще», а после смены
+        тёмной темы Windows/WebView2 могли подставить прямоугольный регион: по скриншотам был виден серый прямоугольник вокруг плашки."""
+        rc, W = self._rect_cur, self._win
+        if rc is None or W is None:
+            return False
+        try:
+            tmp = gdi32.CreateRectRgn(0, 0, 0, 0)
+            try:
+                if user32.GetWindowRgn(h, tmp) == 0:
+                    return True
+                box = _RECT()
+                if not gdi32.GetRgnBox(tmp, ctypes.byref(box)):
+                    return False
+            finally:
+                gdi32.DeleteObject(tmp)
+            ew, eh = rc[2], rc[3]
+            return abs((box.right - box.left) - ew) > 4 or abs((box.bottom - box.top) - eh) > 4
+        except Exception:
+            return False
+
+    def _paint_black(self, h):
+        """Фон класса окна (и дочерних окон WebView2) — чёрный: если страница на миг не нарисована, видно чёрное, а не серое системное
+        тёмное (#202020), которое Windows подставляет при смене темы."""
+        try:
+            black = gdi32.GetStockObject(4)                      # BLACK_BRUSH
+            user32.SetClassLongPtrW(h, -10, black)               # GCLP_HBRBACKGROUND
+            cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+            def child(c, _l):
+                try:
+                    user32.SetClassLongPtrW(c, -10, black)
+                except Exception:
+                    pass
+                return True
+            self._enum_cb = cb(child)                            # держим ссылку, пока идёт перебор
+            user32.EnumChildWindows.argtypes = [wintypes.HWND, cb, wintypes.LPARAM]
+            user32.EnumChildWindows(h, self._enum_cb, 0)
+            user32.InvalidateRect(h, None, True)
+        except Exception:
+            pass
 
     def _guard_once(self, force: bool = False):
         """Проверяем окно: цел ли регион (форма «таблетки»), нет ли рамки и заголовка, там ли стоит окно, тот же ли handle.
@@ -1662,6 +1713,8 @@ class Island:
                 bad = user32.GetWindowRgn(h, tmp) == 0           # ERROR: региона нет
             finally:
                 gdi32.DeleteObject(tmp)
+        if not bad:
+            bad = self._region_wrong(h)                          # регион есть, но не тот (после смены темы он мог стать прямоугольником во всё окно)
         if not bad:
             bad = bool(user32.GetWindowLongPtrW(h, GWL_STYLE) & (WS_CAPTION | WS_THICKFRAME))
         if not bad and self._win is not None:
