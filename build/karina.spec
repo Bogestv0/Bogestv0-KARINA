@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 
 ROOT = Path(SPECPATH).parent
 datas, binaries, hidden = [], [], ["pystray._win32", "pycaw.pycaw", "comtypes.client", "pyautogui", "pyperclip"]
-for pkg in ("numpy", "faster_whisper", "ctranslate2", "onnxruntime", "av", "webview", "sounddevice", "pycaw", "comtypes", "tokenizers", "huggingface_hub", "docx", "openpyxl", "reportlab", "lxml", "et_xmlfile", "pystray", "torch", "winrt"):
+for pkg in ("numpy", "faster_whisper", "ctranslate2", "onnxruntime", "av", "webview", "sounddevice", "pycaw", "comtypes", "tokenizers", "huggingface_hub", "docx", "openpyxl", "reportlab", "lxml", "et_xmlfile", "pystray", "torch", "winrt", "zxingcpp", "segno", "imageio_ffmpeg"):
     d, b, h = collect_all(pkg)
     datas += d; binaries += b; hidden += h
 datas += [(str(ROOT / "ui"), "ui"), (str(ROOT / "plugins"), "plugins")]

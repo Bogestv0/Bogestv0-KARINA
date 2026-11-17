@@ -11,14 +11,18 @@ import queue
 import sys
 import threading
 import time
+from pathlib import Path
 
 from .config import ROOT
 from . import island_tools as tools
+from . import screen_tools as st
 from .halo import Halo
 from .media import Media
 
 IS_WIN = sys.platform == "win32"
 TITLE = "Остров Карины"
+SNIP_TITLE = "Область экрана Карины"
+SNIP_TIMEOUT = 180       # если выбор области забыли закончить, окно закрывается само
 
 # режим -> (ширина, высота, радиус скругления) в логических пикселях
 SIZES = {"mini": (150, 36, 18), "info": (232, 36, 18), "music": (300, 36, 18), "wide": (290, 40, 20), "full": (480, 330, 30)}
@@ -61,6 +65,8 @@ if IS_WIN:
         user32.FindWindowW.restype = wintypes.HWND
         user32.IsWindowVisible.argtypes = [wintypes.HWND]
         user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
         user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
         user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
         user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
@@ -252,6 +258,143 @@ class IslandApi:
         except Exception:
             return False
 
+    # ---- инструменты: область, текст с экрана, пипетка ----
+    def snip_start(self, mode: str):
+        return self._island.snip(str(mode))
+
+    def qr_make(self, text):
+        try:
+            return {"ok": True, "url": st.png_data_url(st.qr_png(str(text or "")))}
+        except st.ToolError as e:
+            return {"ok": False, "error": str(e)}
+
+    def qr_clipboard(self):
+        return st.clip_get_text()[:1500]
+
+    def qr_copy(self, text):
+        try:
+            from PIL import Image
+            import io
+            ok = st.clip_set_image(Image.open(io.BytesIO(st.qr_png(str(text or "")))))
+            return {"ok": ok, "error": "" if ok else "Не удалось скопировать картинку."}
+        except st.ToolError as e:
+            return {"ok": False, "error": str(e)}
+
+    def qr_save(self, text):
+        try:
+            p = st.pictures_dir()
+            p.mkdir(parents=True, exist_ok=True)
+            path = p / time.strftime("qr-%Y%m%d-%H%M%S.png")
+            path.write_bytes(st.qr_png(str(text or "")))
+            return {"ok": True, "path": str(path)}
+        except (st.ToolError, OSError) as e:
+            return {"ok": False, "error": str(e)}
+
+    def qr_scan(self):
+        return self._island.qr_scan()
+
+    def clean_paste(self):
+        try:
+            text = st.paste_clean(self._island.focus)
+            return {"ok": True, "n": len(text)}
+        except st.ToolError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": "Не получилось вставить: " + (str(e) or e.__class__.__name__)}
+
+    def rec_status(self):
+        return self._island.rec.status()
+
+    def rec_toggle(self):
+        return self._island.rec_toggle()
+
+    def open_videos(self):
+        try:
+            d = st.videos_dir()
+            d.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(d))
+            return True
+        except Exception:
+            return False
+
+    def layout_get(self):
+        return self._island.focus.layout_get()
+
+    def layout_toggle(self):
+        f = self._island.focus
+        f.layout_set(st.next_layout(f.layout_get()))
+        time.sleep(0.2)
+        return f.layout_get()
+
+    def command_run(self, text):
+        text = " ".join(str(text or "").split())
+        if not text:
+            return False
+        return self._api.send_text(text)
+
+    def custom_set(self, items):
+        return self._island.settings_set({"tools": items if isinstance(items, list) else []}).get("tools", [])
+
+    def custom_run(self, i):
+        items = self._island.settings().get("tools", [])
+        try:
+            cmd = items[int(i)]["cmd"]
+        except Exception:
+            return False
+        kind = st.custom_kind(cmd)
+        try:
+            if kind == "url":
+                import webbrowser
+                webbrowser.open(cmd if cmd.lower().startswith("http") else "https://" + cmd)
+            elif kind == "path":
+                os.startfile(os.path.expanduser(cmd.strip('"')))
+            else:
+                self._api.send_text(cmd)
+            return True
+        except Exception:
+            return False
+
+    def custom_open(self, url):
+        u = str(url or "").strip()
+        if not st.is_url(u):
+            return False
+        import webbrowser
+        return bool(webbrowser.open(u if u.lower().startswith("http") else "https://" + u))
+
+    def copy_text(self, text):
+        return st.clip_set_text(str(text or ""))
+
+    def speak(self, text):
+        self._island._say(str(text or "")[:1200])
+        return True
+
+    def translate(self, text):
+        t = str(text or "").strip()[:1500]
+        if not t:
+            return False
+        import re
+        to = "английский" if re.search(r"[а-яё]", t, re.I) else "русский"
+        return self._api.send_text(f"переведи на {to}: {t}")
+
+
+class SnipApi:
+    """Методы окна выбора области (ui/snip.html)."""
+
+    def __init__(self, island: "Island", snip: dict):
+        self._island, self._snip = island, snip
+
+    def image(self):
+        s = self._snip
+        return {"url": st.image_data_url(s["img"]), "mode": s["mode"]}
+
+    def ready(self):
+        self._snip["ready"].set()
+        return True
+
+    def done(self, payload):
+        threading.Thread(target=self._island._snip_finish, args=(self._snip, payload if isinstance(payload, dict) else {}), daemon=True).start()
+        return True
+
 
 class Island:
     def __init__(self, cfg, api, show_main, trace=lambda s: None):
@@ -269,6 +412,11 @@ class Island:
         self._stopping = False               # True, пока мы сами закрываем окно: иначе «закрытие» отменяется
         self._halo: Halo | None = None       # сглаженный контур под островом (karina/halo.py)
         self.media = Media(self._on_media, trace)    # что играет сейчас (karina/media.py)
+        self.rec = st.Recorder()                     # запись экрана (karina/screen_tools.py)
+        self.focus = st.Focus()                      # последнее чужое окно: для вставки и раскладки
+        self._rec_shown = False                      # страница уже знает, что запись идёт
+        self._snip: dict | None = None               # открытое окно выбора области
+        self._painting = False                       # окно показано средствами WinForms (иначе WebView2 считает себя невидимым и не рисует)
 
     # ---- включение / выключение ----
     @property
@@ -303,7 +451,7 @@ class Island:
                     self.trace(f"Остров: create_window без {', '.join(drop) or '-'} ({e})")
             if w is None:
                 return False
-            self.window, self.ready, self._hwnd = w, False, 0
+            self.window, self.ready, self._hwnd, self._painting = w, False, 0, False
             self._halo = Halo(self.trace)
             self._q = queue.Queue(maxsize=200)
             threading.Thread(target=self._pump, args=(w, self._q), daemon=True, name="karina-island").start()
@@ -360,6 +508,9 @@ class Island:
         w, self.window, self.ready, self._hwnd = self.window, None, False, 0
         self._gen += 1
         self._stop_tick.set()
+        self._snip_close()
+        if self.rec.on:
+            self.rec.stop()
         self.clip.stop()
         self.media.stop()
         halo, self._halo = self._halo, None
@@ -428,6 +579,11 @@ class Island:
         """Раз в секунду: сработал ли таймер или напоминание. Говорит вслух и показывает подсказку на острове."""
         while not stop.wait(1.0):
             try:
+                self.focus.poll()
+                if self._rec_shown and not self.rec.on:                  # ffmpeg завершился сам (например, закончилось место)
+                    self._rec_shown = False
+                    self.push({"type": "rec", "on": False})
+                    self.push({"type": "toast", "kind": "tool", "text": "Запись остановилась"})
                 if self.store.timer_due():
                     self._say("Таймер закончился.")
                     self.push({"type": "toast", "text": "Таймер закончился", "kind": "timer"})
@@ -437,24 +593,214 @@ class Island:
             except Exception as e:
                 self.trace(f"Остров: ошибка таймера ({e})")
 
+    def _show_native(self, h: int = 0) -> bool:
+        """Показывает остров средствами WinForms (Form.Show), а не голым ShowWindow. Окно создаётся спрятанным, и если показать его через
+        ShowWindow, WinForms считает его скрытым, WebView2 не рисует страницу: плашка остаётся чёрной, пока не изменится размер
+        (то есть появляется только когда Карина что-то делает или играет музыка, и мигает). Фокус не отбираем: возвращаем прежнему окну."""
+        h = h or self._hwnd_of()
+        prev = 0
+        try:
+            prev = int(user32.GetForegroundWindow() or 0)
+        except Exception:
+            pass
+        ok = False
+        try:
+            self.window.show()
+            ok = True
+        except Exception as e:
+            self.trace(f"Остров: window.show() не удался ({e}), показываю через ShowWindow")
+        try:
+            if not ok and h:
+                user32.ShowWindow(h, 8)                                                      # SW_SHOWNA
+            if h and prev and prev != h and int(user32.GetForegroundWindow() or 0) == h:
+                user32.SetForegroundWindow(prev)
+        except Exception:
+            pass
+        self._painting = ok or self._painting
+        return ok
+
+    def _hide(self) -> bool:
+        """Прячет остров на время снимка. Возвращает True, если что-то спрятали."""
+        h = self._hwnd_of() if IS_WIN else 0
+        if h:
+            try:
+                self.window.hide()                              # через WinForms: WebView2 узнаёт, что страница скрыта
+            except Exception:
+                user32.ShowWindow(h, 0)
+            if self._halo is not None:
+                self._halo.show(False)
+            time.sleep(0.3)
+        return bool(h)
+
+    def _unhide(self, hidden: bool):
+        if hidden:
+            self._show_native(self._hwnd_of())
+            if self._halo is not None:
+                self._halo.show(True)
+
     def screenshot(self) -> dict:
         """Снимок экрана без самого острова: на мгновение прячем окно."""
-        h = self._hwnd_of() if IS_WIN else 0
+        hidden = False
         try:
-            if h:
-                user32.ShowWindow(h, 0)
-                if self._halo is not None:
-                    self._halo.show(False)
-                time.sleep(0.3)
+            hidden = self._hide()
             path = tools.save_screenshot()
             return {"ok": True, "path": path}
         except Exception as e:
             return {"ok": False, "error": str(e) or e.__class__.__name__}
         finally:
-            if h:
-                user32.ShowWindow(h, 8)
-                if self._halo is not None:
-                    self._halo.show(True)
+            self._unhide(hidden)
+
+    def _toast(self, text: str):
+        self.push({"type": "toast", "kind": "tool", "text": text})
+
+    # ---- инструменты: область, текст, пипетка, QR, запись ----
+    def qr_scan(self) -> dict:
+        hidden = False
+        try:
+            hidden = self._hide()
+            img, _ = st.grab_screen()
+        except Exception as e:
+            return {"ok": False, "error": str(e) or e.__class__.__name__}
+        finally:
+            self._unhide(hidden)
+        try:
+            return {"ok": True, "codes": st.qr_read(img)}
+        except st.ToolError as e:
+            return {"ok": False, "error": str(e)}
+
+    def rec_toggle(self) -> dict:
+        try:
+            if self.rec.on:
+                r = self.rec.stop()
+                self._rec_shown = False
+                self.push({"type": "rec", "on": False})
+                if r.get("path"):
+                    self.push({"type": "toast", "kind": "tool", "text": f"Запись сохранена ({st.fmt_time(r['sec'])}): {Path(r['path']).name}"})
+                return {"ok": True, **r}
+            r = self.rec.start()
+            self._rec_shown = True
+            self.push({"type": "rec", "on": True, "t0": r["t0"]})
+            return {"ok": True, **r}
+        except st.ToolError as e:
+            return {"ok": False, "error": str(e), "on": self.rec.on}
+
+    def snip(self, mode: str) -> dict:
+        """Снимок экрана → окно во весь рабочий стол, где выбирают область (area/text) или цвет (pick)."""
+        if mode not in ("area", "text", "pick"):
+            return {"ok": False, "error": "Неизвестный режим."}
+        if not IS_WIN or self.window is None:
+            return {"ok": False, "error": "Работает только в Windows."}
+        if self._snip is not None:
+            return {"ok": False, "error": "Выбор уже идёт: закройте его клавишей Esc."}
+        hidden = False
+        try:
+            hidden = self._hide()
+            img, origin = st.grab_screen()
+        except Exception as e:
+            self._unhide(hidden)
+            return {"ok": False, "error": "Не удалось сделать снимок экрана: " + (str(e) or e.__class__.__name__)}
+        # остров остаётся спрятанным, пока идёт выбор: вернём его в _snip_done
+        s = {"mode": mode, "img": img, "origin": origin, "hidden": hidden, "ready": threading.Event(), "window": None}
+        self._snip = s
+        try:
+            import webview
+            kw = dict(url=str(ROOT / "ui" / "snip.html"), js_api=SnipApi(self, s), width=400, height=300, frameless=True, easy_drag=False,
+                      shadow=False, on_top=True, background_color="#000000", hidden=True, focus=True)
+            w = None
+            for drop in ((), ("hidden",), ("shadow", "easy_drag", "hidden")):
+                try:
+                    w = webview.create_window(SNIP_TITLE, **{k: v for k, v in kw.items() if k not in drop})
+                    break
+                except TypeError as e:
+                    self.trace(f"Область: create_window без {', '.join(drop) or '-'} ({e})")
+            if w is None:
+                raise RuntimeError("окно не создано")
+            s["window"] = w
+            threading.Thread(target=self._snip_place, args=(s,), daemon=True, name="karina-snip").start()
+            return {"ok": True}
+        except Exception as e:
+            self._snip = None
+            self._unhide(hidden)
+            self.trace(f"Область: не удалось открыть окно ({e.__class__.__name__}: {e})")
+            return {"ok": False, "error": "Не удалось открыть окно выбора."}
+
+    def _snip_place(self, s: dict):
+        """Растягивает окно выбора на весь рабочий стол (в физических пикселях снимка) и показывает, когда страница готова."""
+        t0, hwnd = time.time(), 0
+        while self._snip is s and not hwnd and time.time() - t0 < 10:
+            try:
+                hwnd = int(user32.FindWindowW(None, SNIP_TITLE) or 0)
+            except Exception:
+                hwnd = 0
+            if not hwnd:
+                time.sleep(0.05)
+        if self._snip is not s or not hwnd:
+            self._snip_finish(s, {"action": "cancel"})
+            return
+        try:
+            stl = user32.GetWindowLongPtrW(hwnd, GWL_STYLE)
+            user32.SetWindowLongPtrW(hwnd, GWL_STYLE, stl & ~(WS_CAPTION | WS_THICKFRAME))
+            ex = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+            user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (ex | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
+            ox, oy = s["origin"]
+            s["hwnd"] = hwnd
+            user32.SetWindowPos(hwnd, wintypes.HWND(HWND_TOPMOST), ox, oy, s["img"].width, s["img"].height, SWP_FRAMECHANGED)
+        except Exception as e:
+            self.trace(f"Область: окно не растянулось ({e})")
+        s["ready"].wait(8)                                  # страница сообщит, когда нарисовала снимок
+        try:
+            s["window"].show()                              # через WinForms, иначе WebView2 не рисует страницу
+            user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+        end = time.time() + SNIP_TIMEOUT
+        while self._snip is s and time.time() < end:
+            time.sleep(0.5)
+        if self._snip is s:
+            self._snip_finish(s, {"action": "cancel"})
+
+    def _snip_close(self):
+        s, self._snip = self._snip, None
+        if s is not None and s.get("window") is not None:
+            try:
+                s["window"].destroy()
+            except Exception:
+                pass
+        return s
+
+    def _snip_finish(self, s: dict, payload: dict):
+        """Закрывает окно выбора, возвращает остров и выполняет выбранное действие."""
+        if self._snip is not s:
+            return
+        self._snip_close()
+        self._unhide(s["hidden"])
+        act = str((payload or {}).get("action") or "cancel")
+        if act == "cancel":
+            return
+        try:
+            if act == "color":
+                v = str(payload.get("value") or "")[:40]
+                st.clip_set_text(v)
+                self._toast(f"Цвет {v} скопирован")
+                return
+            crop = st.crop_fraction(s["img"], payload.get("rect"))
+            dims = f"{crop.width} × {crop.height}"
+            if act == "copy":
+                self._toast(f"Снимок {dims} скопирован" if st.clip_set_image(crop) else "Не удалось скопировать картинку")
+            elif act == "save":
+                self._toast("Сохранено: " + Path(st.save_image(crop)).name)
+            elif act == "text":
+                self._toast("Распознаю текст…")
+                text = st.ocr_image(crop)
+                if text.strip():
+                    self.push({"type": "tool", "kind": "text", "text": text})
+                else:
+                    self._toast("Текст не найден")
+        except st.ToolError as e:
+            self._toast(str(e))
+        except Exception as e:
+            self.trace(f"Область: ошибка ({e.__class__.__name__}: {e})")
+            self._toast("Не получилось: " + (str(e) or e.__class__.__name__))
 
     def _pump(self, w, q):
         while True:
@@ -508,8 +854,8 @@ class Island:
             ex = user32.GetWindowLongPtrW(h, GWL_EXSTYLE)
             user32.SetWindowLongPtrW(h, GWL_EXSTYLE, (ex | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW)     # не значок на панели задач
             user32.SetWindowPos(h, None, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS)
-            if not user32.IsWindowVisible(h):
-                user32.ShowWindow(h, 8)                                                      # SW_SHOWNA
+            if not self._painting:
+                self._show_native(h)
         except Exception as e:
             self.trace(f"Остров: стили окна не применены ({e})")
         try:
