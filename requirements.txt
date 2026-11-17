@@ -13,6 +13,10 @@ python-docx>=1.1.0
 openpyxl>=3.1.2
 reportlab>=4.0.0
 pystray>=0.19.5
+winrt-runtime>=2.0; sys_platform == "win32"                       # музыка на острове (системный медиа-сеанс Windows); без них название трека не показывается
+winrt-Windows.Media.Control>=2.0; sys_platform == "win32"
+winrt-Windows.Foundation>=2.0; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=2.0; sys_platform == "win32"
 websockets>=13        # связь с микшером и расширением VPN (голосовые команды)
 # Естественный голос Silero работает на torch (CPU-версия, ~200 МБ). Ставится вместе со всем остальным и входит в установщик.
 --extra-index-url https://download.pytorch.org/whl/cpu

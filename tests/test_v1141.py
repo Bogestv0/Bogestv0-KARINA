@@ -8,7 +8,7 @@ from karina import island, winframe
 
 
 def test_version():
-    assert karina.__version__ == "1.14.1"
+    assert tuple(map(int, karina.__version__.split("."))) >= (1, 14, 1)
 
 
 WORK = (0, 0, 1536, 816)

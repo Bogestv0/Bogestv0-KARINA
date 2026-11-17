@@ -52,6 +52,22 @@ input,textarea{user-select:text;-webkit-user-select:text;cursor:text;outline:0}
 .bars{display:flex;gap:2px;align-items:center;height:18px;margin-left:auto;flex:none}
 .bars i{width:3px;height:3px;border-radius:2px;background:var(--c);transition:height .1s,background .3s}
 
+/* ---------- свёрнутая плашка: время, заряд, температура / музыка ---------- */
+.info,.mus{display:none;align-items:center;flex:none;white-space:nowrap;font-size:12.5px}
+.info{gap:12px}.info b{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.info span{display:flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
+.info svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.mus{gap:10px}.mus .t{max-width:140px;overflow:hidden;text-overflow:ellipsis}.mus .t b{font-weight:600}
+.mico{width:24px;height:24px;border-radius:7px;background:#1d2a3a;display:grid;place-items:center;flex:none;color:var(--c)}
+.mico svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.mbs{display:flex;gap:2px;margin-left:6px}
+.mb{width:26px;height:26px;border-radius:50%;background:var(--card2);display:grid;place-items:center;transition:background .15s,transform .1s}
+.mb:hover{background:var(--card3)}.mb:active{transform:scale(.92)}
+.mb svg{width:12px;height:12px;fill:var(--fg)}
+.m-info .info,.m-music .mus{display:flex}
+.m-info .txt,.m-info .bars,.m-music .txt,.m-music .bars,.m-music .chr{display:none}
+.m-music .compact{padding-right:8px}
+#p-look{overflow:auto}
 /* ---------- панель ---------- */
 .full{position:absolute;left:50%;top:0;width:480px;height:330px;transform:translateX(-50%);opacity:0;pointer-events:none;transition:opacity .2s;z-index:3}
 .m-full .full{opacity:1;pointer-events:auto;transition-delay:.12s}
@@ -165,6 +181,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   <div class="compact" id="compact">
     <span class="chr sm" data-chr></span>
     <div class="txt" id="cTxt"><b id="cLab">Запуск</b><span id="cSub"></span></div>
+    <div class="info" id="cInfo">
+      <b id="iTime"></b>
+      <span id="iBat" hidden></span>
+      <span id="iTemp" hidden style="color:#f5c56b"></span>
+    </div>
+    <div class="mus" id="cMus">
+      <span class="mico"><svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg></span>
+      <span class="t" id="mTitle"></span>
+      <span class="mbs">
+        <button class="mb" id="mPlay" type="button" title="Пауза / продолжить" aria-label="Пауза"></button>
+        <button class="mb" id="mNext" type="button" title="Следующий трек" aria-label="Следующий трек"><svg viewBox="0 0 24 24"><path d="M5 5l10 7-10 7zM17 5h2v14h-2z"/></svg></button>
+      </span>
+    </div>
     <div class="bars" id="bars"><i></i><i></i><i></i><i></i><i></i></div>
   </div>
 
@@ -236,6 +265,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <div class="set"><span>Когда показывать (по датам: 15 дек – 15 янв)</span><div class="seg" id="sHol"><button data-v="dates">По датам</button><button data-v="always">Всегда</button><button data-v="off">Нет</button></div></div>
       <div class="set"><span>Снег</span><div class="seg" id="sSnow"><button data-v="1">Да</button><button data-v="0">Нет</button></div></div>
       <div class="set"><span>Гирлянда</span><div class="seg" id="sGar"><button data-v="off">Нет</button><button data-v="blink">Мигает</button><button data-v="wave">Волна</button></div></div>
+      <h4>Свёрнутая плашка</h4>
+      <div class="set"><span>Что показывать, пока Карина молчит</span></div>
+      <div class="seg" id="sIdle"><button data-k="idle_time">Время</button><button data-k="idle_battery">Заряд</button><button data-k="idle_temp">Температура</button><button data-k="idle_music">Музыка</button></div>
     </div>
     <div class="toast" id="toast"></div>
   </div>
@@ -253,7 +285,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     paused:   ['Пауза', '#9a9cae'], error: ['Ошибка', '#ff8a80'], sleep: ['Сплю', '#9a9cae'],
   };
   const st = { state: 'loading', sleeping: false, listening: true, detail: '', name: 'Карина', you: '', reply: '', err: '' };
-  let set = { character: 'logo', holiday: 'dates', snow: true, garland: 'off', city: '' };
+  let set = { character: 'logo', holiday: 'dates', snow: true, garland: 'off', city: '', idle_time: true, idle_battery: true, idle_temp: true, idle_music: true };
+  const info = { bat: null, temp: null, media: null, lastPlay: 0, tw: 0 };      // данные для свёрнутой плашки
   let full = false, mode = '', errUntil = 0, toastUntil = 0, toastText = '', level = 0, foldTimer = 0, tab = 'home';
 
   const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -282,7 +315,44 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     const k = key();
     if (k === 'thinking' || k === 'speaking' || k === 'loading') return 'wide';
     if (k === 'error' && Date.now() < errUntil) return 'wide';
+    if (musicOn()) return 'music';
+    if (infoOn()) return 'info';
     return 'mini';
+  }
+
+  // ---------- свёрнутая плашка ----------
+  // Музыка показывается, пока играет, и ещё полминуты после паузы; без неё — время, заряд и температура (что включено в «Виде острова»).
+  const musicOn = () => !!(set.idle_music && info.media && (info.media.status === 'playing' || Date.now() - info.lastPlay < 30000));
+  const hasBat = () => !!(set.idle_battery && info.bat && info.bat.has);
+  const hasTemp = () => !!(set.idle_temp && info.temp != null);
+  const infoOn = () => !!(set.idle_time || hasBat() || hasTemp());
+  const hhmm = () => new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>', ICON_PAUSE = '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+  function batColor(b) { return b.plugged || b.pct > 30 ? '#7ee0a1' : b.pct > 15 ? '#f5c56b' : '#ff8a80'; }
+  function paintIdle() {
+    $('iTime').textContent = hhmm(); $('iTime').hidden = !set.idle_time;
+    const bt = $('iBat'), tp = $('iTemp');
+    bt.hidden = !hasBat();
+    if (!bt.hidden) {
+      const b = info.bat, w = Math.max(1, Math.round(7 * Math.min(100, b.pct) / 100));
+      bt.style.color = batColor(b);
+      bt.innerHTML = `<svg viewBox="0 0 20 20"><rect x="2.5" y="6" width="13" height="8" rx="2"/><path d="M17.5 8.5v3"/><rect x="4.5" y="8" width="${w}" height="4" rx="1" fill="currentColor" stroke="none"/></svg>${b.pct}%${b.plugged ? '<span title="Заряжается" style="margin-left:-1px">⚡</span>' : ''}`;
+    }
+    tp.hidden = !hasTemp();
+    if (!tp.hidden) tp.innerHTML = `<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.2"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"/></svg>${info.temp}°`;
+    const m = info.media;
+    if (m) {
+      const t = $('mTitle'); t.textContent = ''; const b = document.createElement('b'); b.textContent = m.title; t.append(b);
+      if (m.artist) { const a = document.createElement('span'); a.className = 'muted'; a.textContent = ' ' + m.artist; t.append(a); }
+      $('mPlay').innerHTML = m.status === 'playing' ? ICON_PAUSE : ICON_PLAY;
+    }
+  }
+  // ширина плашки по содержимому: сама плашка просит у окна ровно столько места, сколько нужно
+  function idleWidth(m) {
+    const w = el => el.getBoundingClientRect().width;
+    if (m === 'info') return Math.ceil(7 + 12 + 24 + 9 + w($('cInfo')) + 2);
+    if (m === 'music') return Math.ceil(7 + 8 + w(document.querySelector('.mico')) + 10 + w($('mTitle')) + 10 + w(document.querySelector('.mbs')) + 2);
+    return 0;
   }
 
   function render() {
@@ -310,14 +380,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     else if (k === 'paused') { mic.textContent = 'Включить микрофон'; mic.dataset.act = 'on'; }
     else { mic.textContent = 'Выключить микрофон'; mic.dataset.act = 'off'; }
     $('bStop').hidden = k !== 'speaking';
-    setMode(wanted());
-    root.className = 'm-' + (mode || 'mini') + ' s-' + k;
+    const m = wanted();
+    paintIdle();
+    root.className = 'm-' + m + ' s-' + k;
+    setMode(m, idleWidth(m));
   }
 
-  function setMode(m) {
-    if (m === mode) return;
-    mode = m;
-    if (api) api.set_mode(m).catch(() => {});
+  let modeW = 0;
+  function setMode(m, w = 0) {
+    if (m === mode && w === modeW) return;
+    mode = m; modeW = w;
+    if (api) api.set_mode(m, w || null).catch(() => {});
   }
 
   function toast(text, ms = 5000) {
@@ -344,6 +417,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         if (ev.kind === 'you') { st.you = ev.text || ''; render(); }
         else if (ev.kind === 'karina') { st.reply = ev.text || ''; render(); }
         else if (ev.kind === 'error') { st.err = ev.text || ''; render(); }
+      } else if (ev.type === 'media') {
+        info.media = ev.status === 'none' ? null : ev;
+        if (ev.status === 'playing') { info.lastPlay = Date.now(); }
+        else if (info.media) setTimeout(render, 30100);
+        render();
       } else if (ev.type === 'toast') { toast((ev.kind === 'timer' ? '⏱ ' : '⏰ ') + ev.text, 8000); if (ev.kind === 'timer') { tEnd = 0; paintTimer(); } if (ev.kind === 'reminder' && tab === 'notes') loadRem(); }
     }
   };
@@ -359,6 +437,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     level *= .8;
     bars.forEach((b, i) => { b.style.height = Math.max(3, Math.round(17 * a * shape[i] * (.7 + Math.random() * .5))) + 'px'; });
   }, 90);
+
+  // ---------- музыка ----------
+  const mediaBtn = (id, cmd) => $(id).addEventListener('click', async e => {
+    e.stopPropagation();                         // нажатие на кнопку не раскрывает панель
+    if (cmd === 'toggle' && info.media) { info.media.status = info.media.status === 'playing' ? 'paused' : 'playing'; if (info.media.status === 'playing') info.lastPlay = Date.now(); render(); }
+    await call('media_cmd', cmd);
+  });
+  mediaBtn('mPlay', 'toggle'); mediaBtn('mNext', 'next');
 
   // ---------- раскрытие, вкладки ----------
   const setFull = v => { full = v; clearTimeout(foldTimer); if (v) openTab(tab); render(); };
@@ -496,12 +582,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       b.innerHTML = `<span class="chr lg" style="background:#000;border-radius:9px">${CHR[k]}</span>${CNAMES[k]}`;
       b.onclick = () => save({ character: k }); g.append(b);
     });
+    $$('#sIdle button').forEach(b => b.classList.toggle('on', !!set[b.dataset.k]));
     [['sHol', set.holiday], ['sSnow', set.snow ? '1' : '0'], ['sGar', set.garland]].forEach(([id, v]) => $$('#' + id + ' button').forEach(b => b.classList.toggle('on', b.dataset.v === v)));
   }
   $('sHol').onclick = e => { const b = e.target.closest('button'); if (b) save({ holiday: b.dataset.v }); };
   $('sSnow').onclick = e => { const b = e.target.closest('button'); if (b) save({ snow: b.dataset.v === '1' }); };
   $('sGar').onclick = e => { const b = e.target.closest('button'); if (b) save({ garland: b.dataset.v }); };
-  async function save(p) { Object.assign(set, p); applyLook(); paintLook(); const r = await call('settings_set', p); if (r) { set = r; applyLook(); paintLook(); } }
+  $('sIdle').onclick = e => { const b = e.target.closest('button'); if (b) { save({ [b.dataset.k]: !set[b.dataset.k] }); if (b.dataset.k === 'idle_temp') loadTemp(); if (b.dataset.k === 'idle_battery') loadBat(); } };
+  async function save(p) { Object.assign(set, p); applyLook(); paintLook(); render(); const r = await call('settings_set', p); if (r) { set = r; applyLook(); paintLook(); } }
 
   // ---------- праздник: снег и гирлянда ----------
   function holidayOn() {
@@ -538,11 +626,25 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     setTimeout(() => requestAnimationFrame(snowLoop), 33);
   }
 
+  // ---------- данные для плашки: заряд раз в минуту, температура раз в 20 минут, часы ----------
+  async function loadBat() { if (!set.idle_battery) return; const b = await call('battery_get'); info.bat = b && b.has ? b : null; render(); }
+  async function loadTemp() {
+    if (!set.idle_temp) return;
+    const r = await call('weather_get', '');
+    info.temp = r && r.ok && r.now ? r.now.t : null; render();
+    clearTimeout(info.tw); info.tw = setTimeout(loadTemp, info.temp == null ? 120000 : 1200000);      // нет города или связи — повтор через 2 минуты
+  }
+  let lastClock = '';
+  setInterval(() => { const t = hhmm(); if (t !== lastClock) { lastClock = t; if (!full && mode !== 'wide') render(); } }, 5000);
+  setInterval(loadBat, 60000);
+
   async function init() {
     api = window.pywebview.api;
     const s = await call('get_state');
     if (s) { st.state = s.state || 'idle'; st.sleeping = !!s.sleeping; st.listening = s.listening !== false; st.name = s.name || 'Карина'; if (s.settings) set = s.settings; if (s.volume != null) { vol.value = s.volume; $('volV').textContent = s.volume; fillRange(); } }
     mode = ''; applyLook(); render();
+    loadBat(); loadTemp();
+    const m = await call('media_get'); if (m && m.status !== 'none') { info.media = m; if (m.status === 'playing') info.lastPlay = Date.now(); render(); }
   }
   applyLook(); fillRange(); render();
   if (window.pywebview && window.pywebview.api) init(); else window.addEventListener('pywebviewready', init);
