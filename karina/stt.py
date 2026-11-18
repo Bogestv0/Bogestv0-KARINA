@@ -315,7 +315,9 @@ class STT:
         """(текст, уверенность 0…1). Уверенность — по оценке самой модели; по ней несколько микрофонов выбирают лучшую запись."""
         with self._lock:
             self.load()
-            kw = dict(language="ru", beam_size=1, vad_filter=True, condition_on_previous_text=False, initial_prompt=self.hint() or None,
+            # пока Карина ждёт «да/нет/стоп», внутренний фильтр тишины выключен: он принимал короткое «да» (около 0,3 с) за шум и выбрасывал его.
+            # Запись и так уже вырезана по голосу (karina/vad.py), а лишний текст в ответе не страшен: принимаются только слова ответа.
+            kw = dict(language="ru", beam_size=1, vad_filter=not getattr(self, "answer_mode", False), condition_on_previous_text=False, initial_prompt=self.hint() or None,
                       no_speech_threshold=0.6, temperature=0.0)
             try:
                 segs, _ = self.model.transcribe(audio, **kw)

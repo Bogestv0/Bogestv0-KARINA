@@ -7,7 +7,9 @@
 (другие голоса, нужны ударения от silero-stress). Модель скачивается один раз с models.silero.ai (адрес взят из официального models.yml).
 
 Нужен пакет torch (CPU-версия подходит). Он входит в установщик, в requirements.txt и в обновления: ничего ставить вручную не нужно.
-Модель Карина скачивает сама при первом запуске в фоне (см. ensure_model); пока она не скачана, говорит обычным голосом.
+Модель входит в установщик (папка voices рядом с программой, её кладёт build/fetch_voice.py при сборке), поэтому голос работает сразу после установки,
+ничего скачивать и обновлять не нужно. Докачка из интернета (ensure_model) остаётся только запасным путём для запуска из исходников,
+где встроенной модели нет; пока её нет, Карина говорит обычным голосом.
 """
 from __future__ import annotations
 import importlib.util, os, re, ssl, sys, threading, time, urllib.error, urllib.request, wave
@@ -24,11 +26,31 @@ SAMPLE_RATE = 48000
 MAX_CHUNK = 450          # модель не любит очень длинные куски: режем по предложениям
 
 
-def model_path(base: Path) -> Path:
+FROZEN = bool(getattr(sys, "frozen", False))
+
+APP_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) if FROZEN else Path(__file__).resolve().parent.parent
+
+
+def bundled_path() -> Path:
+    """Модель, которая лежит в самой программе (её кладёт установщик): voices/silero_v5_6_ru.pt рядом с приложением."""
+    return APP_ROOT / "voices" / f"silero_{MODEL_ID}.pt"
+
+
+def data_model_path(base: Path) -> Path:
+    """Скачанная копия в папке данных (запасной путь, если встроенной модели нет)."""
     return Path(base) / "voices" / f"silero_{MODEL_ID}.pt"
 
 
-FROZEN = bool(getattr(sys, "frozen", False))
+def has_bundled() -> bool:
+    try:
+        return bundled_path().stat().st_size > 1_000_000
+    except OSError:
+        return False
+
+
+def model_path(base: Path) -> Path:
+    """Какой файл модели использовать: встроенный в программу, а если его нет — скачанный в папку данных."""
+    return bundled_path() if has_bundled() else data_model_path(base)
 
 
 def torch_available() -> bool:
@@ -50,7 +72,9 @@ def is_ready(base: Path) -> bool:
 
 
 def delete(base: Path) -> None:
-    for f in (model_path(base), model_path(base).with_name(model_path(base).name + ".part"), model_path(base).with_name(model_path(base).name + ".new"), model_path(base).with_name(model_path(base).name + ".new.part")):
+    """Удаляет только скачанную копию; встроенный голос остаётся."""
+    p = data_model_path(base)
+    for f in (p, p.with_name(p.name + ".part"), p.with_name(p.name + ".new"), p.with_name(p.name + ".new.part")):
         f.unlink(missing_ok=True)
     unload()
 
@@ -85,7 +109,7 @@ def _swap_in(new: Path, dest: Path) -> None:
 
 def apply_pending(base: Path) -> bool:
     """Подставляет скачанное, но не применённое обновление голоса (вызывается до загрузки модели). True — подставили."""
-    dest = model_path(base)
+    dest = data_model_path(base)
     new = dest.with_name(dest.name + ".new")
     try:
         if new.exists() and new.stat().st_size > 1_000_000:
@@ -132,7 +156,7 @@ def download(base: Path, progress=None, cancel: threading.Event | None = None, f
     fresh=True — «обновить»: качает свежую копию рядом и заменяет старую только после успеха (старый голос не пропадёт, если что-то пошло не так)."""
     prog = progress or (lambda *a: None)
     cancel = cancel or threading.Event()
-    dest = model_path(base)
+    dest = data_model_path(base)
     part = dest.with_name(dest.name + (".new.part" if fresh else ".part"))     # готовая свежая копия получает имя .new только после полной загрузки
     dest.parent.mkdir(parents=True, exist_ok=True)
     if fresh:

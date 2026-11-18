@@ -224,12 +224,15 @@ class Api:
         from . import silero_voice
         base = self.cfg.path.parent
         size = silero_voice.model_path(base).stat().st_size if silero_voice.is_ready(base) else 0
-        return {"ready": silero_voice.is_ready(base), "size": size, "downloading": "silero" in self._downloads, "torch": silero_voice.torch_available(), "hint": silero_voice.torch_hint()}
+        return {"ready": silero_voice.is_ready(base), "size": size, "downloading": "silero" in self._downloads, "torch": silero_voice.torch_available(), "hint": silero_voice.torch_hint(),
+                "bundled": silero_voice.has_bundled()}
 
     def silero_download(self, fresh=False):
         """Скачать голос; fresh=True — обновить (скачать свежую копию и заменить имеющуюся)."""
         from . import silero_voice
         fresh = bool(fresh)
+        if silero_voice.has_bundled():
+            return False                         # голос уже в комплекте установщика: качать и обновлять нечего
         if "silero" in self._downloads or (silero_voice.is_ready(self.cfg.path.parent) and not fresh):
             return False
         cancel = threading.Event()

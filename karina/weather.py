@@ -17,6 +17,10 @@ class WeatherError(Exception):
     """Текст можно сразу произнести."""
 
 
+class WeatherNetError(WeatherError):
+    """Сервис погоды недоступен (сеть, блокировка, прокси): можно попробовать запасной."""
+
+
 LAST_ERROR = ""          # технические подробности последней неудачи (для журнала и подсказки в панели)
 
 
@@ -52,7 +56,7 @@ def _get(url: str, params: dict, timeout: float = 10.0) -> dict:
             if attempt < 2:
                 time.sleep(0.4)
     LAST_ERROR = f"{last.__class__.__name__}: {_reason(last) if last else ''}"
-    raise WeatherError(f"Не получилось связаться с сервисом погоды ({_reason(last) if last else 'нет связи'}). Проверьте интернет или VPN.") from None
+    raise WeatherNetError(f"Не получилось связаться с сервисом погоды ({_reason(last) if last else 'нет связи'}). Проверьте интернет или VPN.") from None
 
 
 def _word_variants(w: str) -> list[str]:
@@ -60,7 +64,7 @@ def _word_variants(w: str) -> list[str]:
     w = w.strip().strip(".,!?").lower()
     out = [w]
     if len(w) > 3:
-        out += [w[:-1], w[:-1] + "а", w[:-1] + "я", w[:-1] + "ь", w[:-2], w[:-2] + "а", w[:-2] + "ь"]
+        out += [w[:-1], w[:-1] + "а", w[:-1] + "я", w[:-1] + "ь", w[:-1] + "о", w[:-2], w[:-2] + "а", w[:-2] + "ь", w[:-2] + "о"]
     return list(dict.fromkeys(x for x in out if len(x) >= 3))
 
 
@@ -169,8 +173,47 @@ def describe(city: dict, data: dict, day: str = "today") -> tuple[str, bool]:
 
 
 def report(city_name: str, day: str = "today") -> tuple[str, bool]:
-    city = find_city(city_name)
-    return describe(city, forecast(city), day)
+    try:
+        city = find_city(city_name)
+        return describe(city, forecast(city), day)
+    except WeatherNetError as e:
+        fb = _fallback_report(city_name, day)        # Open-Meteo недоступен (у многих он заблокирован): пробуем wttr.in, как и вкладка «Погода» на острове
+        if fb:
+            return fb
+        raise e
+
+
+_WET_WORDS = ("дожд", "снег", "ливн", "гроз", "морос", "град", "ледян")
+
+
+def _fallback_report(city_name: str, day: str):
+    try:
+        from . import island_tools
+    except Exception:
+        return None
+    name = clean_city(city_name) or str(city_name).strip()
+    for cand in dict.fromkeys([name] + city_variants(name.replace(" ", "-") if len(name.split()) > 1 else name)[:4]):
+        try:
+            w = island_tools._weather_week_wttr(cand)
+        except Exception:
+            continue
+        days = w.get("days") or []
+        i = {"tomorrow": 1, "aftertomorrow": 2}.get(day, 0)
+        if i >= len(days):
+            continue
+        d, now = days[i], w.get("now") or {}
+        place = str(w.get("city") or cand).strip().capitalize()
+        rng = f"от {temp_words(d['lo'])} до {temp_words(d['hi'])}" if round(d["lo"]) != round(d["hi"]) else temp_words(d["hi"])
+        if i == 0 and now:
+            s = f"{place}, сейчас {temp_words(now['t'])}, {now.get('text', 'облачно')}, ветер {round(now.get('wind') or 0)} м/с. Днём {rng}."
+        else:
+            s = f"{place}, {'завтра' if i == 1 else 'послезавтра'}: {d.get('text', 'облачно')}, {rng}."
+        prob = int(d.get("prob") or 0)
+        if prob >= 30:
+            s += f" Вероятность осадков {prob} процентов."
+        wet = prob >= 50 or any(x in str(d.get("text", "")) for x in _WET_WORDS)
+        return s, wet
+    return None
 
 
 CITY_RE = re.compile(r"\b(?:в|во|для|по)\s+(?:городе\s+)?(?P<c>[а-яёa-z][а-яёa-z\- ]{2,40}?)(?=\s+(?:сегодня|завтра|сейчас|на\s+завтра)\b|$)")   # старый разбор, оставлен для совместимости
@@ -186,8 +229,20 @@ _LOCAL_PHRASE = re.compile(r"\b(?:у\s+меня|у\s+нас|около\s+мен�
 _DAYS = (("послезавтра", "aftertomorrow"), ("завтра", "tomorrow"))
 
 
+_HEARD_WEATHER = re.compile(r"\b(?:по\s+год\w*|п[ао]год\w*)")
+_PREPOSITIONS = {"в", "во", "для", "на", "по", "за", "у", "с", "со", "из", "при", "от", "около", "рядом", "про", "об", "над", "под", "к", "ко"}
+_WEATHER_TOKEN = re.compile(r"^(?:погода|прогноз\w*|температура|градусов)$")
+
+
+def fix_heard(t: str) -> str:
+    """Распознавалка слышит «погоду» как «по году», «погодов», «пагода»: приводим к «погода», чтобы и команда, и разбор города сработали."""
+    return _HEARD_WEATHER.sub("погода", t)
+
+
 def parse_request(t: str) -> tuple[str, str]:
-    """Фраза «какая погода в Красноярске завтра вечером» → («красноярске», «tomorrow»). Город пустой — значит «мой», из профиля."""
+    """Фраза «какая погода в Красноярске завтра вечером» → («красноярске», «tomorrow»). Город пустой — значит «мой», из профиля.
+    Город можно назвать и без предлога («погода Кемерово»)."""
+    t = fix_heard(t)
     day = next((d for w, d in _DAYS if re.search(rf"\b{w}\b", t)), "today")
     words = t.split()
     for i, w in enumerate(words):
@@ -200,6 +255,16 @@ def parse_request(t: str) -> tuple[str, str]:
         while j < len(words) and len(name) < 4 and (words[j] not in _STOP or (words[j] == "на" and name and j + 1 < len(words) and words[j + 1] not in _STOP | _NOT_CITY | _TIME_AFTER_NA)):
             if not name and (words[j] in _NOT_CITY or words[j] in _LOCAL):
                 break
+            name.append(words[j])
+            j += 1
+        if name:
+            return " ".join(name), day
+    for i, w in enumerate(words):                    # без предлога: «погода кемерова», «прогноз омск завтра»
+        if not _WEATHER_TOKEN.match(w):
+            continue
+        j = i + 1
+        name = []
+        while j < len(words) and len(name) < 3 and words[j] not in _STOP | _NOT_CITY | _LOCAL | _TIME_AFTER_NA and words[j] not in _PREPOSITIONS:
             name.append(words[j])
             j += 1
         if name:

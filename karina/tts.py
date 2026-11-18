@@ -138,7 +138,9 @@ class Speaker:
         """Говорит локальным голосом Silero по предложениям. False — не вышло (нет torch или модели): тогда говорит обычный голос, а причина видна в предупреждении."""
         base = self.cfg.path.parent
         if not silero_voice.is_ready(base):
-            self.warning = "Голос Silero ещё скачивается (или не скачан): Настройки → «Голос» → «Скачать голос Silero». Пока говорю обычным голосом."
+            self.warning = ("В этой копии Карины нет файла голоса (он должен лежать в папке voices рядом с программой). Переустановите Карину из установщика. Пока говорю обычным голосом."
+                            if silero_voice.FROZEN else
+                            "Голос Silero ещё скачивается (или не скачан): Настройки → «Голос» → «Скачать голос Silero». Пока говорю обычным голосом.")
             return False
         if not silero_voice.torch_available():
             self.warning = silero_voice.torch_hint()

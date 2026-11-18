@@ -202,6 +202,17 @@ class Assistant:
         self._last_state = key
         self.emit({"type": "state", "state": s, "detail": detail, "sleeping": self.sleeping, "listening": self.listening})
 
+    def _awaiting(self) -> bool:
+        """Карина задала вопрос и ждёт ответ («да/нет/стоп» или уточнение)."""
+        return self._alive(self._pending) or self._alive(self._choice)
+
+    def _rest_state(self):
+        """Состояние покоя: «Жду ответ», пока висит вопрос, иначе «Жду имя». Так по виджету и острову видно, что Карина слушает и ждёт подтверждения."""
+        if self._awaiting():
+            self._set_state("confirm", "Жду ответ: скажите «да», «нет» или «стоп»")
+        else:
+            self._set_state("idle")
+
     def log(self, kind: str, text: str):
         if kind == "error":
             trace("ОШИБКА: " + text)
@@ -257,6 +268,7 @@ class Assistant:
             try:
                 if self._prefilter_reject(group):
                     continue
+                self.stt.answer_mode = self._awaiting()     # ждём «да/нет»: короткое слово распознаём бережнее
                 text = self._recognize(group)          # состояние «Думаю» не показываем: на каждый шорох виджет дёргался бы, а имени ещё нет
                 if text and not self._is_background(text):
                     self.handle(text)
@@ -264,7 +276,7 @@ class Assistant:
                 traceback.print_exc()
                 self.log("error", f"Ошибка обработки: {e}")
             finally:
-                self._set_state("idle")
+                self._rest_state()
 
     def _prefilter_reject(self, group) -> bool:
         """Быстрая проверка (stt.prefilter): в записи точно нет обращения по имени → полное распознавание не запускаем. Без имени команды не нужны,
@@ -331,11 +343,15 @@ class Assistant:
         if not addressed and not free:
             return False                                           # обращения нет — handle() молча пропустит (в журнал для отладки)
         need = float(st.get("followup_conf", 0.55)) if (free and not answering) else float(st.get("min_conf", 0.5))
+        if answering and not addressed:
+            need = float(st.get("answer_conf", 0.15))        # короткое «да» Whisper слышит с низкой уверенностью: раньше такой ответ молча отбрасывался
         if addressed and not rest.strip():
             need = max(need, 0.6)                                   # одно лишь «Карина» без команды легко «послышаться» в шуме — нужна уверенность выше
         conf = getattr(self, "_conf", None)
         if conf is not None and conf < need:
             self.log("ignored", f"{text} (нечётко, уверенность {conf:.2f})")
+            if answering:
+                self.log("info", f"Услышала «{text.strip()[:60]}», но нечётко. Жду «да», «нет» или «стоп».")
             return True
         if free and not answering and self.cfg["wake_required"] and len(rest.split()) > int(self.cfg.get("followup_max_words", 10)):
             self.log("ignored", f"{text} (длинная фраза без обращения)")
@@ -444,6 +460,7 @@ class Assistant:
         for n in dead:
             setattr(self, n, None)
         if not (self._pending or self._choice):
+            self._rest_state()
             self.say(rudemod.pick("no_answer") if self.rude else "Не услышала ответа, отменяю.")
 
     def cancel_dialogs(self):
@@ -460,6 +477,8 @@ class Assistant:
             self._pending = None
         if self._pending:
             d = self._pending
+            if d["until"] is not None:
+                d["until"] = max(d["until"], now + 10.0)       # человек говорит — не обрываем ожидание на полуслове
             kind = dialog.classify(rest)
             if kind:
                 self._pending = None
@@ -477,6 +496,7 @@ class Assistant:
                 return
             elif not addressed:
                 self.log("ignored", text + " (не «да», не «нет» и не «стоп» — жду ответа молча)")     # шум не должен заставлять её переспрашивать
+                self.log("info", f"Услышала «{text.strip()[:60]}» — это не ответ. Жду «да», «нет» или «стоп».")     # но человек должен видеть, что именно она расслышала
                 return
             else:
                 d["tries"] += 1
@@ -626,10 +646,12 @@ class Assistant:
             # к нейросети и в интернет — только после «да». «Нет» и «стоп» (замолчи, хватит…) — просто отмена, ничего не отправляется.
             short = re.sub(r"\s+", " ", text).strip()[:90]
             self.ask_confirm(lambda: self._chat_go(text, search), on_no=lambda: rudemod.pick("cancel") if self.rude else "Хорошо, не буду.")
+            # вслух вопрос не повторяет запрос слово в слово (это звучит как эхо): сам запрос человек видит в разговоре строкой выше
             if search:
-                self.say(rudemod.pick("search_ask", short=short) if self.rude else f"Хотите, посмотрю в интернете: {short}? Скажите «да», «нет» или «стоп».")
+                spoken = rudemod.pick("search_ask", short=short) if self.rude else "Хотите, посмотрю в интернете? Скажите «да», «нет» или «стоп»."
             else:
-                self.say(f"Спросить у нейросети: {short}? Скажите «да», «нет» или «стоп».")
+                spoken = "Спросить у нейросети? Скажите «да», «нет» или «стоп»."
+            self.say(spoken)
             return
         self.say(self._chat_go(text, search))
 
@@ -734,7 +756,7 @@ class Assistant:
                 if not self.cfg.get("wake_strict", True):
                     self.followup_until = max(self.followup_until, time.time() + float(self.cfg["followup_seconds"]))
                 self._arm_dialogs()              # ответ на вопрос ждём ОТ ЭТОГО момента, а не от начала речи
-                self._set_state("idle")
+                self._rest_state()
 
     # ---------- «замолчи» и «говорить без имени» ----------
     def hush(self):
