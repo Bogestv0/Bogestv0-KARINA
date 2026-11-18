@@ -437,6 +437,12 @@ if __name__ == "__main__":
                 sys.exit(0)
             single.prepare()
         c = c or Config()
+        try:
+            from karina import install_options
+            if install_options.apply(c):                    # выбор из установщика: виджет-остров, права администратора, профиль
+                trace("Применила выбор из установщика")
+        except Exception as e:
+            trace(f"выбор из установщика не применён: {e}")
         run_console(c) if "--console" in sys.argv else run_gui(c)
     except SystemExit:
         raise
