@@ -138,28 +138,45 @@ class Assistant:
         self.hotkeys.start()
 
     def _voice_setup(self):
-        """Естественный голос без возни: если есть torch — один раз переключаем старую настройку на Silero и докачиваем модель в фоне."""
+        """Естественный голос без возни: ждём компоненты (torch и голос идут в одном архиве), проверяем, что torch реально загружается,
+        прогреваем модель, а если файла голоса нет — докачиваем его отдельно. Каждый шаг пишется в журнал: раньше ошибки здесь глотались молча."""
         try:
             ev = getattr(self, "_components_done", None)
             if ev is not None:
                 ev.wait(7200)                        # torch и голос приходят с компонентами: ждём, пока докачаются
             time.sleep(3)
             from . import silero_voice
-            silero_voice.apply_pending(self.cfg.path.parent)        # обновление голоса, которое не удалось подставить при работе, подставляем при запуске
+            base = self.cfg.path.parent
+            silero_voice.apply_pending(base)        # обновление голоса, которое не удалось подставить при работе, подставляем при запуске
             t = self.cfg["tts"]
-            if not t.get("auto_silero", True) or not silero_voice.torch_available():
-                if t.get("auto_silero", True):
-                    trace("Silero: torch не найден — " + silero_voice.torch_hint())
+            if not t.get("auto_silero", True):
+                trace("Silero: автонастройка выключена в настройках")
                 return
-            if silero_voice.is_ready(self.cfg.path.parent):
-                silero_voice.preload(self.cfg.path.parent)
+            ok, err = silero_voice.torch_check(force=True)
+            if not ok:
+                trace("Silero: torch недоступен — " + (err or silero_voice.torch_hint()))
+                self.emit({"type": "silero_dl_done", "error": silero_voice.last_error() or silero_voice.torch_hint(), "ready": False})
                 return
+            if silero_voice.is_ready(base):
+                try:
+                    mb = silero_voice.model_path(base).stat().st_size // 1048576
+                except OSError:
+                    mb = 0
+                trace(f"Silero: файл голоса на месте ({mb} МБ), прогреваю")
+                if silero_voice.preload(base):
+                    self.emit({"type": "silero_dl_done", "error": "", "ready": True})
+                else:
+                    self.emit({"type": "silero_dl_done", "error": silero_voice.last_error(), "ready": True})
+                return
+            trace("Silero: файла голоса нет (в архиве компонентов его не оказалось) — качаю отдельно")
             while not self._stop.is_set() and not net.is_online():
                 self._stop.wait(20)
             if not self._stop.is_set():
-                silero_voice.ensure_model(self.cfg.path.parent, trace, self.emit, cancel=self._stop)
+                silero_voice.ensure_model(base, trace, self.emit, cancel=self._stop)
         except Exception as e:
-            trace(f"Silero: автонастройка не удалась: {e}")
+            traceback.print_exc()
+            trace(f"Silero: автонастройка не удалась: {e.__class__.__name__}: {e}")
+            self.emit({"type": "silero_dl_done", "error": f"{e.__class__.__name__}: {e}", "ready": False})
 
     def _birthday_loop(self):
         """Раз в минуту проверяет, не пора ли поздравить (день рождения владельца или питомца). Один раз за день."""
@@ -238,9 +255,16 @@ class Assistant:
             pass
         return "offline"
 
+    def _voice_error(self) -> str:
+        try:
+            from . import silero_voice
+            return silero_voice.last_error()
+        except Exception:
+            return ""
+
     def status(self) -> dict:
         return {"online": net.is_online(), "model": self.cfg["stt"]["model"], "voice": self._voice_kind(),
-                "tts_warning": self.tts.warning, "state": self.state, "sleeping": self.sleeping, "listening": self.listening,
+                "tts_warning": self.tts.warning, "voice_error": self._voice_error(), "state": self.state, "sleeping": self.sleeping, "listening": self.listening,
                 "name": self.cfg["name"], "plugin_errors": self.plugin_errors, "llm": bool(self.cfg["llm"].get("enabled") and (self.cfg["llm"].get("api_key"))),
                 "brain": self.brain.mode, "mics": self.mic_status, "mics_text": format_status(self.mic_status),
                 "out_warning": self.tts.out_warning}
@@ -252,23 +276,54 @@ class Assistant:
             if components.is_installed() or not components.FROZEN:
                 return
             self._set_state("loading", "Докачиваю компоненты Карины (голос и распознавание речи), один раз…")
+            t0, speed = time.time(), {"t": time.time(), "b": 0, "v": 0.0}
 
             def prog(done, total, stage):
-                if stage == "extract":
+                ev = {"type": "components", "stage": stage, "done": done, "total": total, "speed": 0.0, "eta": 0}
+                if stage == "download":
+                    now = time.time()
+                    if now - speed["t"] >= 1.0:                 # скорость считаем по секундным окнам и сглаживаем
+                        inst = max(0.0, (done - speed["b"]) / (now - speed["t"]))
+                        speed["v"] = inst if not speed["v"] else speed["v"] * 0.7 + inst * 0.3
+                        speed["t"], speed["b"] = now, done
+                    ev["speed"] = speed["v"]
+                    ev["eta"] = int((total - done) / speed["v"]) if total and speed["v"] > 1 else 0
+                    self._set_state("loading", f"Скачиваю компоненты Карины: {done // 1048576} из {total // 1048576} МБ (один раз)" if total
+                                    else f"Скачиваю компоненты Карины: {done // 1048576} МБ (один раз)")
+                elif stage == "verify":
+                    self._set_state("loading", "Проверяю скачанные файлы…")
+                elif stage == "extract":
                     self._set_state("loading", "Устанавливаю компоненты Карины…")
-                elif total:
-                    self._set_state("loading", f"Скачиваю компоненты Карины: {done // 1048576} из {total // 1048576} МБ (один раз)")
-                else:
-                    self._set_state("loading", f"Скачиваю компоненты Карины: {done // 1048576} МБ (один раз)")
+                elif stage == "paused":
+                    self._set_state("loading", "Загрузка компонентов на паузе")
+                self.emit(ev)
             while not self._stop.is_set() and not net.is_online():
                 self._set_state("loading", "Жду интернет, чтобы докачать компоненты Карины (один раз)…")
+                self.emit({"type": "components", "stage": "offline", "done": 0, "total": 0, "speed": 0.0, "eta": 0})
                 self._stop.wait(5)
             components.ensure(prog, self._stop, trace)
+            self.emit({"type": "components", "stage": "done", "done": 1, "total": 1, "speed": 0.0, "eta": 0})
         except Exception as e:
             trace(f"Компоненты: {e}")
             self.log("error", f"Не удалось докачать компоненты: {e}")
+            self.emit({"type": "components", "stage": "error", "done": 0, "total": 0, "speed": 0.0, "eta": 0, "error": str(e)})
         finally:
             self._components_done.set()
+
+    def retry_components(self) -> bool:
+        """Кнопка «Повторить» на экране первого запуска: заново докачивает компоненты (уже скачанное не пропадает) и настраивает голос."""
+        if components.is_installed() or not components.FROZEN or not self._components_done.is_set():
+            return False
+        self._components_done.clear()
+        components.PAUSED.clear()
+
+        def run():
+            self._install_components()
+            if components.is_installed() and self.stt.model is not None:
+                self._set_state("idle")
+            self._voice_setup()
+        threading.Thread(target=run, daemon=True, name="karina-components-retry").start()
+        return True
 
     def _worker(self):
         self._install_components()

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import DATA, FROZEN
+from .diag import trace
 
 COMPONENTS_VERSION = "1"            # увеличить, если изменился состав архива (другой torch и т. п.): тогда он скачается заново
 COMP = DATA / "components"
@@ -22,6 +23,11 @@ PYLIBS = COMP / "pylibs"
 MARK = COMP / "installed.json"
 UA = {"User-Agent": "Bogestv0-KARINA"}
 ALLOWED_HOSTS = ("github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
+
+READ_CHUNK = 1 << 17                 # 128 КБ: прогресс идёт плавно даже на медленном канале (раньше читали по 1 МБ и окно казалось зависшим)
+STALL_TIMEOUT = 30                   # секунд без данных — соединение считается оборванным, докачаем с того же места
+MIN_SPEED = 2048                     # байт/с за 30 секунд: медленнее — соединение «висит»
+PAUSED = threading.Event()           # кнопка «Пауза» на экране первого запуска
 
 _active = False
 _dll_handles: list = []
@@ -32,6 +38,10 @@ class ComponentsError(Exception):
 
 
 class Cancelled(Exception):
+    pass
+
+
+class _Paused(Exception):
     pass
 
 
@@ -96,13 +106,13 @@ def _expected_sha(name: str, base: str) -> str:
 
 
 def _download(url: str, part: Path, progress, cancel: threading.Event | None) -> None:
-    """Скачивает с докачкой: если файл .part уже есть, просит у сервера остаток."""
+    """Скачивает с докачкой: если файл .part уже есть, просит у сервера остаток. Зависшее соединение обрывает само."""
     have = part.stat().st_size if part.exists() else 0
     headers = dict(UA)
     if have:
         headers["Range"] = f"bytes={have}-"
     try:
-        r = urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60)
+        r = urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=STALL_TIMEOUT)
     except urllib.error.HTTPError as e:
         if e.code == 416 and have:            # файл уже докачан целиком
             return
@@ -116,29 +126,45 @@ def _download(url: str, part: Path, progress, cancel: threading.Event | None) ->
         length = int(r.headers.get("Content-Length") or 0)
         total = have + length if length else 0
         done, last = have, 0.0
+        win_t, win_b = time.time(), 0
+        read = getattr(r, "read1", r.read)
         with open(part, "ab" if resumed else "wb") as f:
             while True:
                 if cancel is not None and cancel.is_set():
                     raise Cancelled()
-                b = r.read(1 << 20)
+                if PAUSED.is_set():
+                    raise _Paused()
+                b = read(READ_CHUNK)
                 if not b:
                     break
                 f.write(b)
                 done += len(b)
-                if progress and time.time() - last > 0.5:
+                win_b += len(b)
+                now = time.time()
+                if progress and now - last > 0.4:
                     progress(done, total, "download")
-                    last = time.time()
+                    last = now
+                if now - win_t >= 30:
+                    if win_b < 30 * MIN_SPEED:
+                        raise ComponentsError("скорость почти нулевая — соединение зависло")
+                    win_t, win_b = now, 0
         if progress:
             progress(done, total, "download")
         if total and done < total:
-            raise ComponentsError("загрузка оборвалась")
+            raise ComponentsError(f"загрузка оборвалась на {done // 1048576} из {total // 1048576} МБ")
 
 
-def _sha256(path: Path) -> str:
+def _sha256(path: Path, progress=None) -> str:
     h = hashlib.sha256()
+    size = path.stat().st_size
+    done, last = 0, 0.0
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
+            done += len(chunk)
+            if progress and time.time() - last > 0.4:
+                progress(done, size, "verify")
+                last = time.time()
     return h.hexdigest()
 
 
@@ -168,6 +194,9 @@ def install_zip(zip_path: Path, progress=None) -> None:
         (DATA / "voices").mkdir(parents=True, exist_ok=True)
         for f in vdir.glob("*.pt"):
             os.replace(f, DATA / "voices" / f.name)
+            trace(f"Компоненты: голос {f.name} положен в {DATA / 'voices'} ({(DATA / 'voices' / f.name).stat().st_size // 1048576} МБ)")
+    else:
+        trace("Компоненты: в архиве нет папки voices — голос придётся скачать отдельно")
     mdir = tmp / "models"
     if mdir.is_dir():
         (DATA / "models").mkdir(parents=True, exist_ok=True)
@@ -180,7 +209,7 @@ def install_zip(zip_path: Path, progress=None) -> None:
 
 
 def ensure(progress=None, cancel: threading.Event | None = None, log=lambda m: None, attempts: int = 3) -> bool:
-    """Гарантирует, что компоненты на месте. progress(сделано, всего, этап: download|extract). True — готово.
+    """Гарантирует, что компоненты на месте. progress(сделано, всего, этап: download|verify|extract). True — готово.
     В исходниках (не exe) ничего не делает. Бросает ComponentsError, если скачать не удалось."""
     if not FROZEN:
         return False
@@ -192,14 +221,18 @@ def ensure(progress=None, cancel: threading.Event | None = None, log=lambda m: N
     COMP.mkdir(parents=True, exist_ok=True)
     part = COMP / (name + ".part")
     last: Exception | None = None
-    for i in range(attempts):
+    i = 0
+    while i < attempts:
         try:
-            log(f"Компоненты: скачиваю {name} (попытка {i + 1})")
+            log(f"Компоненты: скачиваю {name} (попытка {i + 1}" + (f", уже есть {part.stat().st_size // 1048576} МБ" if part.exists() else "") + ")")
             expected = _expected_sha(name, base)
             _download(base + name, part, progress, cancel)
-            if _sha256(part) != expected:
+            if progress:
+                progress(0, 1, "verify")
+            if _sha256(part, progress) != expected:
                 part.unlink(missing_ok=True)
                 raise ComponentsError("контрольная сумма архива не совпала")
+            log("Компоненты: архив скачан и проверен, распаковываю")
             install_zip(part, progress)
             part.unlink(missing_ok=True)
             activate()
@@ -207,11 +240,27 @@ def ensure(progress=None, cancel: threading.Event | None = None, log=lambda m: N
             return True
         except Cancelled:
             raise
+        except _Paused:
+            log("Компоненты: пауза")
+            if progress:
+                progress(part.stat().st_size if part.exists() else 0, 0, "paused")
+            while PAUSED.is_set():                     # пауза не тратит попытки: ждём «Продолжить»
+                if cancel is not None and cancel.wait(0.3):
+                    raise Cancelled()
+                if cancel is None:
+                    time.sleep(0.3)
+            log("Компоненты: продолжаю")
+            continue
         except Exception as e:
             last = e
-            log(f"Компоненты: попытка {i + 1} не удалась: {e}")
-            if cancel is not None and cancel.wait(3 * (i + 1)):
+            i += 1
+            log(f"Компоненты: попытка {i} не удалась: {e.__class__.__name__}: {e}")
+            if progress:
+                progress(part.stat().st_size if part.exists() else 0, 0, "retry")
+            if i >= attempts:
+                break
+            if cancel is not None and cancel.wait(3 * i):
                 raise Cancelled()
             if cancel is None:
-                time.sleep(3 * (i + 1))
-    raise ComponentsError(f"не удалось скачать компоненты ({last}). Проверьте интернет; если GitHub закрыт — включите VPN на время первого запуска")
+                time.sleep(3 * i)
+    raise ComponentsError(f"не удалось скачать компоненты ({last}). Проверьте интернет; если GitHub закрыт — включите VPN на время первого запуска. Скачанное сохранено: при следующем запуске загрузка продолжится с того же места")

@@ -225,7 +225,30 @@ class Api:
         base = self.cfg.path.parent
         size = silero_voice.model_path(base).stat().st_size if silero_voice.is_ready(base) else 0
         return {"ready": silero_voice.is_ready(base), "size": size, "downloading": "silero" in self._downloads, "torch": silero_voice.torch_available(), "hint": silero_voice.torch_hint(),
-                "bundled": silero_voice.has_bundled()}
+                "bundled": silero_voice.has_bundled(), "error": silero_voice.last_error(),
+                "components": self._components_state()}
+
+    def _components_state(self):
+        """Идёт ли докачка архива компонентов (torch + голос + модели): голос приходит в нём, и в настройках это должно быть видно."""
+        from . import components
+        a = self.assistant
+        ev = getattr(a, "_components_done", None)
+        return {"running": bool(components.FROZEN and ev is not None and not ev.is_set()), "paused": components.PAUSED.is_set(), "installed": components.is_installed()}
+
+    def components_pause(self, on=True):
+        """Кнопка «Пауза / Продолжить» на экране первого запуска."""
+        from . import components
+        (components.PAUSED.set if on else components.PAUSED.clear)()
+        return self._components_state()
+
+    def components_retry(self):
+        return bool(self.assistant and self.assistant.retry_components())
+
+    def silero_cancel(self):
+        d = self._downloads.get("silero")
+        if d:
+            d["cancel"].set()
+        return True
 
     def silero_download(self, fresh=False):
         """Скачать голос; fresh=True — обновить (скачать свежую копию и заменить имеющуюся)."""
@@ -242,10 +265,14 @@ class Api:
             err = ""
             try:
                 silero_voice.download(self.cfg.path.parent, lambda d, t, st: self.emit({"type": "silero_dl", "done": d, "total": t, "stage": st}), cancel, fresh=fresh)
+                silero_voice._set_error("")
+                if not silero_voice.preload(self.cfg.path.parent):          # проверяем, что модель правда открывается, а не просто скачалась
+                    err = silero_voice.last_error()
             except silero_voice.Cancelled:
                 err = "cancelled"
             except Exception as e:
                 err = str(e) or e.__class__.__name__
+                silero_voice._set_error(err)
             finally:
                 self._downloads.pop("silero", None)
                 self.emit({"type": "silero_dl_done", "error": err, "ready": silero_voice.is_ready(self.cfg.path.parent)})

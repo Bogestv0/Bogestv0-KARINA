@@ -12,12 +12,13 @@
 где встроенной модели нет; пока её нет, Карина говорит обычным голосом.
 """
 from __future__ import annotations
-import importlib.util, os, re, ssl, sys, threading, time, urllib.error, urllib.request, wave
+import http.client, importlib.util, os, re, ssl, sys, threading, time, urllib.error, urllib.request, wave
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 from .models import Cancelled
 from . import components
+from .diag import trace
 
 components.activate()
 
@@ -30,6 +31,12 @@ MAX_CHUNK = 450          # модель не любит очень длинны�
 
 
 FROZEN = bool(getattr(sys, "frozen", False))
+
+READ_CHUNK = 1 << 16          # читаем по 64 КБ: на медленном канале прогресс виден сразу, а не раз в мегабайт
+STALL_TIMEOUT = 20            # столько секунд без единого байта — считаем обрыв и переподключаемся
+MAX_RECONNECTS = 8            # сколько раз за одну загрузку переподключаться, прежде чем сдаться
+LAST_ERROR = ""               # последняя причина, почему голос не заработал: показывается в настройках, а не пропадает молча
+_torch_state: dict = {"checked": False, "ok": False, "error": ""}
 
 APP_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) if FROZEN else Path(__file__).resolve().parent.parent
 
@@ -59,6 +66,40 @@ def model_path(base: Path) -> Path:
 def torch_available() -> bool:
     """torch входит в установщик и в requirements.txt, поэтому Silero работает и в exe, и из исходников."""
     return importlib.util.find_spec("torch") is not None
+
+
+def torch_check(force: bool = False) -> tuple[bool, str]:
+    """Реально пробует загрузить torch (find_spec видит только наличие папки, а не рабочие библиотеки: не хватает VC++ или DLL —
+    раньше это молча оставляло системный голос). Возвращает (ок, текст ошибки). Результат запоминается."""
+    if _torch_state["checked"] and not force:
+        return _torch_state["ok"], _torch_state["error"]
+    ok, err = False, ""
+    if not torch_available():
+        err = "torch не найден"
+    else:
+        try:
+            import torch  # noqa: F401
+            ok = True
+        except BaseException as e:           # OSError (DLL), ImportError, RuntimeError
+            err = f"{e.__class__.__name__}: {e}"
+    _torch_state.update(checked=True, ok=ok, error=err)
+    if not ok:
+        trace(f"Silero: torch не загружается — {err}")
+    return ok, err
+
+
+def last_error() -> str:
+    """Что мешает голосу прямо сейчас (пусто — всё хорошо)."""
+    if LAST_ERROR:
+        return LAST_ERROR
+    if _torch_state["checked"] and not _torch_state["ok"]:
+        return "Не загружается torch: " + _torch_state["error"]
+    return ""
+
+
+def _set_error(msg: str) -> None:
+    global LAST_ERROR
+    LAST_ERROR = msg
 
 
 def torch_hint() -> str:
@@ -154,8 +195,53 @@ def _download_curl(part: Path, prog, cancel: threading.Event) -> None:
         raise RuntimeError(f"Не удалось скачать голос Silero через curl: {err}")
 
 
+MIN_MODEL_SIZE = 50 * 1024 * 1024        # настоящая модель около 141 МБ; меньше 50 МБ — обрыв или страница с ошибкой вместо файла
+MIN_SPEED = 2048                         # байт/с: медленнее за 30 секунд — считаем, что соединение «висит»
+
+
+def _stream(part: Path, prog, cancel: threading.Event) -> tuple[int, int]:
+    """Одно подключение: докачивает .part с того места, где остановились. Читает небольшими кусками, чтобы прогресс шёл плавно,
+    и сам обрывает «зависшее» соединение (нет данных STALL_TIMEOUT секунд или скорость почти нулевая). Возвращает (скачано, всего)."""
+    have = part.stat().st_size if part.exists() else 0
+    headers = dict(UA)
+    if have:
+        headers["Range"] = f"bytes={have}-"
+    r = urllib.request.urlopen(urllib.request.Request(URL, headers=headers), timeout=STALL_TIMEOUT)
+    with r:
+        if have and getattr(r, "status", 200) != 206:
+            have = 0                                    # сервер не умеет докачку — начинаем сначала
+        length = int(r.headers.get("Content-Length") or 0)
+        total = have + length if length else 0
+        done, last = have, 0.0
+        win_t, win_b = time.time(), 0
+        read = getattr(r, "read1", r.read)
+        with open(part, "ab" if have else "wb") as f:
+            while True:
+                if cancel.is_set():
+                    raise Cancelled()
+                chunk = read(READ_CHUNK)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                win_b += len(chunk)
+                now = time.time()
+                if now - last > 0.4:
+                    prog(done, total, "download")
+                    last = now
+                if now - win_t >= 30:
+                    if win_b < 30 * MIN_SPEED:
+                        raise TimeoutError("скорость почти нулевая — соединение зависло")
+                    win_t, win_b = now, 0
+    prog(done, total, "download")
+    if total and done < total:
+        raise ConnectionError(f"соединение оборвалось на {done // 1048576} из {total // 1048576} МБ")
+    return done, total
+
+
 def download(base: Path, progress=None, cancel: threading.Event | None = None, fresh: bool = False) -> Path:
-    """Скачивает модель с докачкой. progress(done, total, stage). Бросает Cancelled при отмене.
+    """Скачивает модель. progress(done, total, stage): stage = search | download | reconnect | done. Бросает Cancelled при отмене.
+    Сама переподключается (до MAX_RECONNECTS раз) и докачивает с места обрыва, если сервер это умеет; зависшее соединение обрывает.
     fresh=True — «обновить»: качает свежую копию рядом и заменяет старую только после успеха (старый голос не пропадёт, если что-то пошло не так)."""
     prog = progress or (lambda *a: None)
     cancel = cancel or threading.Event()
@@ -164,61 +250,55 @@ def download(base: Path, progress=None, cancel: threading.Event | None = None, f
     dest.parent.mkdir(parents=True, exist_ok=True)
     if fresh:
         part.unlink(missing_ok=True)
-    have = part.stat().st_size if part.exists() else 0
-    prog(have, 0, "search")
-    req = urllib.request.Request(URL, headers={**UA, **({"Range": f"bytes={have}-"} if have else {})})
-    try:
-        r = urllib.request.urlopen(req, timeout=60)
-    except urllib.error.HTTPError as e:
-        if e.code == 416:                    # уже скачано целиком
-            part.replace(dest)
-            return dest
-        raise RuntimeError(f"Сервер Silero ответил ошибкой {e.code}. Попробуйте позже.") from None
-    except urllib.error.URLError as e:
-        if not isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
-            raise
-        try:                                 # Python не смог построить цепочку сертификатов — пробуем проверку средствами системы (curl.exe)
-            _download_curl(part, prog, cancel)
+    prog(part.stat().st_size if part.exists() else 0, 0, "search")
+    fails = 0
+    total = 0
+    while True:
+        if cancel.is_set():
+            raise Cancelled()
+        try:
+            _, total = _stream(part, prog, cancel)
+            break
         except Cancelled:
             raise
-        except Exception as e2:
-            raise RuntimeError(_cert_message(dest) + f" ({e2})") from None
-        if not part.exists() or part.stat().st_size < 1_000_000:
-            raise RuntimeError(_cert_message(dest)) from None
-        if fresh:
-            done_new = dest.with_name(dest.name + ".new")
-            part.replace(done_new)
-            _swap_in(done_new, dest)
-        else:
-            part.replace(dest)
-        prog(1, 1, "done")
-        return dest
-    with r:
-        if have and getattr(r, "status", 200) != 206:
-            have = 0                         # докачки нет — заново
-        total = int(r.headers.get("Content-Length", 0)) + have
-        done, last = have, 0.0
-        with open(part, "ab" if have else "wb") as f:
-            while True:
-                if cancel.is_set():
-                    raise Cancelled()
-                chunk = r.read(1 << 20)
-                if not chunk:
+        except urllib.error.HTTPError as e:
+            if e.code == 416:                 # .part уже весит больше файла: либо докачан, либо мусор
+                if part.exists() and part.stat().st_size >= MIN_MODEL_SIZE:
                     break
-                f.write(chunk)
-                done += len(chunk)
-                if time.time() - last > 0.4:
-                    prog(done, total, "download")
-                    last = time.time()
-    if total and part.stat().st_size != total:
-        raise RuntimeError("Загрузка оборвалась. Нажмите «Скачать» ещё раз — продолжу с того же места.")
+                part.unlink(missing_ok=True)
+                continue
+            raise RuntimeError(f"Сервер Silero ответил ошибкой {e.code}. Попробуйте позже.") from None
+        except urllib.error.URLError as e:
+            if isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
+                try:                           # Python не смог построить цепочку сертификатов — пробуем проверку средствами системы (curl.exe)
+                    _download_curl(part, prog, cancel)
+                except Cancelled:
+                    raise
+                except Exception as e2:
+                    raise RuntimeError(_cert_message(dest) + f" ({e2})") from None
+                break
+            err = e
+        except (OSError, TimeoutError, ConnectionError, http.client.HTTPException) as e:
+            err = e
+        fails += 1
+        trace(f"Silero: загрузка прервалась ({err.__class__.__name__}: {err}), переподключение {fails} из {MAX_RECONNECTS}")
+        if fails > MAX_RECONNECTS:
+            raise RuntimeError(f"Не удаётся скачать голос: {err}. Проверьте интернет или включите VPN и нажмите «Повторить» — продолжу с того же места.") from None
+        prog(part.stat().st_size if part.exists() else 0, total, "reconnect")
+        if cancel.wait(min(3 * fails, 15)):
+            raise Cancelled()
+    if not part.exists() or part.stat().st_size < MIN_MODEL_SIZE:
+        size = part.stat().st_size if part.exists() else 0
+        part.unlink(missing_ok=True)
+        raise RuntimeError(f"Скачанный файл слишком мал ({size // 1024} КБ): сервер отдал не модель. Попробуйте позже или включите VPN.")
     if fresh:
         done_new = dest.with_name(dest.name + ".new")
         part.replace(done_new)
         _swap_in(done_new, dest)
     else:
         part.replace(dest)
-    prog(total, total, "done")
+    size = dest.stat().st_size
+    prog(size, size, "done")
     return dest
 
 
@@ -245,14 +325,22 @@ def _load(base: Path):
     return _loaded["model"]
 
 
-def preload(base: Path) -> None:
-    """Прогрев в фоне: первая загрузка модели занимает секунду-две, дальше фразы идут сразу."""
-    if is_ready(base) and torch_available():
-        with _lock:
-            try:
-                _load(base)
-            except Exception:
-                pass
+def preload(base: Path) -> bool:
+    """Прогрев в фоне: первая загрузка модели занимает секунду-две, дальше фразы идут сразу. Пишет результат в журнал; True — модель загружена."""
+    if not (is_ready(base) and torch_available()):
+        return False
+    t0 = time.time()
+    with _lock:
+        try:
+            _load(base)
+        except BaseException as e:
+            msg = f"{e.__class__.__name__}: {e}"
+            _set_error("Модель голоса есть, но не загрузилась: " + msg)
+            trace("Silero: модель не загрузилась — " + msg)
+            return False
+    _set_error("")
+    trace(f"Silero: модель голоса загружена за {time.time() - t0:.1f} с")
+    return True
 
 
 def to_plus_stress(text: str) -> str:
@@ -339,12 +427,17 @@ def ensure_model(base: Path, log=lambda m: None, emit=None, attempts: int = 3, c
             return False
         except Exception as e:
             log(f"Silero: не скачалось ({e.__class__.__name__}: {e})")
+            _set_error(str(e) or e.__class__.__name__)
             if cancel.wait(8 * (i + 1)):
                 return False
     ok = is_ready(base)
     if emit:
-        emit({"type": "silero_dl_done", "error": "" if ok else "не удалось скачать, попробую при следующем запуске", "ready": ok})
+        emit({"type": "silero_dl_done", "error": "" if ok else (LAST_ERROR or "не удалось скачать, попробую при следующем запуске"), "ready": ok})
     if ok:
-        preload(base)
-        log("Silero: голос готов")
+        _set_error("")
+        log("Silero: файл голоса скачан")
+        if preload(base):
+            log("Silero: голос готов")
+        else:
+            ok = False
     return ok
