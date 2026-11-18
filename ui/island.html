@@ -185,6 +185,20 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 .wcity{display:flex;gap:6px;margin-top:8px}.wcity .inp{flex:1}
 
 /* система */
+ #sndView{position:absolute;left:14px;right:14px;top:8px;bottom:14px;display:flex;flex-direction:column;gap:7px}
+.sndout{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:12px}.sndout b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.sndout .btn{padding:5px 10px}
+#sndView h4{margin:2px 0 0}
+.mxlist{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:5px;scrollbar-width:none}.mxlist::-webkit-scrollbar{display:none}
+.mxr{display:flex;align-items:center;gap:8px;background:var(--card);border-radius:12px;padding:6px 10px;flex:none}
+.mxr .dot{width:16px;height:16px;border-radius:50%;border:1.6px solid var(--muted);flex:none;display:grid;place-items:center;cursor:pointer}
+.mxr.sel .dot{border-color:var(--c)}.mxr.sel .dot::after{content:'';width:8px;height:8px;border-radius:50%;background:var(--c)}
+.mxr .nm{width:84px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;font-size:12px}
+.mxr input[type=range]{min-width:0}
+.mxr b{width:30px;text-align:right;flex:none;font-size:12px;font-variant-numeric:tabular-nums}
+.mxr .mu{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;color:var(--muted);flex:none}.mxr .mu:hover{background:var(--card2)}.mxr .mu.on{color:#ff8a80;background:#3a2326}
+.mxr .mu svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.mxerr{background:var(--card);border-radius:12px;padding:10px 12px;color:var(--muted);font-size:12px;line-height:1.4}.mxerr .btn{margin-top:8px;display:inline-block}
+.snd-open #tiles,.snd-open #power{display:none}
 .tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
 .tile{background:var(--card);border-radius:14px;padding:9px;text-align:left;min-height:84px;display:flex;flex-direction:column;justify-content:space-between;transition:background .15s}
 .tile:hover{background:var(--card2)}
@@ -288,6 +302,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 .sc.over .i{outline:2px solid var(--c)}
 .lnkmenu{display:none;gap:6px;align-items:center;margin:2px 0 4px}.lnkmenu.on{display:flex}
 .lnkmenu .inp{flex:1;min-width:0;padding:6px 10px}
+.lnkmenu.on+.lnks{display:none}                           /* пока открыто меню добавления, ряд ярлыков прячем: в панели не хватает высоты на оба */
+.lnkmenu .btn{padding:7px 10px}
 .homeact{display:flex;gap:8px;align-items:stretch}.homeact .vol{flex:1;min-width:0}
 .ibtn{width:44px;border-radius:14px;background:var(--card);display:grid;place-items:center;color:var(--muted);flex:none}
 .ibtn:hover{background:var(--card2);color:var(--fg)}.ibtn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
@@ -333,12 +349,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 
 /* праздник */
 #snow{position:absolute;inset:0;pointer-events:none;z-index:7}
-.garland{position:absolute;left:14px;right:14px;bottom:1px;height:7px;display:flex;justify-content:space-between;pointer-events:none;z-index:8}
-.garland i{width:5px;height:5px;border-radius:50%;margin-top:1px}
-.garland i:nth-child(4n+1){background:#ff5d5d}.garland i:nth-child(4n+2){background:#ffd24a}.garland i:nth-child(4n+3){background:#58d68d}.garland i:nth-child(4n){background:#5dade2}
-.g-blink i{animation:gb 1.2s infinite}.g-blink i:nth-child(odd){animation-delay:.6s}
-.g-wave i{animation:gw 1.6s ease-in-out infinite;animation-delay:calc(var(--k)*.1s)}
-@keyframes gb{50%{opacity:.25}}@keyframes gw{50%{transform:translateY(-1.5px) scale(1.35);filter:brightness(1.4)}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -346,7 +356,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 <div id="root" class="m-mini s-loading">
  <div id="stage">
   <canvas id="snow" hidden></canvas>
-  <div class="garland" id="garland" hidden></div>
 
   <div class="dropz" id="dropz"><span class="pl"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>Положить на полку</div>
 
@@ -392,7 +401,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <div class="hero sm2"><span class="chr xl" data-chr></span>
         <div><div class="main" id="fMain">Загружаюсь…</div><div class="sub" id="fSub"></div></div></div>
       <div class="lnkhead"><h4 style="margin:0" id="lnkTitle">Ярлыки</h4></div>
-      <div class="lnkmenu" id="lnkMenu"><button class="btn" id="lnkFile" type="button">Файл или программа</button><button class="btn" id="lnkFolder" type="button">Папка</button><input class="inp" id="lnkUrl" placeholder="или ссылка: https://…" spellcheck="false"></div>
+      <div class="lnkmenu" id="lnkMenu"><button class="btn" id="lnkFile" type="button">Файл или программа</button><button class="btn" id="lnkFolder" type="button">Папка</button><button class="btn" id="lnkPaste" type="button" title="Ссылка или путь из буфера обмена">Вставить</button><input class="inp" id="lnkUrl" placeholder="или ссылка: https://…" spellcheck="false"><button class="btn" id="lnkClose" type="button" title="Закрыть">✕</button></div>
       <div class="lnks" id="lnks"></div>
       <div class="acts" style="margin:0">
         <button class="btn p" id="bMic" type="button">Выключить микрофон</button>
@@ -402,7 +411,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <div class="homeact">
         <div class="card vol">
           <button id="bMute" title="Без звука"><svg viewBox="0 0 18 18"><path d="M3 7v4h3l4 3.5v-11L6 7zM13 6.5a4 4 0 0 1 0 5M15 4.5a7 7 0 0 1 0 9"/></svg></button>
-          <input type="range" id="vol" min="0" max="100" value="50"><b id="volV">50</b>
+          <span class="muted" id="volSrc" hidden style="font-size:10.5px;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><input type="range" id="vol" min="0" max="100" value="50"><b id="volV">50</b>
         </div>
         <button class="ibtn" id="bShot" title="Снимок экрана" type="button"><svg viewBox="0 0 18 18"><path d="M2.5 6h2.2l1-1.8h4.6l1 1.8h2.2v7.5h-11zM9 11.6a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4z"/></svg></button>
         <button class="ibtn" id="bShots" title="Папка снимков" type="button"><svg viewBox="0 0 18 18"><path d="M2.5 5.5h4.2l1.4 1.6h7.4v6.9h-13z"/></svg></button>
@@ -444,6 +453,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 
     <!-- система -->
     <div class="pane" id="p-system">
+      <div id="sndView" hidden>
+        <div class="thead"><button class="back" id="sndBack" title="Назад" type="button"><svg viewBox="0 0 16 16"><path d="M10 3L5 8l5 5"/></svg></button><div class="chip">Звук</div></div>
+        <div class="card sndout"><span class="muted">Голос Карины</span><b id="sndDev"></b><button class="btn" id="sndNext" type="button" title="Следующее устройство вывода">Сменить</button></div>
+        <h4>Микшер: чем управляет ползунок громкости</h4>
+        <div class="mxlist" id="mxList"></div>
+      </div>
       <div class="tiles" id="tiles"></div>
       <div class="power" id="power">
         <button data-a="lock"><svg viewBox="0 0 18 18"><rect x="4" y="8" width="10" height="7" rx="1.6"/><path d="M6.5 8V6a2.5 2.5 0 0 1 5 0v2"/></svg>Блокировка</button>
@@ -467,7 +482,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <h4>Новый год на острове</h4>
       <div class="set"><span>Когда показывать (по датам: 15 дек – 15 янв)</span><div class="seg" id="sHol"><button data-v="dates">По датам</button><button data-v="always">Всегда</button><button data-v="off">Нет</button></div></div>
       <div class="set"><span>Снег</span><div class="seg" id="sSnow"><button data-v="1">Да</button><button data-v="0">Нет</button></div></div>
-      <div class="set"><span>Гирлянда</span><div class="seg" id="sGar"><button data-v="off">Нет</button><button data-v="blink">Мигает</button><button data-v="wave">Волна</button></div></div>
       <h4>Положение</h4>
       <div class="set"><span>Перетащите плашку к любому краю экрана: у бокового она встанет вертикально, а панель откроется к центру. Кнопка с булавкой в панели закрепляет её на месте.</span></div>
       <div class="row" style="margin-bottom:10px"><button class="btn" id="dockReset" type="button">Вернуть наверх по центру</button></div>
@@ -541,7 +555,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     paused:   ['Пауза', '#9a9cae'], error: ['Ошибка', '#ff8a80'], sleep: ['Сплю', '#9a9cae'],
   };
   const st = { state: 'loading', sleeping: false, listening: true, detail: '', name: 'Карина', you: '', reply: '', err: '' };
-  let set = { character: 'logo', holiday: 'dates', snow: true, garland: 'off', city: '', idle_time: true, idle_battery: true, idle_temp: true, idle_music: true, tools: [], links: [] };
+  let set = { character: 'logo', holiday: 'dates', snow: true, city: '', idle_time: true, idle_battery: true, idle_temp: true, idle_music: true, tools: [], links: [] };
   const info = { bat: null, temp: null, media: null, lastPlay: 0, tw: 0 };      // данные для свёрнутой плашки
   let dragging = false, full = false, mode = '', errUntil = 0, toastUntil = 0, toastText = '', level = 0, foldTimer = 0, tab = 'home';
   let dock = 'top', pinned = false, sideDock = false, animT = 0, grabbing = false;       // положение острова: край экрана и «закреплён ли»
@@ -794,7 +808,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   mediaBtn('mPlay', 'toggle'); mediaBtn('mNext', 'next');
 
   // ---------- раскрытие, вкладки ----------
-  const setFull = v => { full = v; clearTimeout(foldTimer); if (v) openTab(tab); else aiClose(); render(); };
+  // Окно острова не активируется (чтобы не красть фокус), поэтому клавиатура в полях ввода не работала (нельзя вставить ссылку, написать заметку).
+  // Пока поле в фокусе, просим Python сделать окно активным, потом возвращаем фокус прежнему окну.
+  let kbdOn = false, kbdSeq = 0;
+  const isField = el => !!(el && el.matches && el.matches('input:not([type=range]):not([type=checkbox]),textarea'));
+  async function kbd(on, el) {
+    if (kbdOn === on) return;
+    kbdOn = on; const my = ++kbdSeq;
+    await call('keys_set', on);
+    if (on && el && my === kbdSeq) { try { el.focus(); } catch (e) {} }
+  }
+  document.addEventListener('focusin', e => { if (isField(e.target)) kbd(true, e.target); });
+  document.addEventListener('focusout', () => setTimeout(() => { if (!isField(document.activeElement)) kbd(false); }, 150));
+  const setFull = v => { full = v; clearTimeout(foldTimer); if (v) openTab(tab); else { aiClose(); if (isField(document.activeElement)) document.activeElement.blur(); kbd(false); } render(); };
   $('compact').addEventListener('click', () => { if (!grabbing) setFull(true); });
   // плашку можно взять и перенести: после 6 пикселей движения при зажатой кнопке Python водит окно за курсором и прилепляет к краю
   let press = null;
@@ -820,6 +846,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   root.addEventListener('mouseleave', () => { if (full) { clearTimeout(foldTimer); foldTimer = setTimeout(() => { if (!document.activeElement || !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) setFull(false); }, 6000); } });
   $('tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b) openTab(b.dataset.t); });
   function openTab(t) {
+    if (isField(document.activeElement)) document.activeElement.blur();
     tab = t;
     $$('.tab').forEach(b => b.classList.toggle('on', b.dataset.t === t));
     $$('.pane').forEach(p => p.classList.toggle('on', p.id === 'p-' + t));
@@ -829,7 +856,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (t === 'notes') { loadNote(); loadRem(); loadTimer(); }
     if (t === 'clip') loadClip();
     if (t === 'weather') loadWeather();
-    if (t === 'system') loadSys();
+    if (t === 'system') { $('p-system').classList.remove('snd-open'); $('sndView').hidden = true; loadSys(); }
     if (t === 'look') { paintLook(); loadAuto(); loadHk(); }
     if (t === 'tools') loadTools(); else clearInterval(layTimer);
   }
@@ -839,7 +866,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   $('bStop').addEventListener('click', () => call('hush'));
   $('bOpen').addEventListener('click', () => call('open_main'));
   const vol = $('vol'), fillRange = () => vol.style.setProperty('--p', vol.value + '%');
-  async function loadVol() { const v = await call('volume_get'); if (v != null) { vol.value = v; $('volV').textContent = v; fillRange(); } }
+  async function loadVol() {
+    const v = await call('volume_get'); if (v != null) { vol.value = v; $('volV').textContent = v; fillRange(); }
+    const src = (await call('volume_src')) || ''; $('volSrc').hidden = !src; $('volSrc').textContent = src; $('volSrc').title = src ? 'Ползунок управляет дорожкой микшера «' + src + '»' : '';
+  }
   vol.addEventListener('input', () => { $('volV').textContent = vol.value; fillRange(); clearTimeout(vol._t); vol._t = setTimeout(() => call('volume_set', +vol.value), 60); });
   let muted = false;
   $('bMute').addEventListener('click', async () => { muted = !muted; await call('mute_set', muted); $('bMute').style.color = muted ? '#ff8a80' : ''; });
@@ -955,7 +985,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     const r = await call('weather_get', city || '');
     if (my !== wSeq) return;                                                // успел начаться более новый запрос
     if (!r || !r.ok) {
-      body.innerHTML = cityForm(!r ? 'Нет связи с Кариной. Попробуйте ещё раз.' : r.need_city ? 'Где показывать погоду? Город запомнится.' : esc(r.error || 'Не получилось'), !!r && !r.need_city);
+      body.innerHTML = cityForm(!r ? 'Нет связи с Кариной. Попробуйте ещё раз.' : r.need_city ? 'Где показывать погоду? Город запомнится.' : esc(r.error || 'Не получилось') + (r.detail ? `<div style="font-size:11px;margin-top:4px;opacity:.7">${esc(r.detail)}</div>` : ''), !!r && !r.need_city);
     } else {
       const d = r.days.map(x => `<div class="wd"><div class="muted">${esc(x.day.split(' ')[0])}</div><div class="i">${x.icon}</div><b>${x.hi}°</b><span class="muted">${x.lo}°</span></div>`).join('');
       body.innerHTML = `<div class="wnow"><div class="ico">${r.now.icon}</div><div><div class="big">${r.now.t}°</div></div><div><b>${esc(r.city)}</b><div class="muted">${esc(r.now.text)}, ощущается ${r.now.feels}°, ветер ${r.now.wind} м/с${r.stale ? ' · нет связи, показан прошлый ответ' : ''}</div></div></div><div class="wdays">${d}</div>` + `<div class="wcity" style="margin-top:12px"><input class="inp" id="wCity" placeholder="Другой город…"><button class="btn" id="wGo">Сменить</button></div>`;
@@ -983,14 +1013,51 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       ['dark', IC.dark, 'Тёмная тема', s.dark == null ? '—' : (s.dark ? 'Включена' : 'Выключена'), !!s.dark],
       ['vpn', IC.vpn, 'VPN', s.vpn ? 'Включён' : 'Выключен', !!s.vpn],
       ['bat', IC.bat, 'Батарея', b && b.has ? b.pct + '%' + (b.plugged ? ', от сети' : '') : 'Питание от сети', false],
-      ['sound', IC.snd, 'Звук', s.sound || 'По умолчанию', false],
+      ['sound', IC.snd, 'Звук', s.mixer_strip ? 'Микшер: ' + s.mixer_strip : (s.sound || 'По умолчанию'), !!s.mixer_strip],
     ];
     box.textContent = '';
     tiles.forEach(([id, ic, name, sub, on]) => {
       const t = document.createElement('button'); t.className = 'tile' + (on ? ' on' : '');
       t.innerHTML = ic + `<div><b>${name}</b><small>${sub}</small></div>`;
-      if (id !== 'bat') t.onclick = async () => { const r = await call('sys_action', id); if (r && r.ok === false) toast(r.error || 'Не получилось', 4000); setTimeout(loadSys, id === 'vpn' ? 1500 : (id === 'wifi' || id === 'bluetooth') ? 900 : 400); };
+      if (id === 'sound') t.onclick = openSound;
+      else if (id !== 'bat') t.onclick = async () => { if (id === 'vpn') toast('Переключаю VPN…', 8000); const r = await call('sys_action', id); if (r && r.ok === false) toast(r.error || 'Не получилось', 6000); else if (r && r.msg) toast(r.msg, 3500); else if (id === 'vpn' && !r) toast('Нет ответа от Карины', 3000); setTimeout(loadSys, id === 'vpn' ? 1500 : (id === 'wifi' || id === 'bluetooth') ? 900 : 400); };
       box.append(t);
+    });
+  }
+  // ---------- окно «Звук»: вывод голоса и дорожки Bogestv0 MIXER ----------
+  const MU_ON = '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM17 9l4 6M21 9l-4 6"/></svg>', MU_OFF = '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM16 9a4 4 0 0 1 0 6"/></svg>';
+  function openSound() { $('p-system').classList.add('snd-open'); $('sndView').hidden = false; paintSound(); }
+  function closeSound() { $('p-system').classList.remove('snd-open'); $('sndView').hidden = true; loadSys(); loadVol(); }
+  $('sndBack').onclick = closeSound;
+  $('sndNext').onclick = async () => { await call('out_next'); const o = await call('out_get'); if (o) $('sndDev').textContent = o.name || 'По умолчанию'; };
+  async function paintSound() {
+    const list = $('mxList'); list.innerHTML = '<div class="mxerr">Ищу микшер…</div>';
+    const [o, mx] = await Promise.all([call('out_get'), call('mixer_get')]);
+    $('sndDev').textContent = (o && o.name) || 'По умолчанию';
+    list.textContent = '';
+    const select = async name => { const r = await call('mixer_select', name); set.mixer_strip = name; paintSound(); if (r && r.ok) toast(name ? 'Громкость на главной: дорожка «' + name + '»' : 'Громкость на главной: общая', 2600); };
+    const sysRow = document.createElement('div'); sysRow.className = 'mxr' + (mx && mx.sel ? '' : ' sel');
+    sysRow.innerHTML = '<span class="dot"></span><span class="nm" style="flex:1;width:auto">Общая громкость Windows</span>';
+    sysRow.onclick = () => select(''); list.append(sysRow);
+    if (!mx || !mx.ok) {
+      const e = document.createElement('div'); e.className = 'mxerr';
+      e.append((mx && mx.error) || 'Нет связи с микшером.');
+      const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.textContent = 'Повторить'; b.onclick = paintSound; e.append(document.createElement('br'), b);
+      list.append(e); return;
+    }
+    if (!mx.strips.length) { const e = document.createElement('div'); e.className = 'mxerr'; e.textContent = 'В микшере нет видимых дорожек.'; list.append(e); return; }
+    mx.strips.forEach(s => {
+      const r = document.createElement('div'); r.className = 'mxr' + (mx.sel && mx.sel.toLowerCase() === s.name.toLowerCase() ? ' sel' : ''); r.title = s.tag || s.name;
+      r.innerHTML = '<span class="dot"></span><span class="nm"></span><input type="range" min="0" max="100"><b></b><button class="mu" type="button" title="Без звука"></button>';
+      r.querySelector('.nm').textContent = s.name;
+      const rg = r.querySelector('input'), val = r.querySelector('b'), mu = r.querySelector('.mu');
+      const paint = () => { rg.style.setProperty('--p', Math.min(100, rg.value) + '%'); val.textContent = rg.value; };
+      rg.value = Math.min(100, s.pct); paint();
+      let tm = 0; rg.oninput = () => { paint(); clearTimeout(tm); tm = setTimeout(async () => { const x = await call('mixer_gain', s.i, +rg.value); if (x && x.ok === false) toast(x.error || 'Не получилось', 3500); }, 70); };
+      let muted = !!s.mute; const pm = () => { mu.classList.toggle('on', muted); mu.innerHTML = muted ? MU_ON : MU_OFF; r.style.opacity = muted ? .6 : ''; }; pm();
+      mu.onclick = async e => { e.stopPropagation(); muted = !muted; pm(); const x = await call('mixer_mute', s.i, muted); if (x && x.ok === false) { muted = !muted; pm(); toast(x.error || 'Не получилось', 3500); } };
+      r.querySelector('.dot').onclick = r.querySelector('.nm').onclick = () => select(s.name);
+      list.append(r);
     });
   }
   $('power').addEventListener('click', e => {
@@ -1033,7 +1100,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     } else if (k === 'qr') { showView('tQr'); qrMode('make'); qrFromClip(); }
     else if (k === 'clean') { const r = await call('clean_paste'); toast(r && r.ok ? 'Вставлено без форматирования' : (r && r.error) || 'Не получилось', 2500); }
     else if (k === 'rec') { const r = await call('rec_toggle'); if (r && r.ok === false) toast(r.error || 'Не получилось', 5000); else if (r && r.on) { setRec(true, r.t0); } }
-    else if (k === 'lay') { const l = await call('layout_toggle'); if (l) $('tLay').textContent = 'Сейчас: ' + l; }
+    else if (k === 'lay') { const was = $('tLay').textContent; const l = await call('layout_toggle'); if (l) { $('tLay').textContent = 'Сейчас: ' + l; if ('Сейчас: ' + l === was) toast('Раскладку не удалось переключить: щёлкните в окне, где печатаете, и нажмите ещё раз', 4000); } }
     else if (k === 'more') { showView('tMore'); loadCustom(); }
   }
   $('tGrid').addEventListener('click', e => { const b = e.target.closest('.tile'); if (b) runTool(b.dataset.k); });
@@ -1124,6 +1191,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     audio: ['#3a2a3f', '#f08fc0'], video: ['#3f2f26', '#ff9d6b'], arch: ['#3b3626', '#f5c56b'], url: ['#1d3550', '#6ab3f3'], file: ['#2b2f3a', '#9aa4b8'] };
 
   // ---------- ярлыки на главной ----------
+  // Настоящие значки: иконка программы из Windows и значок сайта (favicon). Приходят позже рисованных, поэтому подменяем по мере готовности.
+  const iconCache = {};
+  const putIcon = (d, url) => { const i = d.querySelector('.i'); if (!i || !url) return; i.style.background = 'rgba(255,255,255,.07)'; i.innerHTML = ''; const im = new Image(); im.src = url; im.style.cssText = 'width:30px;height:30px;object-fit:contain'; im.draggable = false; i.append(im); };
+  let iconSeq = 0;
+  async function loadIcons(links) {
+    const my = ++iconSeq;
+    if (!links.length || links.every(l => l.path in iconCache)) return;
+    const urls = await call('link_icons');
+    if (!urls || my !== iconSeq) return;
+    links.forEach((l, i) => { iconCache[l.path] = urls[i] || ''; });
+    [...$('lnks').querySelectorAll('.sc:not(.add)')].forEach((d, i) => { if (urls[i]) putIcon(d, urls[i]); });
+  }
   async function paintLinks() {
     const box = $('lnks'), links = set.links || [], kinds = (await call('link_kinds')) || [];
     box.textContent = '';
@@ -1132,6 +1211,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       d.className = 'sc'; d.draggable = true; d.title = l.path;
       d.innerHTML = `<span class="i" style="background:${LINK_BG[k] || LINK_BG.file}">${svg(k)}</span><span class="n"></span><button class="x" title="Убрать ярлык" type="button">✕</button>`;
       d.querySelector('.n').textContent = l.name;
+      const ic = iconCache[l.path]; if (ic) putIcon(d, ic);
       d.onclick = async () => { const r = await call('link_run', i); if (r && r.ok === false) toast(r.error || 'Не получилось открыть', 4000); };
       d.querySelector('.x').onclick = async e => { e.stopPropagation(); set.links = (await call('links_set', links.filter((_, j) => j !== i))) || links; paintLinks(); };
       d.ondragstart = e => { e.dataTransfer.setData('application/x-karina-link', String(i)); e.dataTransfer.effectAllowed = 'move'; };
@@ -1145,6 +1225,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       };
       box.append(d);
     });
+    loadIcons(links);
     if (links.length < 12) {
       const a = document.createElement('div'); a.className = 'sc add'; a.id = 'lnkAdd'; a.title = 'Добавить ярлык: нажмите или бросьте сюда файл, папку или программу';
       a.innerHTML = `<span class="i"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><span class="n">Добавить</span>`;
@@ -1159,6 +1240,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   }
   $('lnkFile').onclick = async () => linkResult(await call('link_pick', 'file'));
   $('lnkFolder').onclick = async () => linkResult(await call('link_pick', 'folder'));
+  $('lnkClose').onclick = () => $('lnkMenu').classList.remove('on');
+  $('lnkPaste').onclick = async () => linkResult(await call('link_paste'));
+  $('lnkUrl').addEventListener('paste', () => setTimeout(async () => { const v = $('lnkUrl').value.trim(); if (v) { const r = await call('link_add', v); if (r && r.ok) $('lnkUrl').value = ''; linkResult(r); } }, 50));       // вставили ссылку — сразу ярлык
   $('lnkUrl').onkeydown = async e => { if (e.key === 'Enter' && $('lnkUrl').value.trim()) { const r = await call('link_add', $('lnkUrl').value); if (r && r.ok) $('lnkUrl').value = ''; linkResult(r); } };
 
   // ---------- полка ----------
@@ -1252,7 +1336,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       b.onclick = () => save({ character: k }); g.append(b);
     });
     $$('#sIdle button').forEach(b => b.classList.toggle('on', !!set[b.dataset.k]));
-    [['sHol', set.holiday], ['sSnow', set.snow ? '1' : '0'], ['sGar', set.garland]].forEach(([id, v]) => $$('#' + id + ' button').forEach(b => b.classList.toggle('on', b.dataset.v === v)));
+    [['sHol', set.holiday], ['sSnow', set.snow ? '1' : '0']].forEach(([id, v]) => $$('#' + id + ' button').forEach(b => b.classList.toggle('on', b.dataset.v === v)));
   }
   // ---------- запуск с Windows и горячие клавиши ----------
   const HKN = [['talk', 'Говорить без имени'], ['stop', 'Замолчать'], ['island', 'Раскрыть или свернуть остров'], ['snip', 'Область экрана']];
@@ -1306,11 +1390,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   }
   $('sHol').onclick = e => { const b = e.target.closest('button'); if (b) save({ holiday: b.dataset.v }); };
   $('sSnow').onclick = e => { const b = e.target.closest('button'); if (b) save({ snow: b.dataset.v === '1' }); };
-  $('sGar').onclick = e => { const b = e.target.closest('button'); if (b) save({ garland: b.dataset.v }); };
   $('sIdle').onclick = e => { const b = e.target.closest('button'); if (b) { save({ [b.dataset.k]: !set[b.dataset.k] }); if (b.dataset.k === 'idle_temp') loadTemp(); if (b.dataset.k === 'idle_battery') loadBat(); } };
   async function save(p) { Object.assign(set, p); applyLook(); paintLook(); render(); const r = await call('settings_set', p); if (r) { set = r; applyLook(); paintLook(); } }
 
-  // ---------- праздник: снег и гирлянда ----------
+  // ---------- праздник: снег ----------
   function holidayOn() {
     if (set.holiday === 'always') return true;
     if (set.holiday !== 'dates') return false;
@@ -1321,9 +1404,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   function applyLook() {
     paintChars();
     const h = holidayOn();
-    const gar = $('garland'); gar.hidden = !(h && set.garland !== 'off');
-    gar.className = 'garland g-' + set.garland;
-    if (!gar.children.length) for (let i = 0; i < 24; i++) { const e = document.createElement('i'); e.style.setProperty('--k', i); gar.append(e); }
     snowWanted(h && set.snow);
   }
   // Снег идёт из-под острова в своём окне (Python). Пока ответа нет или у Python не вышло (не Windows, остров у нижнего края), рисуем внутри плашки
