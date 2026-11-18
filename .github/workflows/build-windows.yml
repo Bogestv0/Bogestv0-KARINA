@@ -47,11 +47,6 @@ jobs:
           $tag = "${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}"
           if ($tag -and $tag -ne "v$v") { Write-Error "Тег $tag не совпадает с версией в karina/__init__.py ($v)"; exit 1 }
 
-      - name: "Движок моделей (llama.cpp — Vulkan и CPU)"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python build/fetch_engine.py
-
       - name: "Движок VPN (sing-box) — для необязательной установки из мастера"
         run: python build/fetch_vpn_engine.py
 
@@ -61,7 +56,7 @@ jobs:
           path: voices
           key: silero-voice-v5_6_ru
 
-      - name: "Голос Карины (Silero «Байя») — кладём внутрь установщика"
+      - name: "Голос Карины (Silero «Байя») — для архива компонентов"
         run: python build/fetch_voice.py
 
       - name: Кэш моделей распознавания
@@ -70,7 +65,7 @@ jobs:
           path: whisper_models
           key: whisper-small-tiny-v1
 
-      - name: "Модели распознавания речи (small и tiny) — кладём внутрь установщика"
+      - name: "Модели распознавания речи (small и tiny) — для архива компонентов"
         run: python build/fetch_whisper.py
 
       - name: Проверка, что голос на месте
@@ -83,19 +78,24 @@ jobs:
       - name: Сборка приложения (PyInstaller)
         run: pyinstaller build/karina.spec --noconfirm --distpath dist --workpath build/work
 
+      - name: "Архив компонентов (torch, голос, модели) — докачивается Кариной при первом запуске"
+        run: python build/make_pack.py
+
       - name: Самопроверка собранного exe
-        timeout-minutes: 5
+        timeout-minutes: 10
         shell: pwsh
+        env:
+          KARINA_SELFTEST_PACK: ${{ github.workspace }}\dist\Bogestv0-KARINA-Components-${{ steps.ver.outputs.version }}.zip
         run: |
           $dir = Join-Path $env:APPDATA "Bogestv0 KARINA"
           $p = Start-Process -FilePath "dist\Karina\Bogestv0-KARINA.exe" -ArgumentList "--selftest" -PassThru
-          $hung = -not $p.WaitForExit(150000)
+          $hung = -not $p.WaitForExit(420000)
           if ($hung) { taskkill /F /T /PID $p.Id | Out-Null }
           foreach ($f in "selftest.log", "crash.log", "karina.log") {
             $path = Join-Path $dir $f
             if (Test-Path $path) { Write-Host "----- $f"; Get-Content $path }
           }
-          if ($hung) { Write-Error "Самопроверка зависла (150 с) — см. журнал выше"; exit 1 }
+          if ($hung) { Write-Error "Самопроверка зависла (420 с) — см. журнал выше"; exit 1 }
           if ($p.ExitCode -ne 0) { Write-Error "Самопроверка не пройдена (код $($p.ExitCode))"; exit 1 }
 
       - name: Установщик (Inno Setup)
