@@ -35,6 +35,31 @@ def is_url(s: str) -> bool:
     return bool(re.match(r"^(https?://|www\.)\S+$", str(s or "").strip(), re.I))
 
 
+_TLDS = {"com", "ru", "org", "net", "io", "app", "dev", "me", "tv", "su", "рф", "info", "ai", "gg", "co", "by", "kz", "ua", "de", "fm", "ly", "to", "xyz", "online", "site", "pro", "tech", "cloud", "wiki", "link"}
+
+
+def as_url(s: str) -> str:
+    """Ссылка из того, что вставили: «https://…», «www.…» и просто «ya.ru/путь» (без схемы). Пустая строка, если это не ссылка
+    (имя файла вроде «readme.md» ссылкой не считается: у домена должен быть известный верхний уровень)."""
+    import re
+    t = str(s or "").strip().strip('"').strip("<>")
+    if not t or any(c in t for c in " \t\n\\"):
+        return ""
+    if re.match(r"^https?://\S+$", t, re.I):
+        return t
+    if re.match(r"^www\.\S+$", t, re.I):
+        return "https://" + t
+    m = re.match(r"^([\w-]+(?:\.[\w-]+)*\.([\w-]+))(?::\d+)?(?:[/?#]\S*)?$", t, re.I | re.U)
+    if m and m.group(2).lower() in _TLDS:
+        return "https://" + t
+    return ""
+
+
+def url_host(u: str) -> str:
+    h = str(u or "").split("//", 1)[-1].split("/", 1)[0].split("?", 1)[0].split("#", 1)[0].split("@")[-1].split(":", 1)[0]
+    return h[4:] if h.lower().startswith("www.") else h
+
+
 def path_kind(p: str) -> str:
     """folder | app | img | audio | video | arch | doc | url | file — для значка и цвета."""
     p = str(p or "").strip().strip('"')
@@ -237,3 +262,111 @@ class Shelf:
                     pass
             out.append({"id": i["id"], "type": "path", "k": k, "name": i.get("name") or label_of(p), "sub": "папка" if k == "folder" else sub, "path": p, "exists": ok})
         return out
+
+
+# ---------------------------------------------------------------- значки ярлыков: настоящие иконки программ и сайтов
+ICON_SIZE = 64
+ICON_KINDS = {"app", "file", "doc", "audio", "video", "arch"}        # у папок и картинок свои значки/миниатюры
+
+
+def _png_data_url(im) -> str:
+    from PIL import Image
+    im = im.convert("RGBA")
+    im.thumbnail((ICON_SIZE, ICON_SIZE), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, "PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _cache_get(cache: Path, key: str) -> str | None:
+    f = cache / (key + ".png")
+    try:
+        if f.is_file():
+            return "data:image/png;base64," + base64.b64encode(f.read_bytes()).decode() if f.stat().st_size > 0 else ""
+    except OSError:
+        pass
+    return None
+
+
+def _cache_put(cache: Path, key: str, data_url: str):
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / (key + ".png")).write_bytes(base64.b64decode(data_url.split(",", 1)[1]) if data_url else b"")
+    except Exception:
+        pass
+
+
+def favicon(url: str, cache: Path) -> str:
+    """Значок сайта: favicon (сначала через сервис значков, потом сам файл с сайта). Результат, в том числе «нет значка», кэшируется на диске."""
+    import hashlib
+    host = url_host(url).lower()
+    if not host:
+        return ""
+    key = "u-" + hashlib.sha1(host.encode()).hexdigest()[:16]
+    hit = _cache_get(cache, key)
+    if hit is not None and (hit or time.time() - (cache / (key + ".png")).stat().st_mtime < 86400):
+        return hit
+    import urllib.request
+    from PIL import Image
+    out = ""
+    for u in (f"https://www.google.com/s2/favicons?domain={host}&sz=64", f"https://{host}/favicon.ico", f"http://{host}/favicon.ico"):
+        try:
+            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0 Bogestv0-KARINA"})
+            data = urllib.request.urlopen(req, timeout=5).read(400000)
+            im = Image.open(io.BytesIO(data))
+            if im.width >= 16 and im.height >= 16:
+                out = _png_data_url(im)
+                break
+        except Exception:
+            continue
+    _cache_put(cache, key, out)
+    return out
+
+
+def file_icon(path: str, cache: Path) -> str:
+    """Значок программы или файла из Windows (тот же, что в проводнике). Только Windows: берём через .NET (ExtractAssociatedIcon) в PowerShell."""
+    if not IS_WIN:
+        return ""
+    import hashlib
+    p = os.path.expanduser(str(path or "").strip().strip('"'))
+    if not os.path.exists(p):
+        return ""
+    try:
+        mt = int(os.path.getmtime(p))
+    except OSError:
+        mt = 0
+    key = "f-" + hashlib.sha1(f"{p.lower()}|{mt}".encode("utf-8", "ignore")).hexdigest()[:16]
+    hit = _cache_get(cache, key)
+    if hit is not None:
+        return hit
+    cache.mkdir(parents=True, exist_ok=True)
+    tmp = cache / (key + ".tmp.png")
+    script = ("Add-Type -AssemblyName System.Drawing; $i=[System.Drawing.Icon]::ExtractAssociatedIcon($env:KARINA_ICON_SRC); "
+              "if($i){$b=$i.ToBitmap(); $b.Save($env:KARINA_ICON_OUT,[System.Drawing.Imaging.ImageFormat]::Png)}")
+    out = ""
+    try:
+        env = dict(os.environ, KARINA_ICON_SRC=p, KARINA_ICON_OUT=str(tmp))
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], env=env,
+                       capture_output=True, timeout=12, creationflags=0x08000000)
+        if tmp.is_file() and tmp.stat().st_size > 0:
+            from PIL import Image
+            with Image.open(tmp) as im:
+                out = _png_data_url(im)
+    except Exception:
+        out = ""
+    try:
+        tmp.unlink()
+    except OSError:
+        pass
+    _cache_put(cache, key, out)
+    return out
+
+
+def icon_for(path: str, cache: Path) -> str:
+    """Значок ярлыка как data-URL; пустая строка — оставить нарисованный по виду (папка, документ…)."""
+    p = str(path or "").strip().strip('"')
+    if is_url(p) or as_url(p):
+        return favicon(as_url(p) or p, cache)
+    if path_kind(p) in ICON_KINDS:
+        return file_icon(p, cache)
+    return ""

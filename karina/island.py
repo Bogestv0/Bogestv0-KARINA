@@ -296,6 +296,10 @@ class IslandApi:
             threading.Thread(target=self._api.assistant.say, args=(t,), daemon=True).start()
         return bool(t)
 
+    def keys_set(self, on):
+        """Страница сообщает: поле ввода получило или потеряло фокус → включить или выключить клавиатуру для окна острова."""
+        return self._island.set_keys(bool(on))
+
     # ---- полка и ярлыки ----
     def drop_target(self, name):
         """Страница сообщает, над чем сейчас файл: «link» — плитка «+» (ярлык), иначе полка."""
@@ -371,9 +375,33 @@ class IslandApi:
 
     def link_add(self, text):
         t = str(text or "").strip()
-        if shf.is_url(t) or os.path.exists(t.strip('"')):
+        u = shf.as_url(t)
+        if u:
+            return self._island.links_add([u])
+        if os.path.exists(os.path.expanduser(t.strip('"'))):
             return self._island.links_add([t])
-        return {"ok": False, "n": 0, "error": "Нужна ссылка (https://…) или путь к файлу или папке."}
+        return {"ok": False, "n": 0, "error": "Нужна ссылка (https://…, ya.ru) или путь к файлу или папке."}
+
+    def link_paste(self):
+        """«Вставить»: ссылка или путь из буфера обмена (читаем из Python, поэтому не зависит от клавиатурного фокуса окна)."""
+        t = (st.clip_get_text() or "").strip()
+        if not t:
+            return {"ok": False, "n": 0, "error": "В буфере обмена пусто: скопируйте ссылку на сайт или путь к файлу."}
+        r = self.link_add(t.splitlines()[0])
+        if not r.get("ok") and not r.get("error"):
+            r["error"] = "Ярлыков уже максимум."
+        return r
+
+    def link_icons(self):
+        """Настоящие значки ярлыков (иконка программы из Windows, favicon сайта): data-URL или пустая строка. Первый раз долго, дальше из кэша на диске."""
+        cache = self._island.shelf.path.parent / "icons"
+        out = []
+        for l in self._island.settings().get("links", []):
+            try:
+                out.append(shf.icon_for(l["path"], cache))
+            except Exception:
+                out.append("")
+        return out
 
     def link_run(self, i):
         links = self._island.settings().get("links", [])
@@ -413,8 +441,34 @@ class IslandApi:
     def battery_get(self):
         return tools.battery()
 
-    # ---- громкость ----
+    # ---- громкость: общая Windows или выбранная дорожка Bogestv0 MIXER ----
+    MIXER_RETRY = 30.0           # после неудачи связи с микшером столько секунд не стучимся к нему на каждое движение ползунка
+
+    def _mixer_strip(self):
+        """{'m': MixerRemote, 'i': номер, 'name': имя дорожки}, если в «Виде острова» выбрана дорожка и микшер на связи; иначе None (тогда общая громкость)."""
+        name = str(self._island.settings().get("mixer_strip") or "").strip()
+        if not name or time.time() < getattr(self, "_mixer_bad_until", 0):
+            return None
+        try:
+            m = self._api.assistant.mixer
+            for s in m.strips():
+                if s["name"].strip().lower() == name.lower() and not s["hidden"]:
+                    return {"m": m, "i": s["i"], "name": s["name"], "gain": s["gain"], "mute": s["mute"]}
+        except Exception:
+            pass
+        self._mixer_bad_until = time.time() + self.MIXER_RETRY
+        return None
+
+    def volume_src(self):
+        """Чем сейчас управляет ползунок на главной: имя дорожки микшера или пусто (общая громкость)."""
+        s = self._mixer_strip()
+        return s["name"] if s else ""
+
     def volume_get(self):
+        s = self._mixer_strip()
+        if s:
+            from .mixer_remote import db_to_pct
+            return min(100, db_to_pct(s["gain"]))
         try:
             from . import actions
             return actions._get_volume()
@@ -422,6 +476,14 @@ class IslandApi:
             return None
 
     def volume_set(self, pct):
+        s = self._mixer_strip()
+        if s:
+            from .mixer_remote import pct_to_db
+            try:
+                s["m"].set_gain(s["i"], pct_to_db(int(pct)))
+                return True
+            except Exception:
+                self._mixer_bad_until = time.time() + self.MIXER_RETRY
         try:
             from . import actions
             return bool(actions._set_volume(int(pct)))
@@ -429,12 +491,59 @@ class IslandApi:
             return False
 
     def mute_set(self, on):
+        s = self._mixer_strip()
+        if s:
+            try:
+                s["m"].set_mute(s["i"], bool(on))
+                return True
+            except Exception:
+                self._mixer_bad_until = time.time() + self.MIXER_RETRY
         try:
             from . import actions
             actions._set_mute(bool(on))
             return True
         except Exception:
             return False
+
+    # ---- микшер (Bogestv0 MIXER): дорожки, громкость, выбор «главной» дорожки острова ----
+    def mixer_get(self):
+        """Дорожки микшера для окна «Звук». ok=False и текст — если микшер не запущен или выключен «Удалённый пульт»."""
+        from .mixer_remote import MixerError, db_to_pct
+        sel = str(self._island.settings().get("mixer_strip") or "")
+        self._mixer_bad_until = 0
+        try:
+            strips = [s for s in self._api.assistant.mixer.strips() if not s["hidden"]]
+        except MixerError as e:
+            return {"ok": False, "error": str(e), "sel": sel, "strips": []}
+        except Exception as e:
+            return {"ok": False, "error": f"Ошибка связи с микшером: {e}", "sel": sel, "strips": []}
+        return {"ok": True, "sel": sel, "strips": [{"i": s["i"], "name": s["name"], "tag": s["tag"], "pct": min(150, db_to_pct(s["gain"])), "mute": bool(s["mute"])} for s in strips]}
+
+    def mixer_gain(self, i, pct):
+        from .mixer_remote import MixerError, pct_to_db
+        try:
+            self._api.assistant.mixer.set_gain(int(i), pct_to_db(max(0, min(150, int(pct)))))
+            return {"ok": True}
+        except MixerError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": f"Ошибка: {e}"}
+
+    def mixer_mute(self, i, on):
+        from .mixer_remote import MixerError
+        try:
+            self._api.assistant.mixer.set_mute(int(i), bool(on))
+            return {"ok": True}
+        except MixerError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": f"Ошибка: {e}"}
+
+    def mixer_select(self, name):
+        """Какой дорожкой управляет ползунок громкости на главной. Пустое имя — общая громкость Windows."""
+        self._mixer_bad_until = 0
+        self._island.settings_set({"mixer_strip": str(name or "")})
+        return {"ok": True, "src": self.volume_src()}
 
     # ---- заметка, напоминания, таймер ----
     def note_get(self):
@@ -479,7 +588,12 @@ class IslandApi:
             out = tools.weather_week(name)
         except Exception as e:
             self._island.trace(f"Остров: погода «{name}» не получена: {e.__class__.__name__}: {e}")
-            return {"ok": False, "error": str(e) or e.__class__.__name__, "city": name}
+            try:
+                from . import weather as _w
+                detail = _w.LAST_ERROR
+            except Exception:
+                detail = ""
+            return {"ok": False, "error": str(e) or e.__class__.__name__, "city": name, "detail": detail}
         if typed:
             self._island.settings_set({"city": typed})       # запоминаем, только если такой город нашёлся
         return {"ok": True, **out}
@@ -499,7 +613,8 @@ class IslandApi:
         except Exception:
             pass
         return {"battery": tools.battery(), "dark": tools.dark_get(), "wifi": tools.wifi_ssid(), "vpn": vpn,
-                "radios": tools.radios_get(), "sound": self.out_get().get("name", ""), "win": sys.platform == "win32"}
+                "radios": tools.radios_get(), "sound": self.out_get().get("name", ""), "win": sys.platform == "win32",
+                "mixer_strip": str(self._island.settings().get("mixer_strip") or "")}
 
     def sys_action(self, name: str):
         if name == "dark":
@@ -515,9 +630,19 @@ class IslandApi:
         if name == "sound":
             return self.out_next()
         if name == "vpn":
-            on = bool(self._api.assistant.tunnel.status().get("running"))
-            r = self._api.tunnel_stop() if on else self._api.tunnel_start()
-            return {"ok": bool(r.get("ok")), "error": r.get("error", "")}
+            t = self._api.assistant.tunnel
+            if t.status().get("running"):
+                r = self._api.tunnel_stop()
+                return {"ok": bool(r.get("ok")), "error": r.get("error", ""), "msg": "VPN выключен"}
+            r = self._api.tunnel_start()
+            if not r.get("ok") and "администратор" in str(r.get("error", "")):
+                # VPN на весь компьютер требует прав администратора; без них включаем режим «прокси» (он работает и так), чтобы кнопка не была мёртвой
+                r2 = self._api._tunnel_do(lambda: t.start(mode="proxy"))
+                if r2.get("ok"):
+                    return {"ok": True, "msg": "Включён прокси-режим (для VPN на весь компьютер нужны права администратора)"}
+            self._island.trace(f"Остров: кнопка VPN → {'ok' if r.get('ok') else r.get('error')}")
+            msg = r.get("result") if isinstance(r.get("result"), str) else "VPN включён"
+            return {"ok": bool(r.get("ok")), "error": r.get("error", ""), "msg": msg}
         if name in ("lock", "sleep", "restart", "shutdown"):
             return tools.power(name)
         return False
@@ -679,10 +804,7 @@ class IslandApi:
         return self._island.focus.layout_get()
 
     def layout_toggle(self):
-        f = self._island.focus
-        f.layout_set(st.next_layout(f.layout_get()))
-        time.sleep(0.2)
-        return f.layout_get()
+        return self._island.focus.toggle_layout()
 
     def command_run(self, text):
         text = " ".join(str(text or "").split())
@@ -783,6 +905,7 @@ class Island:
         self._rec_shown = False                      # страница уже знает, что запись идёт
         self._snip: dict | None = None               # открытое окно выбора области
         self._painting = False                       # окно показано средствами WinForms (иначе WebView2 считает себя невидимым и не рисует)
+        self._kbd = False                            # клавиатурный режим: пока в поле ввода печатают, окно острова временно становится активным
         self.shelf = shf.Shelf()                     # полка: файлы и текст «в руках» (karina/shelf.py)
         self._drop_target = "shelf"                  # куда упадёт файл: полка или новый ярлык («+»)
         self._drop_hooked = False
@@ -1435,7 +1558,7 @@ class Island:
             st = user32.GetWindowLongPtrW(h, GWL_STYLE)
             user32.SetWindowLongPtrW(h, GWL_STYLE, st & ~(WS_CAPTION | WS_THICKFRAME))
             ex = user32.GetWindowLongPtrW(h, GWL_EXSTYLE)
-            user32.SetWindowLongPtrW(h, GWL_EXSTYLE, (ex | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW)     # не значок на панели задач
+            user32.SetWindowLongPtrW(h, GWL_EXSTYLE, (ex | WS_EX_TOOLWINDOW | (0 if self._kbd else WS_EX_NOACTIVATE)) & ~WS_EX_APPWINDOW)     # не значок на панели задач; в клавиатурном режиме окно может быть активным
             user32.SetWindowPos(h, None, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS)
             if not self._painting:
                 self._show_native(h)
@@ -1486,6 +1609,51 @@ class Island:
             if self.window is not w:
                 return
             self._setup_window()
+
+    def set_keys(self, on: bool) -> bool:
+        """Клавиатурный режим. Окно острова создано «без активации» (WS_EX_NOACTIVATE), чтобы не красть фокус, но из-за этого Windows не отдаёт ему
+        клавиатуру: в полях ввода нельзя было ни печатать, ни вставлять (Ctrl+V уходил в другое окно). Пока поле ввода в фокусе, снимаем этот стиль и
+        делаем окно активным; когда закончили, возвращаем стиль и фокус прежнему окну."""
+        if not IS_WIN or self.window is None:
+            return False
+        on = bool(on)
+        h = self._hwnd_of()
+        if not h:
+            return False
+        try:
+            ex = user32.GetWindowLongPtrW(h, GWL_EXSTYLE)
+            if on:
+                fg = int(user32.GetForegroundWindow() or 0)
+                if fg and fg != h:
+                    self._prev_fg = fg
+                self._kbd = True
+                user32.SetWindowLongPtrW(h, GWL_EXSTYLE, ex & ~WS_EX_NOACTIVATE)
+                import ctypes
+                u = ctypes.WinDLL("user32", use_last_error=True)
+                k = ctypes.WinDLL("kernel32", use_last_error=True)
+                u.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+                u.AttachThreadInput.argtypes = [ctypes.c_ulong, ctypes.c_ulong, ctypes.c_int]
+                u.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+                u.BringWindowToTop.argtypes = [ctypes.c_void_p]
+                tf = u.GetWindowThreadProcessId(fg, None) if fg else 0
+                tm = int(k.GetCurrentThreadId())
+                att = bool(tf and tf != tm and u.AttachThreadInput(tf, tm, 1))
+                try:
+                    u.BringWindowToTop(h)
+                    u.SetForegroundWindow(h)
+                finally:
+                    if att:
+                        u.AttachThreadInput(tf, tm, 0)
+            else:
+                if not self._kbd:
+                    return True
+                self._kbd = False
+                user32.SetWindowLongPtrW(h, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE)
+                self._give_back_focus()
+            return True
+        except Exception as e:
+            self.trace(f"Остров: клавиатурный режим не переключился ({e})")
+            return False
 
     def _give_back_focus(self):
         """Окно создано показанным: если оно успело забрать фокус, возвращаем его окну, где человек работал."""

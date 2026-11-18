@@ -23,7 +23,7 @@ GARLANDS = ("off", "blink", "wave")
 IDLE_KEYS = ("idle_time", "idle_battery", "idle_temp", "idle_music")       # что показывать на свёрнутой плашке
 DOCKS = ("top", "bottom", "left", "right")                                  # к какому краю экрана прилип остров
 ISLAND_DEFAULTS = {"character": "logo", "holiday": "dates", "snow": True, "garland": "off", "city": "", "tools": [], "links": [],
-                   "pinned": False, "dock": "top", "pos": 0.5, "mon": None,   # положение: край, место вдоль края (0..1), монитор; помним только если «закреплён»
+                   "mixer_strip": "", "pinned": False, "dock": "top", "pos": 0.5, "mon": None,   # положение: край, место вдоль края (0..1), монитор; помним только если «закреплён»
                    **{k: True for k in IDLE_KEYS}}
 
 
@@ -54,6 +54,8 @@ def clean_settings(patch: dict, old: dict | None = None) -> dict:
     if "links" in p:
         from .shelf import clean_links                          # ярлыки на главной (программа, папка, файл, сайт)
         out["links"] = clean_links(p["links"])
+    if "mixer_strip" in p:                                      # дорожка микшера, которой управляет ползунок громкости острова ("" — общая громкость Windows)
+        out["mixer_strip"] = " ".join(str(p["mixer_strip"] or "").split())[:60]
     if "pinned" in p:
         out["pinned"] = bool(p["pinned"])
     if p.get("dock") in DOCKS:
@@ -270,10 +272,13 @@ def weather_week(city_name: str) -> dict:
         return hit[1]
     try:
         out = _weather_week(city_name)
-    except Exception:
-        if hit:
-            return {**hit[1], "stale": True}
-        raise
+    except Exception as first:
+        try:
+            out = _weather_week_wttr(city_name)                     # запасной сервис: Open-Meteo бывает недоступен (блокировка, прокси, VPN)
+        except Exception as second:
+            if hit:
+                return {**hit[1], "stale": True}
+            raise RuntimeError(f"{first} (запасной сервис wttr.in тоже не ответил: {str(second)[:80] or second.__class__.__name__})") from None
     _WCACHE[key] = (time.time(), out)
     return out
 
@@ -296,6 +301,51 @@ def _weather_week(city_name: str) -> dict:
                      "prob": (d.get("precipitation_probability_max") or [None] * 7)[i]})
     return {"city": city.get("name", city_name), "now": {"t": round(c["temperature_2m"]), "feels": round(c["apparent_temperature"]),
             "icon": _icon(c["weather_code"]), "text": codes.get(c["weather_code"], "облачно"), "wind": round(c["wind_speed_10m"])}, "days": days}
+
+
+_WWO_ICON = [({113}, "☀️"), ({116}, "🌤️"), ({119, 122}, "☁️"), ({143, 248, 260}, "🌫️"),
+             ({176, 263, 266, 281, 284, 293, 296, 299, 302, 305, 308, 311, 314, 353, 356, 359}, "🌧️"),
+             ({179, 182, 185, 227, 230, 317, 320, 323, 326, 329, 332, 335, 338, 350, 362, 365, 368, 371, 374, 377}, "❄️"),
+             ({200, 386, 389, 392, 395}, "⛈️")]
+
+
+def _wwo_icon(code) -> str:
+    try:
+        c = int(code)
+    except (TypeError, ValueError):
+        return "⛅"
+    return next((i for codes, i in _WWO_ICON if c in codes), "⛅")
+
+
+def _http_json(url: str, timeout: float = 8.0) -> dict:
+    """GET → JSON: сначала как настроен системный прокси, потом напрямую."""
+    import urllib.request
+    last: Exception | None = None
+    for direct in (False, True):
+        try:
+            op = urllib.request.build_opener(urllib.request.ProxyHandler({})) if direct else urllib.request.build_opener()
+            return json.loads(op.open(urllib.request.Request(url, headers={"User-Agent": "Bogestv0-KARINA"}), timeout=timeout).read().decode("utf-8"))
+        except Exception as e:
+            last = e
+    raise last or RuntimeError("нет связи")
+
+
+def _weather_week_wttr(city_name: str) -> dict:
+    """Запасной прогноз (wttr.in, текущая погода и 3 дня): Open-Meteo может быть недоступен, а вкладка не должна оставаться пустой."""
+    import urllib.parse
+    d = _http_json("https://wttr.in/" + urllib.parse.quote(str(city_name).strip()) + "?format=j1&lang=ru")
+    c = d["current_condition"][0]
+    ru = lambda x: ((x.get("lang_ru") or x.get("weatherDesc") or [{}])[0].get("value") or "облачно").lower()
+    days = []
+    for i, w in enumerate(d.get("weather", [])[:7]):
+        dt = datetime.strptime(w["date"], "%Y-%m-%d")
+        mid = (w.get("hourly") or [{}] * 5)[min(4, len(w.get("hourly") or [{}]) - 1)]
+        days.append({"day": "Сегодня" if i == 0 else "Завтра" if i == 1 else ("пн вт ср чт пт сб вс".split())[dt.weekday()] + dt.strftime(" %d.%m"),
+                     "icon": _wwo_icon(mid.get("weatherCode")), "text": ru(mid), "hi": round(float(w["maxtempC"])), "lo": round(float(w["mintempC"])),
+                     "prob": int(mid.get("chanceofrain") or 0)})
+    area = ((d.get("nearest_area") or [{}])[0].get("areaName") or [{}])[0].get("value") or city_name
+    return {"city": str(city_name).strip() or area, "now": {"t": round(float(c["temp_C"])), "feels": round(float(c["FeelsLikeC"])), "icon": _wwo_icon(c.get("weatherCode")),
+            "text": ru(c), "wind": round(float(c.get("windspeedKmph") or 0) / 3.6)}, "days": days, "source": "wttr.in"}
 
 
 # ---------------------------------------------------------------- история буфера обмена
@@ -441,20 +491,36 @@ _RADIO_BY_KIND = {1: "wifi", 3: "bluetooth"}          # RadioKind: WiFi = 1, Blu
 
 
 def _radio_call(work):
-    """Выполняет async-работу с радиомодулями Windows (winrt Windows.Devices.Radios) в своём цикле событий.
-    Права администратора не нужны: так переключает и «быстрые параметры» Windows. Нет пакета winrt — исключение ImportError."""
+    """Выполняет async-работу с радиомодулями Windows (winrt Windows.Devices.Radios) в СВОЁМ потоке и цикле событий.
+    Права администратора не нужны: так переключает и «быстрые параметры» Windows. Нет пакета winrt — исключение ImportError.
+    Почему в отдельном потоке: вызовы из окна (pywebview/WinForms) идут из потока с COM в режиме STA, и WinRT отвечал ошибкой
+    «OLE отправило запрос и ждёт ответа» (-2147417835): модули не переключались. В новом потоке COM свободен (многопоточный режим)."""
     import asyncio
-    from winrt.windows.devices.radios import Radio, RadioAccessStatus, RadioKind, RadioState
+    box: dict = {}
 
-    async def go():
-        if int(await Radio.request_access_async()) != 1:                       # RadioAccessStatus.Allowed
-            raise PermissionError("Windows не разрешила управлять радиомодулями (Параметры → Конфиденциальность → Радиомодули)")
-        return await work(list(await Radio.get_radios_async()), RadioKind, RadioState, RadioAccessStatus)
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(go())
-    finally:
-        loop.close()
+    def run():
+        try:
+            from winrt.windows.devices.radios import Radio, RadioAccessStatus, RadioKind, RadioState
+
+            async def go():
+                if int(await Radio.request_access_async()) != 1:                       # RadioAccessStatus.Allowed
+                    raise PermissionError("Windows не разрешила управлять радиомодулями (Параметры → Конфиденциальность → Радиомодули)")
+                return await work(list(await Radio.get_radios_async()), RadioKind, RadioState, RadioAccessStatus)
+            loop = asyncio.new_event_loop()
+            try:
+                box["r"] = loop.run_until_complete(asyncio.wait_for(go(), 15))
+            finally:
+                loop.close()
+        except BaseException as e:                                                      # ImportError и прочее передаём вызвавшему
+            box["e"] = e
+    t = threading.Thread(target=run, daemon=True, name="karina-radio")
+    t.start()
+    t.join(20)
+    if t.is_alive():
+        raise TimeoutError("Windows не ответила на переключение модуля")
+    if "e" in box:
+        raise box["e"]
+    return box.get("r")
 
 
 def radios_get() -> dict:

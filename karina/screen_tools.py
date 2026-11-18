@@ -444,6 +444,29 @@ class Focus:
         except Exception:
             return "RU"
 
+    def toggle_layout(self) -> str:
+        """Переключить раскладку окна, где человек работает. Сначала просим окно сообщением (так работают обычные программы), а если раскладка не
+        поменялась (браузеры на Chromium это сообщение игнорируют), нажимаем Win+Пробел: Windows сама переключает ввод в окне переднего плана."""
+        if not IS_WIN:
+            return "RU"
+        self.poll()
+        cur = self.layout_get()
+        want = next_layout(cur)
+        self.layout_set(want)
+        for _ in range(6):
+            time.sleep(0.05)
+            if self.layout_get() == want:
+                return want
+        try:
+            self.restore()
+            import pyautogui
+            pyautogui.FAILSAFE = False
+            pyautogui.hotkey("win", "space")
+            time.sleep(0.3)
+        except Exception:
+            pass
+        return self.layout_get()
+
     def layout_set(self, name: str) -> bool:
         if not IS_WIN or name not in LAYOUTS or not self.last:
             return False
