@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from karina.config import Config, DATA
+from karina import components
+components.activate()          # докачанные компоненты (torch и др.) подключаем до любых импортов, которым они нужны
 
 # В собранном exe без консоли stdout/stderr отсутствуют: пишем их в журнал, чтобы ошибки не пропадали.
 _log = None
@@ -308,14 +310,25 @@ def selftest() -> int:
     step = {"now": "старт"}
 
     def watchdog():
-        logf.write(f"ТАЙМАУТ 90 с на шаге: {step['now']}\n")
+        logf.write(f"ТАЙМАУТ 300 с на шаге: {step['now']}\n")
         logf.flush()
         os._exit(2)
 
-    timer = threading.Timer(90, watchdog)
+    timer = threading.Timer(300, watchdog)
     timer.daemon = True
     timer.start()
     bad = []
+    pack = os.environ.get("KARINA_SELFTEST_PACK")      # в CI: архив компонентов, собранный этой же сборкой (в установщик torch и голос не входят)
+    if pack:
+        step["now"] = "установка компонентов из " + pack
+        logf.write(step["now"] + "\n")
+        try:
+            from karina import components as _comp
+            _comp.install_zip(Path(pack))
+            _comp.activate()
+        except BaseException:
+            bad.append("компоненты: " + traceback.format_exc().strip().splitlines()[-1])
+            logf.write("  ОШИБКА: " + bad[-1] + "\n")
     for m in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "sounddevice", "numpy", "rapidfuzz",
               "pyautogui", "pyperclip", "PIL", "webview", "comtypes", "pycaw.pycaw", "docx", "openpyxl", "reportlab", "lxml", "torch", "torch.package"):
         step["now"] = "импорт " + m
@@ -365,8 +378,8 @@ def selftest() -> int:
     step["now"] = "голос Карины"
     try:
         from karina import silero_voice
-        if not silero_voice.has_bundled():
-            bad.append("нет встроенного голоса voices/silero_*.pt")
+        if not silero_voice.is_ready(DATA):
+            bad.append("нет голоса voices/silero_*.pt (не распаковались компоненты?)")
         else:
             wav = DATA / "selftest_voice.wav"
             silero_voice.synth_wav(DATA, "Проверка голоса.", str(wav))
@@ -382,14 +395,12 @@ def selftest() -> int:
         from karina.engine import find_server
         exe = find_server("cpu")
         if not exe:
-            bad.append("нет движка llama-server (cpu)")
+            logf.write("движок llama-server не вложен в установщик: он скачивается при первом запуске модели\n")
         else:
             r = subprocess.run([str(exe), "--version"], capture_output=True, text=True, timeout=40, cwd=str(exe.parent))
             logf.write(f"llama-server --version -> код {r.returncode}\n{(r.stdout + r.stderr).strip()[-300:]}\n")
             if r.returncode != 0:
                 bad.append("llama-server (cpu) не запускается")
-        if not find_server("vulkan"):
-            bad.append("нет движка llama-server (vulkan)")
     except BaseException:
         bad.append("движок: " + traceback.format_exc().strip().splitlines()[-1])
     timer.cancel()

@@ -268,8 +268,7 @@ class Packaging(unittest.TestCase):
         self.assertRegex(req, r"(?m)^torch>=")
         spec = (self.root / "build" / "karina.spec").read_text("utf-8")
         excludes = spec[spec.index("excludes="):]
-        self.assertNotIn('"torch"', excludes.split("]")[0])
-        self.assertIn('"torch"', spec.split("excludes=")[0])            # попадает в collect_all
+        self.assertIn('"torch"', excludes.split("]")[0])                # torch не входит в установщик: его докачивает Карина (karina/components.py)
 
     def test_run_bat_installs_new_requirements(self):
         bat = (self.root / "run.bat").read_text("utf-8")

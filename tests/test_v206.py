@@ -148,11 +148,12 @@ class VoiceBundled(unittest.TestCase):
             self.assertTrue(fake.exists())
 
     def test_build_ships_the_voice(self):
-        spec = (ROOT / "build" / "karina.spec").read_text("utf-8")
+        """Голос идёт не в установщике, а в архиве компонентов (его докачивает Карина): см. tests/test_components.py."""
         wf = (ROOT / ".github" / "workflows" / "build-windows.yml").read_text("utf-8")
-        self.assertIn("voices", spec)
         self.assertIn("fetch_voice.py", wf)
-        self.assertLess(wf.index("fetch_voice.py"), wf.index("pyinstaller build/karina.spec"))
+        self.assertIn("make_pack.py", wf)
+        self.assertLess(wf.index("fetch_voice.py"), wf.index("make_pack.py"))
+        self.assertLess(wf.index("pyinstaller build/karina.spec"), wf.index("make_pack.py"))
         self.assertTrue((ROOT / "build" / "fetch_voice.py").exists())
 
 
