@@ -18,6 +18,27 @@ def norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def is_loop(text: str) -> bool:
+    """Зацикливание распознавания: «закрой, закрой, закрой, закрой…» — Whisper на шуме повторяет слово или кусок фразы десятки раз.
+    Человек так не говорит, поэтому такой текст не команда, а сбой: его отбрасываем."""
+    w = norm(text).split()
+    if len(w) < 4:
+        return False
+    run = best = 1
+    for a, b in zip(w, w[1:]):
+        run = run + 1 if a == b else 1
+        best = max(best, run)
+    if best >= 4:                                              # одно слово подряд 4+ раз
+        return True
+    if len(w) >= 8 and len(set(w)) / len(w) <= 0.3:            # длинная фраза почти без разных слов
+        return True
+    for n in (2, 3, 4):                                         # кусок из 2–4 слов подряд 3+ раза
+        for i in range(len(w) - n * 3 + 1):
+            if w[i:i + n] == w[i + n:i + 2 * n] == w[i + 2 * n:i + 3 * n]:
+                return True
+    return False
+
+
 def translit(s: str) -> str:
     return "".join(_LAT.get(ch, ch) for ch in s.lower())
 

@@ -4,7 +4,7 @@ import json, os, re, shutil, socket, subprocess, sys, tempfile, threading, time
 import numpy as np
 from .config import DATA, FROZEN, ROOT
 from .diag import trace
-from .textutil import norm
+from .textutil import norm, is_loop
 
 # типичные «галлюцинации» Whisper на тишине и шуме
 _JUNK = ("субтитр", "продолжение следует", "спасибо за просмотр", "подписывайтесь", "редактор субтитров",
@@ -296,7 +296,11 @@ class STT:
         return self.transcribe_ex(audio)[0]
 
     def hint(self) -> str:
-        """Подсказка Whisper: имя, привычные слова команд и город из профиля — так названия распознаются точнее («погода в Новокузнецке»)."""
+        """Подсказка Whisper (по умолчанию выключена — stt.use_hint): на шуме и тишине модель повторяет подсказку как «услышанное»
+        («Карина, закрой, закрой, закрой…»), и ассистент начинает отвечать сам. Включайте, только если имя стабильно не узнаётся.
+        Подсказка: имя, привычные слова команд и город из профиля — так названия распознаются точнее («погода в Новокузнецке»)."""
+        if not self.cfg["stt"].get("use_hint", False):
+            return ""
         h = f"{self.cfg['name']}, открой, закрой, запусти, громкость, найди в интернете, сделай скриншот."
         try:
             from .weather import clean_city
@@ -311,7 +315,7 @@ class STT:
         """(текст, уверенность 0…1). Уверенность — по оценке самой модели; по ней несколько микрофонов выбирают лучшую запись."""
         with self._lock:
             self.load()
-            kw = dict(language="ru", beam_size=1, vad_filter=True, condition_on_previous_text=False, initial_prompt=self.hint(),
+            kw = dict(language="ru", beam_size=1, vad_filter=True, condition_on_previous_text=False, initial_prompt=self.hint() or None,
                       no_speech_threshold=0.6, temperature=0.0)
             try:
                 segs, _ = self.model.transcribe(audio, **kw)
@@ -326,6 +330,9 @@ class STT:
         text = " ".join(s.text.strip() for s in kept).strip()
         low = text.lower()
         if len(norm(text)) < 2 or any(j in low for j in _JUNK):
+            return "", 0.0
+        if is_loop(text):                  # «закрой закрой закрой…» — зацикливание модели на шуме, не речь
+            trace("Распознавание: отброшено зацикливание — " + text[:80])
             return "", 0.0
         num = den = 0.0
         for s in kept:
@@ -370,7 +377,7 @@ class STT:
         try:
             with self._tiny_lock:
                 segs, _ = self._tiny.transcribe(audio, language="ru", beam_size=1, vad_filter=False, condition_on_previous_text=False,
-                                                 initial_prompt=f"{self.cfg['name']}, открой, закрой.", temperature=0.0)
+                                                 initial_prompt=None, temperature=0.0)
                 text = " ".join(s.text.strip() for s in segs)
         except Exception:
             return None

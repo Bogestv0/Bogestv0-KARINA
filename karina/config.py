@@ -17,7 +17,9 @@ DEFAULTS: dict = {
     "name_aliases": ["карина", "карену", "карине", "карины", "карину", "кариной", "каринка", "корина",
                       "карена", "каріна", "кариана", "карин", "каринна"],
     "wake_required": True,        # откликаться только на имя
-    "followup_seconds": 8,        # после имени слушаем без повторного обращения
+    "wake_strict": True,          # строго: каждая команда начинается с имени «Карина». Окна «слушаю дальше без имени» нет (кроме ответа «да/нет/стоп» на её вопрос и горячей клавиши разговора)
+    "confirm_model": True,        # перед обращением к нейросети или поиском в интернете голосом спрашивать: «да», «нет» или «стоп»
+    "followup_seconds": 8,        # при wake_strict=False: после имени слушаем без повторного обращения
     "followup_max_words": 10,     # в этом окне без имени принимаем только короткие фразы (команды); длинная речь из фона игнорируется
     "wake_tail_words": 7,         # имя в КОНЦЕ фразы («открой хром, Карина») считается обращением только в фразе до стольких слов
     "ui": {"theme": "auto", "background": True, "frameless": True, "island": False,
@@ -25,13 +27,13 @@ DEFAULTS: dict = {
     # mics — до 4 микрофонов сразу: {"enabled","device","name"} (пусто = старая настройка mic_device, слот 1);
     # assist — как микрофоны помогают друг другу: smart (лучший слушает, остальные помогают при плохом распознавании) | all (распознать со всех, выбрать лучшее) | best (только самый чистый)
     "stt": {"model": "small", "mic_device": None, "vad_threshold": 0.012, "mics": [], "assist": "smart",
-            "vad": "neural", "min_conf": 0.42, "followup_conf": 0.55, "end_silence": 0.55, "end_silence_long": 0.8, "device": "auto", "prefilter": False},
+            "vad": "neural", "min_conf": 0.5, "followup_conf": 0.55, "end_silence": 0.55, "end_silence_long": 0.8, "device": "auto", "prefilter": False},
     # vad — neural (Silero VAD, сам вернётся к energy, если нет модели) | energy; end_silence / end_silence_long — пауза (с) в конце короткой / долгой фразы;
     # device — auto (видеокарта NVIDIA, если сработает проба, иначе процессор) | cpu | cuda; prefilter — быстрая проверка имени моделью «tiny» до полного распознавания (экономит процессор)
     # music.services — свои сервисы музыки/видео: {"music": {"мой": {"name": "…", "aliases": ["…"], "kind": "web", "search": "https://…?q={q}"}}} (см. karina/music.py)
     "music": {"services": {}},
     # горячие клавиши (Windows): talk — говорить без имени, stop — замолчать
-    "hotkeys": {"enabled": True, "talk": "ctrl+alt+a", "stop": "ctrl+alt+s"},
+    "hotkeys": {"enabled": True, "talk": "ctrl+alt+a", "stop": "ctrl+alt+s", "island": "ctrl+alt+i", "snip": "ctrl+alt+x"},
     # куда Карина выводит свой голос: device — номер устройства (None = по умолчанию в Windows), name — его имя (номера меняются), volume — громкость голоса 0–100 %
     "audio_out": {"device": None, "name": "", "volume": 100},
     # voice — всегда «karina» (Silero «Байя», единственный голос); auto_silero — сама скачать голос Silero; pronounce — словарь «слово → как произнести»

@@ -1,6 +1,6 @@
 """Ядро: микрофон → распознавание → имя → команда → голосовой ответ."""
 from __future__ import annotations
-import queue, re, sys, threading, time, traceback
+import os, queue, re, sys, threading, time, traceback
 from . import actions, chat as chatmod, llm, net
 from . import integrations, music, personal, profile as prof  # noqa: F401  (регистрируют команды микшера, VPN, музыки, погоды и профиля)
 from . import memory as memorymod
@@ -18,7 +18,7 @@ from .apps import AppIndex
 from .audio import Listener, format_status
 from .stt import STT
 from .tts import Speaker
-from .textutil import norm
+from .textutil import norm, is_loop
 from .wake import split_wake
 from .hotkeys import Hotkeys
 
@@ -66,6 +66,11 @@ class Assistant:
     _say_gen = 0
     _repeats = None
     _last_talk = 0.0
+    state = "idle"
+    listening = True
+    ptt_until = 0.0
+    _last_state = None
+    _called_at = 0.0
 
     def __init__(self, cfg, emit):
         self.cfg, self.emit = cfg, emit
@@ -84,7 +89,10 @@ class Assistant:
         self.listener.on_barge = self._on_barge
         self.memory = memorymod.get(cfg)                    # чему Карина научилась: выбранные приложения, узнаваемые сразу фразы
         self.bq: queue.Queue = queue.Queue(maxsize=2)       # короткие фразы поверх речи Карины («стоп»)
-        self.hotkeys = Hotkeys(cfg, {"talk": self.push_to_talk, "stop": self.hush}, trace)
+        self.ext_actions: dict = {}                         # действия, которые подставляет остров: {"island": ..., "snip": ...}
+        self.hotkeys = Hotkeys(cfg, {"talk": self.push_to_talk, "stop": self.hush,
+                                     "island": lambda: self.ext_actions.get("island", lambda: None)(),
+                                     "snip": lambda: self.ext_actions.get("snip", lambda: None)()}, trace)
         self.mic_status: list = []
         self._levels: dict = {}
         self._lvl_emit = 0.0
@@ -93,6 +101,9 @@ class Assistant:
         self.sleeping = False
         self.listening = True
         self.followup_until = 0.0
+        self.ptt_until = 0.0            # одноразовое окно «следующую фразу без имени»: после горячей клавиши разговора и после одного лишь «Карина»
+        self._last_state = None
+        self._called_at = 0.0
         self._conf = None
         self._pending = None            # {"action", "on_no", "until", "tries"}: ждём «да/нет/стоп»; until=None, пока вопрос ещё звучит (отсчёт — после речи)
         self._choice = None             # {"fn", "until", "tries", "max"}: ждём ответ на уточнение: «что сделать тише?» → «музыку», шаги мастера и т. д.
@@ -183,11 +194,20 @@ class Assistant:
 
     def _set_state(self, s: str, detail: str = ""):
         self.state = s
+        if s == "called":
+            self._called_at = time.time()
+        key = (s, detail, self.sleeping, self.listening)
+        if key == self._last_state:
+            return                      # то же самое окно уже знает: не дёргаем виджет и остров каждую секунду
+        self._last_state = key
         self.emit({"type": "state", "state": s, "detail": detail, "sleeping": self.sleeping, "listening": self.listening})
 
     def log(self, kind: str, text: str):
         if kind == "error":
             trace("ОШИБКА: " + text)
+        if kind == "ignored":
+            trace("не ко мне: " + text)       # в журнал для отладки, но не в окно и не на остров: шум и чужие разговоры там не нужны
+            return
         self.emit({"type": "log", "kind": kind, "text": text, "ts": time.strftime("%H:%M:%S")})
 
     def status(self) -> dict:
@@ -237,8 +257,7 @@ class Assistant:
             try:
                 if self._prefilter_reject(group):
                     continue
-                self._set_state("thinking")
-                text = self._recognize(group)
+                text = self._recognize(group)          # состояние «Думаю» не показываем: на каждый шорох виджет дёргался бы, а имени ещё нет
                 if text and not self._is_background(text):
                     self.handle(text)
             except Exception as e:
@@ -251,7 +270,7 @@ class Assistant:
         """Быстрая проверка (stt.prefilter): в записи точно нет обращения по имени → полное распознавание не запускаем. Без имени команды не нужны,
         поэтому не мешаем ответам «да/нет» и фразам в окне после обращения."""
         c = self.cfg
-        if not c["stt"].get("prefilter") or not c["wake_required"] or time.time() < self.followup_until or self._pending or self._choice:
+        if not c["stt"].get("prefilter") or not c["wake_required"] or self._name_free() or self._pending or self._choice:
             return False
         audio = group[0].audio if isinstance(group, (list, tuple)) and group and hasattr(group[0], "audio") else group
         try:
@@ -289,6 +308,14 @@ class Assistant:
         if self.state == "error" and self.stt.model is not None and any(s["state"] == "ok" for s in statuses):
             self._set_state("idle")
 
+    def _name_free(self, now: float | None = None) -> bool:
+        """Можно ли принять фразу без имени. Строго (wake_strict, по умолчанию): только если имя вообще не требуется, либо открыто одноразовое окно
+        (горячая клавиша разговора, или только что сказали одно «Карина»). Нестрого: ещё и окно followup_seconds после каждой реплики."""
+        now = time.time() if now is None else now
+        if not self.cfg["wake_required"] or now < self.ptt_until:
+            return True
+        return (not self.cfg.get("wake_strict", True)) and now < self.followup_until
+
     def _is_background(self, text: str) -> bool:
         """True — это, скорее всего, фон (телевизор, чужой разговор, шум), а не команда: фразу пропускаем.
         • неуверенное распознавание: с именем нужна уверенность stt.min_conf, без имени (окно «слушаю дальше») — stt.followup_conf;
@@ -297,10 +324,15 @@ class Assistant:
         now = time.time()
         addressed, rest = split_wake(text, self.cfg.wake_names(), int(self.cfg.get("wake_tail_words", 7)))
         answering = bool(self._pending or self._choice)           # ответ «да/нет» или выбор на мой вопрос — короткий, имя не нужно
-        free = (not addressed) and (now < self.followup_until or not self.cfg["wake_required"] or answering)
+        if is_loop(text):
+            self.log("ignored", f"{text[:80]} (зацикливание распознавания)")
+            return True
+        free = (not addressed) and (self._name_free(now) or answering)
         if not addressed and not free:
-            return False                                           # обращения нет — handle() сам запишет «слышала, но не мне»
-        need = float(st.get("followup_conf", 0.55)) if (free and not answering) else float(st.get("min_conf", 0.42))
+            return False                                           # обращения нет — handle() молча пропустит (в журнал для отладки)
+        need = float(st.get("followup_conf", 0.55)) if (free and not answering) else float(st.get("min_conf", 0.5))
+        if addressed and not rest.strip():
+            need = max(need, 0.6)                                   # одно лишь «Карина» без команды легко «послышаться» в шуме — нужна уверенность выше
         conf = getattr(self, "_conf", None)
         if conf is not None and conf < need:
             self.log("ignored", f"{text} (нечётко, уверенность {conf:.2f})")
@@ -312,7 +344,7 @@ class Assistant:
 
     def _addressed_ok(self, text: str) -> bool:
         """Фраза годится для команды: обращение по имени (или оно не нужно)."""
-        if not self.cfg["wake_required"] or time.time() < self.followup_until:
+        if self._name_free():
             return True
         return split_wake(text, self.cfg.wake_names(), int(self.cfg.get("wake_tail_words", 7)))[0]
 
@@ -404,6 +436,8 @@ class Assistant:
 
     def _expire_dialogs(self):
         """Не дождались ответа: забываем вопрос и говорим об этом, чтобы человек не гадал, что происходит."""
+        if self.state == "called" and time.time() - self._called_at > 12 and not getattr(getattr(self, "tts", None), "speaking", False):
+            self._set_state("idle")                          # позвали, но команды не последовало — снова ждём имя
         dead = [n for n, d in (("_pending", self._pending), ("_choice", self._choice)) if d and not self._alive(d)]
         if not dead:
             return
@@ -441,6 +475,9 @@ class Assistant:
             elif len(rest.split()) > dialog.MAX_WORDS:
                 self.log("ignored", text + " (длинная фраза, это не ответ)")
                 return
+            elif not addressed:
+                self.log("ignored", text + " (не «да», не «нет» и не «стоп» — жду ответа молча)")     # шум не должен заставлять её переспрашивать
+                return
             else:
                 d["tries"] += 1
                 self.log("you", text)
@@ -460,15 +497,20 @@ class Assistant:
                 self.log("ignored", text)
             return
 
-        in_followup = now < self.followup_until
-        if not (addressed or direct or in_followup or not self.cfg["wake_required"]):
-            self.log("ignored", text)     # слышала, но обращались не ко мне
+        if not (addressed or direct or self._name_free(now) or self._alive(self._choice)):      # ответ на её уточнение — тоже без имени
+            self.log("ignored", text)     # слышала, но обращались не ко мне: молчим и ничего не показываем
             return
 
+        self.ptt_until = 0.0              # одноразовое окно «без имени» израсходовано
         self.log("you", text)
+        if addressed and not direct:
+            self._set_state("called", "Услышала своё имя")      # единственное, что виджет показывает про слух: её позвали
         prev_talk, self._last_talk = self._last_talk, now
-        self.followup_until = now + float(self.cfg["followup_seconds"])
+        if not self.cfg.get("wake_strict", True):
+            self.followup_until = now + float(self.cfg["followup_seconds"])
         if not rest:
+            if not direct:
+                self.ptt_until = now + 15.0      # позвали одним именем → следующая фраза (команда) принимается без имени, один раз
             self.say(self._wake_reply(now, prev_talk))
             return
         if self._choice and not self._alive(self._choice):
@@ -507,7 +549,7 @@ class Assistant:
                 self.say("Не получилось открыть папку с файлами.")
             return
         if chatmod.is_chat_request(rest):
-            self._to_chat(rest)
+            self._to_chat(rest, ask=not direct)
             return
         ctx = Ctx(self.cfg, self.apps, self, raw=text)
         handled, reply = self._recall(ctx, rest)         # знакомая фраза — выполняем сразу, без разбора
@@ -516,10 +558,14 @@ class Assistant:
             handled, reply = actions.dispatch(ctx, rest)
             self._learn(ctx, rest, handled, reply, before)
         if not handled and self.brain.usable():
-            self._to_chat(rest)          # свободная фраза — отвечает выбранный «мозг»
+            self._to_chat(rest, ask=not direct)          # свободная фраза — отвечает выбранный «мозг» (голосом — только после «да»)
             return
         if not handled and self.brain.mode == "claude":
             self.say(self.brain.unavailable_reason())       # человек выбрал Claude — говорим сразу, почему он молчит
+            return
+        if not handled and not direct and self.cfg.get("confirm_model", True) and self._llm_ready():
+            self.ask_confirm(lambda: self._llm_go(ctx, rest), on_no=lambda: rudemod.pick("cancel") if self.rude else "Хорошо, не буду.")
+            self.say("Не поняла команду. Спросить у нейросети? Скажите «да», «нет» или «стоп».")
             return
         if not handled:
             handled, reply = self._try_llm(ctx, rest)
@@ -560,7 +606,7 @@ class Assistant:
         r = rudemod.repeat_reply(n)
         return ("ok", "") if r is None else ("again", r) if n == 2 else ("refuse", r)
 
-    def _to_chat(self, text: str):
+    def _to_chat(self, text: str, ask: bool = True):
         """Голосовой вопрос: коротко отвечаем голосом, подробности показываем в окне «Чат»."""
         why = self.chat.preflight(text)
         if why:
@@ -575,12 +621,17 @@ class Assistant:
             return
         if gate == "again":
             self.say(said)
-        if self.chat.will_search(text) and (self.cfg.get("search") or {}).get("confirm", True):
+        search = self.chat.will_search(text)
+        if ask and (self.cfg.get("confirm_model", True) or (search and (self.cfg.get("search") or {}).get("confirm", True))):
+            # к нейросети и в интернет — только после «да». «Нет» и «стоп» (замолчи, хватит…) — просто отмена, ничего не отправляется.
             short = re.sub(r"\s+", " ", text).strip()[:90]
-            self.ask_confirm(lambda: self._chat_go(text, True), on_no=lambda: self._chat_go(text, False))       # в интернет — только после «да»
-            self.say(rudemod.pick("search_ask", short=short) if self.rude else f"Хотите, посмотрю в интернете: {short}? Скажите «да» или «нет».")
+            self.ask_confirm(lambda: self._chat_go(text, search), on_no=lambda: rudemod.pick("cancel") if self.rude else "Хорошо, не буду.")
+            if search:
+                self.say(rudemod.pick("search_ask", short=short) if self.rude else f"Хотите, посмотрю в интернете: {short}? Скажите «да», «нет» или «стоп».")
+            else:
+                self.say(f"Спросить у нейросети: {short}? Скажите «да», «нет» или «стоп».")
             return
-        self.say(self._chat_go(text, False))
+        self.say(self._chat_go(text, search))
 
     def _run_dialog_action(self, action) -> str:
         try:
@@ -624,6 +675,17 @@ class Assistant:
                     trace(f"Память: запомнила «{phrase}» → {ctx.matched[0]}")
         except Exception as e:
             trace(f"Память: {e}")
+
+    def _llm_ready(self) -> bool:
+        c = self.cfg["llm"]
+        return bool(c.get("enabled") and (c.get("api_key") or os.environ.get("ANTHROPIC_API_KEY"))) and net.is_online()
+
+    def _llm_go(self, ctx: Ctx, text: str) -> str:
+        """Нейросеть разбирает непонятную команду — только после «да»."""
+        handled, reply = self._try_llm(ctx, text)
+        if handled:
+            return reply
+        return rudemod.pick("not_understood") if self.rude else "Не поняла команду. Скажите «что ты умеешь», чтобы услышать список."
 
     def _try_llm(self, ctx: Ctx, text: str):
         if not net.is_online():
@@ -669,7 +731,8 @@ class Assistant:
                 self.listener.muted = True       # на время «хвоста» эха после речи
                 time.sleep(0.2)
                 self.listener.muted = not self.listening
-                self.followup_until = max(self.followup_until, time.time() + float(self.cfg["followup_seconds"]))
+                if not self.cfg.get("wake_strict", True):
+                    self.followup_until = max(self.followup_until, time.time() + float(self.cfg["followup_seconds"]))
                 self._arm_dialogs()              # ответ на вопрос ждём ОТ ЭТОГО момента, а не от начала речи
                 self._set_state("idle")
 
@@ -685,8 +748,8 @@ class Assistant:
         """Горячая клавиша: следующая фраза принимается без обращения по имени."""
         self.hush()
         self.sleeping = False
-        self.followup_until = time.time() + 10
-        self._set_state("idle", "Слушаю — говорите без имени")
+        self.ptt_until = time.time() + 10
+        self._set_state("called", "Слушаю — говорите без имени")
         self.log("info", "Слушаю: можно говорить без имени.")
         if sys.platform == "win32":
             try:

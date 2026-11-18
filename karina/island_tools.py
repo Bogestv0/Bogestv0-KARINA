@@ -12,7 +12,7 @@ from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .config import DATA
+from .config import DATA, FROZEN, ROOT
 
 IS_WIN = sys.platform == "win32"
 NO_WINDOW = 0x08000000
@@ -432,6 +432,121 @@ def open_settings(page: str) -> bool:
         os.startfile(uri)
         return True
     except Exception:
+        return False
+
+
+# ---------------------------------------------------------------- Wi-Fi и Bluetooth: настоящее включение и выключение
+RADIO_KINDS = ("wifi", "bluetooth")
+_RADIO_BY_KIND = {1: "wifi", 3: "bluetooth"}          # RadioKind: WiFi = 1, Bluetooth = 3
+
+
+def _radio_call(work):
+    """Выполняет async-работу с радиомодулями Windows (winrt Windows.Devices.Radios) в своём цикле событий.
+    Права администратора не нужны: так переключает и «быстрые параметры» Windows. Нет пакета winrt — исключение ImportError."""
+    import asyncio
+    from winrt.windows.devices.radios import Radio, RadioAccessStatus, RadioKind, RadioState
+
+    async def go():
+        if int(await Radio.request_access_async()) != 1:                       # RadioAccessStatus.Allowed
+            raise PermissionError("Windows не разрешила управлять радиомодулями (Параметры → Конфиденциальность → Радиомодули)")
+        return await work(list(await Radio.get_radios_async()), RadioKind, RadioState, RadioAccessStatus)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(go())
+    finally:
+        loop.close()
+
+
+def radios_get() -> dict:
+    """{'wifi': True|False|None, 'bluetooth': ...}: включён ли модуль (None — модуля нет или узнать не удалось)."""
+    out = {k: None for k in RADIO_KINDS}
+    if not IS_WIN:
+        return out
+
+    async def work(radios, Kind, State, _A):
+        for r in radios:
+            key = _RADIO_BY_KIND.get(int(r.kind))
+            if key:
+                out[key] = (int(r.state) == 1) or bool(out[key])                # RadioState.On = 1
+    try:
+        _radio_call(work)
+    except Exception:
+        pass
+    return out
+
+
+def radio_set(kind: str, on: bool) -> dict:
+    """Включить или выключить Wi-Fi или Bluetooth. {'ok': bool, 'error': str, 'on': bool|None}."""
+    if kind not in RADIO_KINDS:
+        return {"ok": False, "error": "Неизвестный модуль.", "on": None}
+    if not IS_WIN:
+        return {"ok": False, "error": "Работает только в Windows.", "on": None}
+    found = {"n": 0, "bad": ""}
+
+    async def work(radios, Kind, State, Access):
+        for r in radios:
+            if _RADIO_BY_KIND.get(int(r.kind)) != kind:
+                continue
+            found["n"] += 1
+            st = await r.set_state_async(State(1 if on else 2))                 # RadioState: On = 1, Off = 2
+            if int(st) != 1:                                                   # RadioAccessStatus.Allowed
+                found["bad"] = "Windows отказала в переключении (возможно, включён режим «в самолёте» или модуль занят)."
+    try:
+        _radio_call(work)
+    except ImportError:
+        open_settings(kind)
+        return {"ok": False, "error": "Нет пакета winrt-Windows.Devices.Radios: открыла настройки Windows.", "on": None}
+    except Exception as e:
+        return {"ok": False, "error": str(e) or e.__class__.__name__, "on": None}
+    if not found["n"]:
+        return {"ok": False, "error": "В компьютере нет такого модуля.", "on": None}
+    if found["bad"]:
+        return {"ok": False, "error": found["bad"], "on": None}
+    return {"ok": True, "error": "", "on": bool(on)}
+
+
+# ---------------------------------------------------------------- запуск вместе с Windows
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "Bogestv0 KARINA"           # то же имя, что ставит установщик (галочка «Запускать вместе с Windows»)
+
+
+def autostart_command() -> str:
+    """Команда запуска без окна (--background: сразу в трей, остров появляется сам, если он включён)."""
+    if FROZEN:
+        return f'"{sys.executable}" --background'
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")
+    return f'"{pyw if pyw.exists() else exe}" "{ROOT / "main.py"}" --background'
+
+
+def autostart_get() -> bool | None:
+    if not IS_WIN:
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            return bool(str(winreg.QueryValueEx(k, RUN_NAME)[0]).strip())
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return None
+
+
+def autostart_set(on: bool) -> bool:
+    if not IS_WIN:
+        return False
+    try:
+        import winreg
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            if on:
+                winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, autostart_command())
+            else:
+                try:
+                    winreg.DeleteValue(k, RUN_NAME)
+                except FileNotFoundError:
+                    pass
+        return True
+    except OSError:
         return False
 
 

@@ -21,6 +21,7 @@ from . import island_tools as tools
 from . import screen_tools as st
 from . import shelf as shf
 from .halo import Halo
+from .snow import Snow
 from .media import Media
 
 IS_WIN = sys.platform == "win32"
@@ -204,6 +205,9 @@ def _ease(p: float, grow: bool = True) -> float:
     """Плавное торможение без «перелёта»: раскрытие чуть мягче (четвёртая степень), сворачивание резвее (третья)."""
     p = max(0.0, min(1.0, p))
     return 1 - (1 - p) ** (4 if grow else 3)
+
+
+HOTKEY_NAMES = ("talk", "stop", "island", "snip")        # какие горячие клавиши настраиваются в острове
 
 
 class IslandApi:
@@ -495,7 +499,7 @@ class IslandApi:
         except Exception:
             pass
         return {"battery": tools.battery(), "dark": tools.dark_get(), "wifi": tools.wifi_ssid(), "vpn": vpn,
-                "win": sys.platform == "win32"}
+                "radios": tools.radios_get(), "sound": self.out_get().get("name", ""), "win": sys.platform == "win32"}
 
     def sys_action(self, name: str):
         if name == "dark":
@@ -503,7 +507,13 @@ class IslandApi:
             self._island.reassert()                  # после смены темы Windows у окна острова слетала форма: проверяем и возвращаем
             return ok
         if name in ("wifi", "bluetooth"):
-            return tools.open_settings(name)
+            now = tools.radios_get().get(name)
+            if now is None:                                  # состояние не узнали (нет пакета winrt или модуля): как раньше, открываем настройки
+                return tools.open_settings(name)
+            r = tools.radio_set(name, not now)
+            return {"ok": bool(r.get("ok")), "error": r.get("error", "")}
+        if name == "sound":
+            return self.out_next()
         if name == "vpn":
             on = bool(self._api.assistant.tunnel.status().get("running"))
             r = self._api.tunnel_stop() if on else self._api.tunnel_start()
@@ -511,6 +521,71 @@ class IslandApi:
         if name in ("lock", "sleep", "restart", "shutdown"):
             return tools.power(name)
         return False
+
+    # ---- звук: куда играет голос Карины ----
+    def out_get(self):
+        """Устройства вывода и выбранное. Первым идёт «по умолчанию» (id = None)."""
+        try:
+            devs = [{"id": d["id"], "name": d["name"]} for d in self._api._outs()]
+            st = self._api.audio_out_state()
+            name = st.get("name") or "По умолчанию в Windows"
+            if st.get("device") is not None and not st.get("found"):
+                name += " (не найдено)"
+            return {"devices": devs, "device": st.get("device"), "name": name, "volume": st.get("volume", 100)}
+        except Exception as e:
+            return {"devices": [], "device": None, "name": "", "error": str(e)}
+
+    def out_set(self, device):
+        r = self.out_get()
+        self._api.audio_out_set(device, r.get("volume", 100))
+        return self.out_get()
+
+    def out_next(self):
+        """Следующее устройство по кругу: по умолчанию → первое → второе … → снова по умолчанию."""
+        r = self.out_get()
+        ids = [None] + [d["id"] for d in r["devices"]]
+        cur = r.get("device")
+        nxt = ids[(ids.index(cur) + 1) % len(ids)] if cur in ids else None
+        self.out_set(nxt)
+        return {"ok": True, **self.out_get()}
+
+    # ---- запуск вместе с Windows ----
+    def autostart_get(self):
+        return {"on": tools.autostart_get(), "island": bool(self._api.cfg["ui"].get("island"))}
+
+    def autostart_set(self, on):
+        on = bool(on)
+        ok = tools.autostart_set(on)
+        if ok and on:
+            self._api.cfg.update({"ui": {"island": True}})   # без включённого острова автозапуск ничего бы не показал
+        return {"ok": ok, **self.autostart_get()}
+
+    # ---- горячие клавиши (talk, stop, island, snip) ----
+    def hotkeys_get(self):
+        from .hotkeys import DEFAULTS
+        hk = {**DEFAULTS, **(self._api.cfg.get("hotkeys") or {})}
+        a = self._api.assistant.hotkeys
+        return {"keys": {k: hk.get(k, "") for k in HOTKEY_NAMES}, "errors": list(a.errors)}
+
+    def hotkey_set(self, name, combo):
+        from . import hotkeys as hk
+        name, combo = str(name), str(combo or "").strip().lower().replace(" ", "")
+        if name not in HOTKEY_NAMES:
+            return {"ok": False, "error": "Неизвестное действие."}
+        if combo and hk.parse(combo) is None:
+            return {"ok": False, "error": "Нужна хотя бы одна из Ctrl, Alt, Shift, Win и обычная клавиша (например, Ctrl+Alt+I)."}
+        cur = self.hotkeys_get()["keys"]
+        for k, v in cur.items():
+            if combo and k != name and v and hk.parse(v) == hk.parse(combo):
+                return {"ok": False, "error": "Это сочетание уже занято другим действием острова."}
+        self._api.cfg.update({"hotkeys": {name: combo}})
+        a = self._api.assistant.hotkeys
+        threading.Thread(target=a.reload, daemon=True, name="karina-hotkeys-reload").start()
+        return {"ok": True, **self.hotkeys_get()}
+
+    def snow_outside(self, on):
+        """Страница просит снег снаружи (True) или без него (False). Ответ: идёт ли снег в своём окне."""
+        return self._island.snow_set(bool(on))
 
     # ---- буфер обмена и снимок экрана ----
     def clip_get(self):
@@ -701,6 +776,7 @@ class Island:
         self._stop_tick = threading.Event()
         self._stopping = False               # True, пока мы сами закрываем окно: иначе «закрытие» отменяется
         self._halo: Halo | None = None       # сглаженный контур под островом (karina/halo.py)
+        self._snow: Snow | None = None       # снег, идущий из-под острова (karina/snow.py)
         self.media = Media(self._on_media, trace)    # что играет сейчас (karina/media.py)
         self.rec = st.Recorder()                     # запись экрана (karina/screen_tools.py)
         self.focus = st.Focus()                      # последнее чужое окно: для вставки и раскладки
@@ -976,6 +1052,7 @@ class Island:
         halo, self._halo = self._halo, None
         if halo is not None:
             halo.stop()
+        self.snow_set(False)
         q, self._q = self._q, None
         if q is not None:
             try:
@@ -1008,6 +1085,48 @@ class Island:
                 q.put_nowait(ev)
             except queue.Full:
                 pass
+
+    # ---- снег из-под острова ----
+    def _snow_geom(self):
+        """Где сейчас плашка (x, y, w, h, масштаб) или None, если снег не нужен: остров спрятан, идёт выбор области, или он у нижнего края."""
+        rc, h = self._rect_cur, self._hwnd
+        if rc is None or not h or not self.ready or self._hidden_by_us or self._snip is not None or self._dock == "bottom":
+            return None
+        return rc[0], rc[1], rc[2], rc[3], self._scale(h)
+
+    def _snow_floor(self) -> int:
+        try:
+            return self._monitor()[1][3]
+        except Exception:
+            return user32.GetSystemMetrics(1)
+
+    def snow_set(self, on: bool) -> bool:
+        """Включает или выключает снег снаружи. True — снег идёт в своём окне (страница тогда не рисует свой); False — не получилось
+        или он не нужен, страница рисует снег внутри плашки."""
+        if not IS_WIN:
+            return False
+        sn = self._snow
+        if not on:
+            self._snow = None
+            if sn is not None:
+                sn.stop()
+            return False
+        if sn is not None and sn.running:
+            return True
+        sn = Snow(self._snow_geom, self._snow_floor, self.trace)
+        if not sn.start():
+            return False
+        self._snow = sn
+        return True
+
+    # ---- горячие клавиши острова ----
+    def toggle_panel(self):
+        """Горячая клавиша: раскрыть или свернуть панель острова."""
+        self._js("window.karina && window.karina.toggle && window.karina.toggle()")
+
+    def snip_hotkey(self):
+        """Горячая клавиша: выбрать область экрана (в отдельном потоке, чтобы не держать цикл сообщений клавиш)."""
+        threading.Thread(target=self.snip, args=("area",), daemon=True, name="karina-island-snip-key").start()
 
     def settings(self) -> dict:
         return tools.clean_settings({}, self.cfg.get("island") if hasattr(self.cfg, "get") else {})

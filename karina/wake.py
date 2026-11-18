@@ -8,10 +8,16 @@ from .textutil import norm
 NOT_NAMES = {"карен", "карим", "карл", "карла", "карло", "кирина", "корин", "карем", "кара", "каре", "кари"}
 
 
-def is_name(word: str, names: list[str], threshold: int = 86) -> bool:
+# Ниже этой длины слово с «похожестью» к имени не принимаем: короткие обрывки («кар», «рина») из шума не должны будить ассистента.
+MIN_FUZZY_LEN = 5
+
+
+def is_name(word: str, names: list[str], threshold: int = 94) -> bool:
     if word in NOT_NAMES and word not in names:
         return False
-    return any(word == n or fuzz.ratio(word, n) >= threshold for n in names)
+    if word in names:
+        return True
+    return len(word) >= MIN_FUZZY_LEN and any(fuzz.ratio(word, n) >= threshold for n in names)
 
 
 FILLER = {"эй", "хей", "окей", "ок", "слушай", "алло", "ну", "привет", "послушай"}

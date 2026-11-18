@@ -1,7 +1,9 @@
 """Глобальные горячие клавиши (Windows): «говорить без имени» и «замолчи». Работают, даже когда окно Карины свёрнуто.
 
-По умолчанию: Ctrl+Alt+A — слушать следующую фразу без обращения по имени; Ctrl+Alt+S — прервать речь Карины.
-Меняются в config.json: "hotkeys": {"enabled": true, "talk": "ctrl+alt+a", "stop": "ctrl+alt+s"}. Занятое сочетание пропускается, причина идёт в журнал.
+По умолчанию: Ctrl+Alt+A — слушать следующую фразу без обращения по имени; Ctrl+Alt+S — прервать речь Карины;
+Ctrl+Alt+I — раскрыть/свернуть остров; Ctrl+Alt+X — выбрать область экрана (остров).
+Меняются в острове (вкладка «Вид») или в config.json: "hotkeys": {"enabled": true, "talk": "ctrl+alt+a", ...}. Пустое значение выключает клавишу.
+Занятое сочетание пропускается, причина идёт в журнал.
 """
 from __future__ import annotations
 import re, sys, threading
@@ -11,6 +13,7 @@ KEYS = {"space": 0x20, "esc": 0x1B, "escape": 0x1B, "pause": 0x13, "tab": 0x09, 
         "insert": 0x2D, "delete": 0x2E, "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
         "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28}
 WM_HOTKEY, WM_QUIT, MOD_NOREPEAT = 0x0312, 0x0012, 0x4000
+DEFAULTS = {"talk": "ctrl+alt+a", "stop": "ctrl+alt+s", "island": "ctrl+alt+i", "snip": "ctrl+alt+x"}
 
 
 def parse(combo: str) -> tuple[int, int] | None:
@@ -50,18 +53,28 @@ class Hotkeys:
         hk = self.cfg.get("hotkeys") or {}
         if not self.supported or not hk.get("enabled", True) or self._thread:
             return
+        self.errors = []
+        self._ready.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True, name="karina-hotkeys")
         self._thread.start()
         self._ready.wait(3)
 
     def stop(self):
+        t = self._thread
         if self._tid and self.supported:
             try:
                 import ctypes
                 ctypes.windll.user32.PostThreadMessageW(self._tid, WM_QUIT, 0, 0)
             except Exception:
                 pass
+        if t is not None and t is not threading.current_thread():
+            t.join(1.5)                                  # старый поток должен снять сочетания, иначе новый не сможет их занять
         self._thread, self._tid = None, 0
+
+    def reload(self):
+        """Перечитать сочетания из настроек (поменяли в острове): снять старые и занять новые."""
+        self.stop()
+        self.start()
 
     def _loop(self):
         import ctypes
@@ -71,7 +84,7 @@ class Hotkeys:
         hk = self.cfg.get("hotkeys") or {}
         ids: dict[int, str] = {}
         for i, name in enumerate(self.actions, 1):
-            combo = hk.get(name)
+            combo = hk.get(name, DEFAULTS.get(name))
             parsed = parse(combo) if combo else None
             if not parsed:
                 if combo:
