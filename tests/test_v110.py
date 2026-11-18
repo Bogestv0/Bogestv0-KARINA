@@ -66,7 +66,7 @@ class Barge(unittest.TestCase):
         a._set_state = lambda *x, **k: None
         a.push_to_talk()
         self.assertFalse(a.sleeping)
-        self.assertGreater(a.followup_until, time.time() + 5)
+        self.assertGreater(a.ptt_until, time.time() + 5)
         a.tts.stop.assert_called()             # заодно прерывает речь
 
 
@@ -88,7 +88,7 @@ class Hotkeys(unittest.TestCase):
 
     def test_defaults_in_config(self):
         c = cfg()
-        self.assertEqual(c["hotkeys"], {"enabled": True, "talk": "ctrl+alt+a", "stop": "ctrl+alt+s"})
+        self.assertEqual(c["hotkeys"], {"enabled": True, "talk": "ctrl+alt+a", "stop": "ctrl+alt+s", "island": "ctrl+alt+i", "snip": "ctrl+alt+x"})
         self.assertIsNotNone(hotkeys.parse(c["hotkeys"]["talk"]))
 
 
@@ -109,13 +109,17 @@ class NeuralVad(unittest.TestCase):
 
 
 class SttHintAndGpu(unittest.TestCase):
+    def test_hint_is_off_by_default(self):
+        """Подсказка Whisper выключена: на шуме модель повторяла её как «услышанное» и Карина отвечала сама."""
+        self.assertEqual(stt.STT(cfg(profile={"city": "г. Новокузнецк"})).hint(), "")
+
     def test_hint_contains_profile_city(self):
-        s = stt.STT(cfg(profile={"city": "г. Новокузнецк, Кемеровская область"}))
+        s = stt.STT(cfg(profile={"city": "г. Новокузнецк, Кемеровская область"}, stt={"use_hint": True}))
         h = s.hint()
         self.assertIn("Новокузнецк", h)
         self.assertNotIn("Кемеровская", h)
         self.assertIn("Карина", h)
-        self.assertNotIn("Какая погода в ", stt.STT(cfg()).hint())     # города нет — без хвоста
+        self.assertNotIn("Какая погода в ", stt.STT(cfg(stt={"use_hint": True})).hint())     # города нет — без хвоста
 
     def test_gpu_not_used_without_nvidia_in_auto_mode(self):
         s = stt.STT(cfg())
@@ -196,7 +200,7 @@ class Prefilter(unittest.TestCase):
         a = self.make("просто разговор")
         a.cfg.update({"stt": {"prefilter": False}})
         self.assertFalse(a._prefilter_reject(self.audio))
-        a.cfg.update({"stt": {"prefilter": True}})
+        a.cfg.update({"stt": {"prefilter": True}, "wake_strict": False})
         a.followup_until = time.time() + 5
         self.assertFalse(a._prefilter_reject(self.audio))
         a.followup_until, a._pending = 0.0, {"action": lambda: "да", "on_no": None, "until": time.time() + 5, "tries": 0}

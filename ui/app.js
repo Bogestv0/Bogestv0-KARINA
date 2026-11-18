@@ -29,7 +29,8 @@
   // ---------- состояние ----------
   const STATES = {
     loading:  ['Запуск', 'Загружаюсь…', 'Подождите немного.'],
-    idle:     ['Слушаю', null, 'Можно сказать, например: «открой блокнот», «громкость пятьдесят», «найди в интернете погоду».'],
+    idle:     ['Жду имя', null, 'Начните с имени, например: «Карина, открой блокнот». Я отзываюсь только на своё имя. Прежде чем искать в интернете или спрашивать нейросеть, я переспрошу.'],
+    called:   ['Позвали', 'Да, слушаю вас…', 'Я услышала своё имя. Говорите команду.'],
     thinking: ['Обработка', 'Думаю…', 'Распознаю вашу фразу.'],
     speaking: ['Отвечаю', 'Говорю…', 'Пока я говорю, микрофон не слушает.'],
     paused:   ['Пауза', 'Микрофон выключен', 'Включите микрофон кнопкой ниже.'],
@@ -44,7 +45,7 @@
     $('#stateTitle').textContent = sleeping && key === 'idle' ? 'Я сплю' : (title || `Скажите «${cfg ? cfg.name : 'Карина'}, …»`);
     $('#stateHint').textContent = sleeping && key === 'idle' ? `Скажите «${cfg ? cfg.name : 'Карина'}, проснись».` : (detail || hint);
     $('#btnListen').textContent = listening === false ? 'Включить микрофон' : 'Выключить микрофон';
-    $('#kvMode').textContent = sleeping ? 'Сон' : listening === false ? 'Пауза' : 'Слушаю';
+    $('#kvMode').textContent = sleeping ? 'Сон' : listening === false ? 'Пауза' : 'Жду имя';
   }
 
   function renderStatus(st) {
@@ -68,7 +69,7 @@
     if (!logCount) log.textContent = '';
     logCount++;
     const row = el('div', 'msgline ' + kind);
-    row.append(el('time', '', ts || ''), el('span', '', kind === 'ignored' ? text + '  · не ко мне' : text));
+    row.append(el('time', '', ts || ''), el('span', '', text));
     log.append(row);
     while (log.children.length > 200) log.firstChild.remove();
     log.scrollTop = log.scrollHeight;
@@ -141,7 +142,6 @@
   window.karina = {
     event(ev) {
       if (ev.type === 'level') {
-        document.documentElement.style.setProperty('--lvl', ev.v.toFixed(2));
         $$('.mic-row').forEach(r => { const v = (ev.mics || {})[r.dataset.slot]; $('.meter-bar', r).style.width = Math.round((v || 0) * 100) + '%'; });
       } else if (ev.type === 'mics') renderMicStatus(ev.mics);
       else if (ev.type === 'mic_pick') pickMic(ev.slot);

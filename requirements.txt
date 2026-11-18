@@ -14,6 +14,7 @@ openpyxl>=3.1.2
 reportlab>=4.0.0
 pystray>=0.19.5
 winrt-runtime>=2.0; sys_platform == "win32"                       # музыка на острове (системный медиа-сеанс Windows); без них название трека не показывается
+winrt-Windows.Devices.Radios>=2.0; sys_platform == "win32"           # Wi-Fi и Bluetooth на острове: настоящее включение и выключение
 winrt-Windows.Media.Control>=2.0; sys_platform == "win32"
 winrt-Windows.Foundation>=2.0; sys_platform == "win32"
 winrt-Windows.Foundation.Collections>=2.0; sys_platform == "win32"

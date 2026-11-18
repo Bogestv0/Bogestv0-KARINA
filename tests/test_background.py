@@ -53,15 +53,15 @@ class Gate(unittest.TestCase):
         self.assertFalse(a._is_background("сегодня хорошая погода"))     # дальше handle() сам запишет «не мне»
 
     def test_followup_accepts_short_clear_command(self):
-        a = self.make(); a._conf = 0.8; a.followup_until = time.time() + 5
+        a = self.make(wake_strict=False); a._conf = 0.8; a.followup_until = time.time() + 5
         self.assertFalse(a._is_background("сделай потише"))
 
     def test_followup_rejects_unclear_background(self):
-        a = self.make(); a._conf = 0.45; a.followup_until = time.time() + 5     # выше порога с именем, но ниже порога для фразы без имени
+        a = self.make(wake_strict=False); a._conf = 0.45; a.followup_until = time.time() + 5     # выше порога с именем, но ниже порога для фразы без имени
         self.assertTrue(a._is_background("сделай потише"))
 
     def test_followup_rejects_long_speech(self):
-        a = self.make(); a._conf = 0.9; a.followup_until = time.time() + 5
+        a = self.make(wake_strict=False); a._conf = 0.9; a.followup_until = time.time() + 5
         speech = "и тогда он сказал что завтра мы обязательно пойдём туда вместе со всеми друзьями и родными"
         self.assertTrue(a._is_background(speech))
         self.assertIn("длинная", a.logged[-1][1])

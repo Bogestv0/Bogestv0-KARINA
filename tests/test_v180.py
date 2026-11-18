@@ -108,6 +108,8 @@ class CharactersTest(unittest.TestCase):
         for n in ('idle', 'closed', 'left', 'right', 'up', 'down', 'hair', 'talk'):
             self.assertIn("'%s'" % n, HTML.split('const ANF')[1].split('\n')[0])
             self.assertTrue((Path(__file__).resolve().parent.parent / 'ui' / ('an_%s.png' % n)).exists())
+        for w in ('musicPlaying', 'gazeUntil', 'function jump', '@keyframes dance', '@keyframes shake', "'anime-on'", '.grow .compact', "'grow'"):
+            self.assertIn(w, HTML)
         self.assertIn('data-t="ai"', HTML)
         self.assertIn('id="p-ai"', HTML)
         for m in ("ai_send", "ai_poll", "ai_stop", "ai_open", "ai_say"):

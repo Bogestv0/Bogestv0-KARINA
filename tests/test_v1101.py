@@ -129,8 +129,10 @@ class InternetOnlyOnRequest(unittest.TestCase):
     def test_chat_question_without_request_does_not_ask_or_search(self):
         a = self.make_assistant()
         a._to_chat("сколько будет два плюс два сегодня")
-        self.assertEqual(a.said, ["Хорошо, подумаю."])
-        self.assertIsNone(a.chat.send.call_args.kwargs["search"])    # не «True»: интернет не включали
+        self.assertIn("Спросить у нейросети", a.said[0])              # к нейросети — только с разрешения
+        a.chat.send.assert_not_called()
+        self.assertEqual(a._pending["action"](), "Хорошо, подумаю.")
+        self.assertFalse(a.chat.send.call_args.kwargs["search"])     # интернет не включали
         self.assertFalse(a.chat.will_search("как дела сейчас"))
 
 

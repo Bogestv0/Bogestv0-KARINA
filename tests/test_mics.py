@@ -465,6 +465,7 @@ class TestRecognize(unittest.TestCase):
     def test_name_not_needed_in_followup_window(self):
         import time
         a = assistant_with({100: ("открой ютуб", 0.9), 200: ("карина открой ютуб", 0.8)})
+        a.cfg.update({"wake_strict": False})
         a.followup_until = time.time() + 5
         self.assertEqual(a._recognize(group(100, 200)), "открой ютуб")
 

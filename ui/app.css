@@ -136,6 +136,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .hero[data-state=idle]{border-left-color:var(--accent)}
 .hero[data-state=speaking]{border-left-color:var(--ok)}
 .hero[data-state=thinking]{border-left-color:var(--warn)}
+.hero[data-state=called]{border-left-color:var(--ok)}
+.hero[data-state=called] .orb{animation:pulse .9s ease-in-out 2;background:var(--ok-soft)}
 .hero[data-state=error]{border-left-color:var(--bad)}
 .hero-actions{grid-column:1/-1;display:flex;gap:10px;flex-wrap:wrap}
 .orb-wrap{width:112px;height:112px;display:grid;place-items:center}

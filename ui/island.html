@@ -34,6 +34,25 @@ input,textarea{user-select:text;-webkit-user-select:text;cursor:text;outline:0}
 .chr{display:block;flex:none;position:relative}
 .chr svg{width:100%;height:100%;display:block;overflow:visible}
 .chr img{width:100%;height:100%;border-radius:28%;display:block}
+/* «Аниме» в музыкальной плашке: вместо значка ноты танцует сама, вокруг летают ноты */
+.mico .mchr{display:none;width:100%;height:100%}
+.anime-on .mico{width:30px;height:30px;background:none;border-radius:0;position:relative;overflow:visible}
+.anime-on .mico svg{display:none}.anime-on .mico .mchr{display:block}
+.anime-on.m-music .mico::before,.anime-on.m-music .mico::after{content:'♪';position:absolute;color:var(--c);font:700 11px/1 'Onest',sans-serif;opacity:0;pointer-events:none;z-index:3}
+.anime-on.m-music.playing .mico::before{left:-6px;top:4px;animation:note 1.8s ease-out infinite}
+.anime-on.m-music.playing .mico::after{content:'♫';right:-6px;top:6px;animation:note 1.8s .9s ease-out infinite}
+.anime-on.m-music.playing .mico .an{animation:dance .7s ease-in-out infinite;transform-origin:50% 90%}
+.anime-on.m-music:not(.playing) .mico .an{filter:grayscale(.5) brightness(.85) drop-shadow(0 0 1px rgba(255,255,255,.35))}
+@keyframes dance{0%,100%{transform:rotate(-9deg) translateY(0)}25%{transform:rotate(0) translateY(-2px)}50%{transform:rotate(9deg) translateY(0)}75%{transform:rotate(0) translateY(-2px)}}
+@keyframes note{0%{opacity:0;transform:translateY(4px) scale(.8)}20%{opacity:1}100%{opacity:0;transform:translateY(-16px) rotate(15deg) scale(1.1)}}
+/* реакции: голос (голова пульсирует), ошибка (качает головой), неожиданное (подпрыгивает) */
+.s-idle.anime-on .compact .chr img.an,.s-called.anime-on .compact .chr img.an{transform:scale(calc(1 + var(--lv,0) * .12));transition:transform .09s}
+.s-error.anime-on .compact .chr img.an{animation:shake .5s ease-in-out 2}
+.anime-on .chr img.an.jump{animation:jump .45s ease-out}
+.anime-on.s-sleep .compact .chr::after{content:'z';position:absolute;right:-4px;top:-3px;color:var(--muted);font:700 10px/1 'Onest',sans-serif;animation:zzz 2.4s ease-in-out infinite}
+@keyframes shake{0%,100%{transform:rotate(0)}25%{transform:rotate(-10deg)}75%{transform:rotate(10deg)}}
+@keyframes jump{0%{transform:translateY(0) scale(1)}35%{transform:translateY(-4px) scale(1.08)}70%{transform:translateY(0) scale(.96)}100%{transform:none}}
+@keyframes zzz{0%{opacity:0;transform:translate(0,3px)}40%{opacity:1}100%{opacity:0;transform:translate(3px,-6px)}}
 .chr img.an{border-radius:0;filter:drop-shadow(0 0 1px rgba(255,255,255,.35))}
 .s-thinking .chr:has(.an),.s-speaking .chr:has(.an),.s-loading .chr:has(.an){animation:none}      /* у этого персонажа меняются кадры (глаза, рот, волосы), а не весь значок крутится */
 .sm{width:24px;height:24px}.lg{width:30px;height:30px}.xl{width:54px;height:54px}
@@ -58,6 +77,7 @@ input,textarea{user-select:text;-webkit-user-select:text;cursor:text;outline:0}
 /* ---------- компактный вид ---------- */
 .compact{position:absolute;inset:0;display:flex;align-items:center;gap:9px;padding:0 12px 0 7px;opacity:1;transition:opacity .18s .1s;z-index:2}
 .m-full .compact{opacity:0;pointer-events:none;transition-delay:0s}
+.grow .compact{opacity:0;transition:none}
 .txt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;opacity:0;transition:opacity .2s}
 .m-wide .txt{opacity:1}
 .txt b{color:var(--c);font-weight:600;margin-right:6px}
@@ -171,6 +191,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 .tile.on{background:color-mix(in srgb,var(--c) 26%,#17171c)}
 .tile svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .tile b{display:block;font-size:12px}.tile small{color:var(--muted);font-size:10.5px}
+#tiles{grid-template-columns:repeat(3,minmax(0,1fr))}#tiles .tile{min-height:62px}#tiles .tile small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hk{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 0;font-size:12.5px}
+.hk input{width:150px;text-align:center;background:var(--card);border-radius:10px;padding:6px 8px;font:600 12px 'JetBrains Mono',monospace;cursor:pointer}
+.hk input:focus{outline:2px solid var(--c);background:var(--card2)}
+.hk small{color:var(--muted);font-size:11px}
 .power{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:8px}
 .power button{background:var(--card);border-radius:14px;padding:12px 4px;font-size:12px;font-weight:600;display:flex;flex-direction:column;gap:5px;align-items:center}
 .power button:hover{background:var(--card2)}.power button.ask{background:#5a2420}
@@ -335,7 +360,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <span id="iTemp" hidden style="color:#f5c56b"></span>
     </div>
     <div class="mus" id="cMus">
-      <span class="mico"><svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg></span>
+      <span class="mico"><span class="mchr chr" data-chr></span><svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg></span>
       <span class="t" id="mTitle"></span>
       <span class="mbs">
         <button class="mb" id="mPlay" type="button" title="Пауза / продолжить" aria-label="Пауза"></button>
@@ -449,6 +474,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <h4>Свёрнутая плашка</h4>
       <div class="set"><span>Что показывать, пока Карина молчит</span></div>
       <div class="seg" id="sIdle"><button data-k="idle_time">Время</button><button data-k="idle_battery">Заряд</button><button data-k="idle_temp">Температура</button><button data-k="idle_music">Музыка</button></div>
+      <h4 style="margin-top:12px">Запуск</h4>
+      <div class="set"><span>Запускать Карину и остров вместе с Windows</span><div class="seg" id="sAuto"><button data-v="1">Да</button><button data-v="0">Нет</button></div></div>
+      <h4 style="margin-top:12px">Горячие клавиши</h4>
+      <div class="set"><span>Нажмите на поле и сочетание клавиш. Backspace очищает, Esc отменяет.</span></div>
+      <div id="hkList"></div>
+      <div class="shint" id="hkErr" style="color:#ff8a80" hidden></div>
     </div>
 
     <!-- инструменты -->
@@ -506,7 +537,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   let api = null;
   const call = async (n, ...a) => { try { return await api[n](...a); } catch (e) { return null; } };
   const STATES = {
-    loading:  ['Запуск', '#9a9cae'], idle: ['Слушаю', '#6ab3f3'], thinking: ['Думаю…', '#f5cf8a'], speaking: ['Говорю', '#7fd6a4'],
+    loading:  ['Запуск', '#9a9cae'], idle: ['Жду имя', '#6ab3f3'], called: ['Позвали', '#7fd6a4'], thinking: ['Думаю…', '#f5cf8a'], speaking: ['Говорю', '#7fd6a4'],
     paused:   ['Пауза', '#9a9cae'], error: ['Ошибка', '#ff8a80'], sleep: ['Сплю', '#9a9cae'],
   };
   const st = { state: 'loading', sleeping: false, listening: true, detail: '', name: 'Карина', you: '', reply: '', err: '' };
@@ -529,10 +560,26 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   // «Аниме»: готовые кадры (an_*.png). Кадр выбирается по состоянию Карины, см. animeFrame().
   const ANF = {}; ['idle', 'closed', 'left', 'right', 'up', 'down', 'hair', 'talk'].forEach(n => { ANF[n] = 'an_' + n + '.png'; const im = new Image(); im.src = ANF[n]; });
   const aT0 = Date.now();
+  let gaze = 'idle', gazeUntil = 0, jumpUntil = 0, lastKey = '';
+  const musicPlaying = () => !!(set.idle_music && info.media && info.media.status === 'playing');
+  // взгляд за курсором: пока мышь над плашкой, смотрит в её сторону
+  document.addEventListener('mousemove', e => {
+    if (set.character !== 'anime' || full || grabbing) return;
+    const c = document.querySelector('.compact .chr'); if (!c || !c.offsetWidth) return;
+    const r = c.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    if (Math.hypot(dx, dy) < 14) { gazeUntil = 0; return; }
+    gaze = Math.abs(dx) > Math.abs(dy) * 1.2 ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'up' : 'down');
+    gazeUntil = Date.now() + 1400;
+  });
+  function jump(ms = 700) { jumpUntil = Date.now() + ms; $$('img.an').forEach(i => { i.classList.remove('jump'); void i.offsetWidth; i.classList.add('jump'); }); setTimeout(() => $$('img.an').forEach(i => i.classList.remove('jump')), 500); }
   function animeFrame() {
     const k = key(), t = Date.now() - aT0;
+    if (grabbing || dragging) return t % 400 < 200 ? 'talk' : 'hair';                                                      // подняли за плашку: удивилась, волосы растрепались
+    if (Date.now() < jumpUntil) return 'talk';                                                                             // уведомление, пробуждение, «позвали»: вздрогнула
     if (k === 'sleep') return 'closed';
     if (k === 'error') return 'talk';
+    if (musicPlaying()) return ['idle', 'closed', 'hair', 'closed'][Math.floor(t / 350) % 4];                              // музыка: качает головой с закрытыми глазами, волосы летают
+    if ((k === 'idle' || k === 'called') && Date.now() < gazeUntil) return gaze;                                          // смотрит за курсором
     if (k === 'speaking') return ['talk', 'idle', 'talk', 'hair'][Math.floor(t / 210) % 4];                              // рот открывается, волосы подхватывает ветер
     if (k === 'thinking' || k === 'loading') return ['up', 'hair', 'right', 'idle', 'left', 'hair', 'up', 'idle'][Math.floor(t / 420) % 8];   // думает: глаза бегают, волосы раздуваются
     const b = t % 5200, w = t % 12000;                                                                                       // слушает: моргает и иногда смотрит по сторонам
@@ -545,6 +592,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   }
   setInterval(() => {
     if (set.character !== 'anime') return;
+    root.style.setProperty('--lv', Math.min(1, level).toFixed(2));
+    const kk = key();
+    if (kk !== lastKey) { if (lastKey === 'sleep' || kk === 'called' || (lastKey === 'loading' && kk === 'idle')) jump(900); lastKey = kk; }   // проснулась, позвали или запустилась: вздрогнула
     const f = animeFrame();
     $$('img[data-an]').forEach(i => { if (i.dataset.f !== f) { i.dataset.f = f; i.src = ANF[f]; } });
   }, 90);
@@ -559,7 +609,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (dragging) return 'drop';
     if (Date.now() < toastUntil) return 'wide';
     const k = key();
-    if (k === 'thinking' || k === 'speaking' || k === 'loading') return 'wide';
+    if (k === 'called' || k === 'thinking' || k === 'speaking' || k === 'loading') return 'wide';
     if (k === 'error' && Date.now() < errUntil) return 'wide';
     if (musicOn()) return 'music';
     if (infoOn() || rec.on) return 'info';
@@ -616,6 +666,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     root.style.setProperty('--c', color);
     let sub = '', head = lab;
     if (Date.now() < toastUntil) { head = '🔔'; sub = clip(toastText, 52); }
+    else if (k === 'called') sub = st.you ? '«' + clip(st.you, 40) + '»' : '';
     else if (k === 'thinking') sub = st.you ? '«' + clip(st.you, 40) + '»' : '';
     else if (k === 'speaking') sub = clip(st.reply, 48);
     else if (k === 'error') sub = clip(st.err || st.detail, 48);
@@ -624,6 +675,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     $('chipT').textContent = lab;
     let main = '', small = '';
     if (k === 'idle') { main = `Скажите «${st.name}, …»`; small = st.you ? 'Вы: ' + clip(st.you, 56) : '«открой блокнот», «громкость пятьдесят»'; }
+    else if (k === 'called') { main = 'Да, слушаю!'; small = st.you ? '«' + clip(st.you, 56) + '»' : ''; }
     else if (k === 'thinking') { main = 'Думаю…'; small = st.you ? '«' + clip(st.you, 56) + '»' : ''; }
     else if (k === 'speaking') { main = clip(st.reply, 40) || 'Говорю…'; small = st.you ? 'Вы: ' + clip(st.you, 56) : ''; }
     else if (k === 'paused') { main = 'Микрофон выключен'; small = 'Включите, чтобы продолжить'; }
@@ -638,18 +690,21 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     $('bStop').hidden = k !== 'speaking';
     const m = wanted();
     paintIdle();
-    const keep = ['ready', 'fly', 'anim'].filter(c => root.classList.contains(c));
-    root.className = ['m-' + m, 's-' + k, ...keep, dragging && 'dragging', vertFor(m) && 'vert', pinned && 'pinned', 'dock-' + dock].filter(Boolean).join(' ');
+    const keep = ['ready', 'fly', 'anim', 'grow'].filter(c => root.classList.contains(c));
+    root.className = ['m-' + m, 's-' + k, ...keep, dragging && 'dragging', set.character === 'anime' && 'anime-on', musicPlaying() && 'playing', vertFor(m) && 'vert', pinned && 'pinned', 'dock-' + dock].filter(Boolean).join(' ');
     $('lnkTitle').textContent = dragging ? 'Бросьте на «+» — будет ярлык, рядом — на полку' : 'Ярлыки';
     $('dropov').classList.toggle('home', tab === 'home');
     setMode(m, idleWidth(m));
   }
 
-  let modeW = 0;
+  let modeW = 0, growT = 0;
   // Python анимирует форму окна, а в ответ говорит, где внутри окна стоит плашка в этом режиме
   async function setMode(m, w = 0) {
     if (m === mode && w === modeW) return;
+    const RANK = { mini: 0, info: 1, music: 2, wide: 3, drop: 4, full: 5 };
+    const grow = (RANK[m] || 0) > (RANK[mode] || 0) || (m === mode && w > modeW);
     mode = m; modeW = w;
+    if (grow) { root.classList.add('grow'); clearTimeout(growT); growT = setTimeout(() => root.classList.remove('grow'), 230); }     // плашка растёт: содержимое проявляется, когда форма до него дорастёт (раньше левый край, например персонаж, торчал обрезанным)
     if (!api) return;
     root.classList.add('anim'); clearTimeout(animT); animT = setTimeout(() => root.classList.remove('anim'), 520);
     const L = await call('set_mode', m, w || null);
@@ -674,6 +729,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   }
 
   function toast(text, ms = 5000) {
+    if (set.character === 'anime') jump(900);
     toastText = text; toastUntil = Date.now() + ms;
     const t = $('toast'); t.textContent = text; t.classList.add('on');
     setTimeout(() => t.classList.remove('on'), ms);
@@ -683,6 +739,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   // ---------- события ----------
   window.karina = {
     layout: applyLayout,
+    toggle() { setFull(!full); },                         // горячая клавиша острова: раскрыть или свернуть панель
     fly(v) { root.classList.toggle('fly', !!v); },
     event(ev) {
       if (!ev) return;
@@ -694,7 +751,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         if (ev.state === 'thinking') st.reply = '';
         render();
         if (ev.state === 'error') setTimeout(render, 6100);
-      } else if (ev.type === 'level') level = Math.max(0, Math.min(1, (ev.v || 0) * 6));
+      } else if (ev.type === 'level') { /* уровень звука больше не показываем: иначе остров «слушает» на каждый шорох */ }
       else if (ev.type === 'log') {
         if (ev.kind === 'you') { st.you = ev.text || ''; render(); }
         else if (ev.kind === 'karina') { st.reply = ev.text || ''; render(); }
@@ -719,7 +776,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   const bars = $$('#bars i'), shape = [.55, .85, 1, .85, .55];
   setInterval(() => {
     const k = key(); let a = 0, t = Date.now();
-    if (k === 'idle') a = .08 + level * .9 + (Math.sin(t / 700) + 1) * .03;
+    if (k === 'idle') a = .08 + (Math.sin(t / 700) + 1) * .03;          // не реагируем на уровень шума: «слушает» показывать не нужно
+    else if (k === 'called') a = .5 + .3 * Math.sin(t / 140);
     else if (k === 'speaking') a = .35 + Math.random() * .6;
     else if (k === 'thinking') a = .25 + .2 * Math.sin(t / 180);
     else if (k === 'loading') a = .2 + .15 * Math.sin(t / 260);
@@ -772,7 +830,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (t === 'clip') loadClip();
     if (t === 'weather') loadWeather();
     if (t === 'system') loadSys();
-    if (t === 'look') paintLook();
+    if (t === 'look') { paintLook(); loadAuto(); loadHk(); }
     if (t === 'tools') loadTools(); else clearInterval(layTimer);
   }
 
@@ -914,22 +972,24 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     dark: '<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M10 3v14" /></svg>',
     vpn: '<svg viewBox="0 0 20 20"><path d="M10 2.500l6 2.200v4.800c0 4-2.700 6.500-6 8-3.300-1.500-6-4-6-8V4.700z"/></svg>',
     bat: '<svg viewBox="0 0 20 20"><rect x="2.500" y="6" width="13" height="8" rx="2"/><path d="M17.500 8.500v3"/></svg>',
+    snd: '<svg viewBox="0 0 20 20"><path d="M3 8v4h3l4 3.500v-11L6 8zM13.500 7a4 4 0 0 1 0 6M15.500 5a7 7 0 0 1 0 10"/></svg>',
   };
   async function loadSys() {
     const s = (await call('sys_get')) || {}, box = $('tiles');
-    const b = s.battery;
+    const b = s.battery, rd = s.radios || {};
     const tiles = [
-      ['wifi', IC.wifi, 'Wi-Fi', s.wifi ? s.wifi : 'Не подключён', !!s.wifi],
-      ['bluetooth', IC.bt, 'Bluetooth', 'Открыть настройки', false],
+      ['wifi', IC.wifi, 'Wi-Fi', rd.wifi === false ? 'Выключен' : (s.wifi ? s.wifi : (rd.wifi ? 'Включён, нет сети' : 'Не подключён')), rd.wifi != null ? rd.wifi : !!s.wifi],
+      ['bluetooth', IC.bt, 'Bluetooth', rd.bluetooth == null ? 'Открыть настройки' : (rd.bluetooth ? 'Включён' : 'Выключен'), !!rd.bluetooth],
       ['dark', IC.dark, 'Тёмная тема', s.dark == null ? '—' : (s.dark ? 'Включена' : 'Выключена'), !!s.dark],
       ['vpn', IC.vpn, 'VPN', s.vpn ? 'Включён' : 'Выключен', !!s.vpn],
       ['bat', IC.bat, 'Батарея', b && b.has ? b.pct + '%' + (b.plugged ? ', от сети' : '') : 'Питание от сети', false],
+      ['sound', IC.snd, 'Звук', s.sound || 'По умолчанию', false],
     ];
     box.textContent = '';
     tiles.forEach(([id, ic, name, sub, on]) => {
       const t = document.createElement('button'); t.className = 'tile' + (on ? ' on' : '');
       t.innerHTML = ic + `<div><b>${name}</b><small>${sub}</small></div>`;
-      if (id !== 'bat') t.onclick = async () => { const r = await call('sys_action', id); if (r && r.ok === false) toast(r.error || 'Не получилось', 4000); setTimeout(loadSys, id === 'vpn' ? 1500 : 400); };
+      if (id !== 'bat') t.onclick = async () => { const r = await call('sys_action', id); if (r && r.ok === false) toast(r.error || 'Не получилось', 4000); setTimeout(loadSys, id === 'vpn' ? 1500 : (id === 'wifi' || id === 'bluetooth') ? 900 : 400); };
       box.append(t);
     });
   }
@@ -1194,6 +1254,56 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     $$('#sIdle button').forEach(b => b.classList.toggle('on', !!set[b.dataset.k]));
     [['sHol', set.holiday], ['sSnow', set.snow ? '1' : '0'], ['sGar', set.garland]].forEach(([id, v]) => $$('#' + id + ' button').forEach(b => b.classList.toggle('on', b.dataset.v === v)));
   }
+  // ---------- запуск с Windows и горячие клавиши ----------
+  const HKN = [['talk', 'Говорить без имени'], ['stop', 'Замолчать'], ['island', 'Раскрыть или свернуть остров'], ['snip', 'Область экрана']];
+  const nice = c => c ? c.split('+').map(x => x.length === 1 ? x.toUpperCase() : x[0].toUpperCase() + x.slice(1)).join(' + ') : '— не задано —';
+  async function loadAuto() {
+    const r = await call('autostart_get'); if (!r) return;
+    $$('#sAuto button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === !!r.on));
+  }
+  $('sAuto').onclick = async e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const r = await call('autostart_set', b.dataset.v === '1');
+    if (r && r.ok === false) toast('Не получилось записать автозапуск', 4000);
+    loadAuto();
+  };
+  function comboOf(e) {
+    const k = e.key; if (['Control', 'Alt', 'Shift', 'Meta'].includes(k)) return '';
+    const m = [e.ctrlKey && 'ctrl', e.altKey && 'alt', e.shiftKey && 'shift', e.metaKey && 'win'].filter(Boolean);
+    let key = '';
+    if (/^F([1-9]|1\d|2[0-4])$/.test(k)) key = k.toLowerCase();
+    else if (e.code && /^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();
+    else if (e.code && /^Digit\d$/.test(e.code)) key = e.code.slice(5);
+    else if (k === ' ') key = 'space';
+    else if (['Tab', 'Enter', 'Insert', 'Delete', 'Home', 'End', 'PageUp', 'PageDown', 'Pause'].includes(k)) key = k.toLowerCase();
+    else if (k.startsWith('Arrow')) key = k.slice(5).toLowerCase();
+    return key ? [...m, key].join('+') : '';
+  }
+  async function loadHk() {
+    const r = await call('hotkeys_get'); if (!r) return;
+    const box = $('hkList'); box.textContent = '';
+    HKN.forEach(([id, label]) => {
+      const row = document.createElement('div'); row.className = 'hk';
+      const sp = document.createElement('span'); sp.textContent = label;
+      const inp = document.createElement('input'); inp.readOnly = true; inp.value = nice(r.keys[id]); inp.spellcheck = false;
+      inp.onkeydown = async e => {
+        e.preventDefault(); e.stopPropagation();
+        if (e.key === 'Escape') { inp.value = nice(r.keys[id]); inp.blur(); return; }
+        let combo = null;
+        if (e.key === 'Backspace' || e.key === 'Delete') combo = '';
+        else { const c = comboOf(e); if (c) combo = c; }
+        if (combo === null) return;
+        const res = await call('hotkey_set', id, combo);
+        const er = $('hkErr');
+        if (res && res.ok) { er.hidden = true; r.keys[id] = combo; inp.value = nice(combo); inp.blur(); setTimeout(loadHk, 600); }
+        else { er.hidden = false; er.textContent = (res && res.error) || 'Не получилось сохранить сочетание'; inp.value = nice(r.keys[id]); }
+      };
+      inp.onfocus = () => { inp.value = 'Нажмите сочетание…'; };
+      inp.onblur = () => { inp.value = nice(r.keys[id]); };
+      row.append(sp, inp); box.append(row);
+    });
+    const er = $('hkErr'); if (r.errors && r.errors.length) { er.hidden = false; er.textContent = 'Не заняты: ' + r.errors.join('; '); } else if (er.textContent.startsWith('Не заняты')) er.hidden = true;
+  }
   $('sHol').onclick = e => { const b = e.target.closest('button'); if (b) save({ holiday: b.dataset.v }); };
   $('sSnow').onclick = e => { const b = e.target.closest('button'); if (b) save({ snow: b.dataset.v === '1' }); };
   $('sGar').onclick = e => { const b = e.target.closest('button'); if (b) save({ garland: b.dataset.v }); };
@@ -1207,16 +1317,24 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     const d = new Date(), m = d.getMonth() + 1, day = d.getDate();
     return (m === 12 && day >= 15) || (m === 1 && day <= 15);
   }
-  const cv = $('snow'), cx = cv.getContext('2d'); let flakes = [], snowRun = false;
+  const cv = $('snow'), cx = cv.getContext('2d'); let flakes = [], snowRun = false; let snowOut = false, snowAsk = 0;
   function applyLook() {
     paintChars();
     const h = holidayOn();
     const gar = $('garland'); gar.hidden = !(h && set.garland !== 'off');
     gar.className = 'garland g-' + set.garland;
     if (!gar.children.length) for (let i = 0; i < 24; i++) { const e = document.createElement('i'); e.style.setProperty('--k', i); gar.append(e); }
-    const snow = h && set.snow; cv.hidden = !snow;
-    if (snow && !snowRun) { snowRun = true; requestAnimationFrame(snowLoop); }
-    if (!snow) snowRun = false;
+    snowWanted(h && set.snow);
+  }
+  // Снег идёт из-под острова в своём окне (Python). Пока ответа нет или у Python не вышло (не Windows, остров у нижнего края), рисуем внутри плашки
+  async function snowWanted(on) {
+    const my = ++snowAsk;
+    const out = on ? !!(await call('snow_outside', true)) : (await call('snow_outside', false), false);
+    if (my !== snowAsk) return;
+    snowOut = out;
+    const inside = on && !out; cv.hidden = !inside;
+    if (inside && !snowRun) { snowRun = true; requestAnimationFrame(snowLoop); }
+    if (!inside) snowRun = false;
   }
   function snowLoop() {
     if (!snowRun) return;

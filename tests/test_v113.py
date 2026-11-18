@@ -98,7 +98,7 @@ class Dialogs(unittest.TestCase):
 
     def test_unclear_answer_asks_again_and_keeps_listening(self):
         self.a.ask_confirm(lambda: "ok"); self.a._arm_dialogs()
-        self.assertIn("«да» или «нет»", self.hear("мммм ну"))
+        self.assertEqual(self.hear("мммм ну"), "")                       # шум без имени — молчим, не переспрашиваем
         self.assertIsNotNone(self.a._pending)                            # всё ещё ждём
         self.a.said.clear()
         self.assertEqual(self.hear("да"), "ok")
@@ -129,8 +129,8 @@ class Dialogs(unittest.TestCase):
         self.a._to_chat("найди в интернете рецепт борща")
         self.assertIn("посмотрю в интернете", self.a.said[-1])
         self.a.chat.send.assert_not_called()
-        self.assertEqual(self.hear("нет"), "Хорошо, подумаю.")
-        self.assertIsNone(self.a.chat.send.call_args.kwargs["search"])
+        self.assertEqual(self.hear("нет"), "Хорошо, не буду.")          # «нет» — полная отмена, в нейросеть ничего не уходит
+        self.a.chat.send.assert_not_called()
         self.a.said.clear()
         self.a._to_chat("найди в интернете рецепт борща"); self.a._arm_dialogs()
         self.hear("давай")

@@ -214,6 +214,7 @@ def run_gui(cfg):
     from karina.island import Island
     island = Island(cfg, api, show_window, trace)
     api.island = island
+    assistant.ext_actions.update({"island": island.toggle_panel, "snip": island.snip_hotkey})      # горячие клавиши острова (Ctrl+Alt+I, Ctrl+Alt+X)
 
     def on_closing():
         """False — отменить закрытие и спрятать окно в трей. Без трея или при «выходе» закрываем по-настоящему."""
