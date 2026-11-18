@@ -17,6 +17,9 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from .models import Cancelled
+from . import components
+
+components.activate()
 
 MODEL_ID = "v5_6_ru"
 URL = f"https://models.silero.ai/models/tts/ru/{MODEL_ID}.pt"
@@ -60,7 +63,7 @@ def torch_available() -> bool:
 
 def torch_hint() -> str:
     if FROZEN:
-        return "В этой сборке Карины нет библиотеки torch (она нужна голосу Silero). Установите свежую версию Карины с сайта релизов — torch теперь идёт в комплекте."
+        return "Библиотека torch (нужна голосу Silero) ещё не скачана: Карина докачивает её при первом запуске вместе с голосом. Проверьте интернет (или включите VPN) и перезапустите Карину."
     return "Для голоса Silero нужен пакет torch: закройте Карину и запустите run.bat ещё раз (он доустановит torch сам) или выполните «pip install torch»."
 
 

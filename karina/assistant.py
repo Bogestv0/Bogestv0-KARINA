@@ -5,6 +5,7 @@ from . import actions, chat as chatmod, llm, net
 from . import integrations, music, personal, profile as prof  # noqa: F401  (регистрируют команды микшера, VPN, музыки, погоды и профиля)
 from . import memory as memorymod
 from . import dialog
+from . import components
 from . import rude as rudemod
 from .mixer_remote import MixerRemote
 from .vpn_link import VpnLink
@@ -111,6 +112,7 @@ class Assistant:
         self._last_talk = 0.0
         self._say_gen = 0                   # растёт при «замолчи»: реплики, стоявшие в очереди на озвучку, пропадают
         self._stop = threading.Event()
+        self._components_done = threading.Event()      # докачка компонентов (torch, голос, модели) закончилась, удачно или нет
         self._threads: list[threading.Thread] = []
         self.plugin_errors = actions.load_plugins()
 
@@ -138,6 +140,9 @@ class Assistant:
     def _voice_setup(self):
         """Естественный голос без возни: если есть torch — один раз переключаем старую настройку на Silero и докачиваем модель в фоне."""
         try:
+            ev = getattr(self, "_components_done", None)
+            if ev is not None:
+                ev.wait(7200)                        # torch и голос приходят с компонентами: ждём, пока докачаются
             time.sleep(3)
             from . import silero_voice
             silero_voice.apply_pending(self.cfg.path.parent)        # обновление голоса, которое не удалось подставить при работе, подставляем при запуске
@@ -240,7 +245,33 @@ class Assistant:
                 "brain": self.brain.mode, "mics": self.mic_status, "mics_text": format_status(self.mic_status),
                 "out_warning": self.tts.out_warning}
 
+    def _install_components(self):
+        """Первый запуск: докачивает torch, голос и модели распознавания одним архивом (в установщик они не входят).
+        Не вышло — не страшно: модель и голос ниже скачаются по отдельности запасным путём."""
+        try:
+            if components.is_installed() or not components.FROZEN:
+                return
+            self._set_state("loading", "Докачиваю компоненты Карины (голос и распознавание речи), один раз…")
+
+            def prog(done, total, stage):
+                if stage == "extract":
+                    self._set_state("loading", "Устанавливаю компоненты Карины…")
+                elif total:
+                    self._set_state("loading", f"Скачиваю компоненты Карины: {done // 1048576} из {total // 1048576} МБ (один раз)")
+                else:
+                    self._set_state("loading", f"Скачиваю компоненты Карины: {done // 1048576} МБ (один раз)")
+            while not self._stop.is_set() and not net.is_online():
+                self._set_state("loading", "Жду интернет, чтобы докачать компоненты Карины (один раз)…")
+                self._stop.wait(5)
+            components.ensure(prog, self._stop, trace)
+        except Exception as e:
+            trace(f"Компоненты: {e}")
+            self.log("error", f"Не удалось докачать компоненты: {e}")
+        finally:
+            self._components_done.set()
+
     def _worker(self):
+        self._install_components()
         # 1) модель
         t0 = time.time()
         try:

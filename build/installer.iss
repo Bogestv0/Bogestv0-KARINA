@@ -51,12 +51,6 @@ Source: "..\vpn_engine\sing-box.exe"; DestDir: "{userappdata}\Bogestv0 KARINA\tu
 Source: "..\vpn_engine\VERSION.txt"; DestDir: "{userappdata}\Bogestv0 KARINA\tunnel"; Check: WantVpnEngine; Flags: ignoreversion
 #endif
 
-#ifexist "..\whisper_models\models--Systran--faster-whisper-small\refs\main"
-; модели распознавания речи кладутся туда, где Карина их ищет (karina/stt.py: DATA/models), поэтому первый запуск ничего не качает.
-; onlyifdoesntexist: при обновлении уже скачанное не перезаписывается
-Source: "..\whisper_models\*"; DestDir: "{userappdata}\Bogestv0 KARINA\models"; Excludes: ".locks\*"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
-#endif
-
 [Icons]
 ; ярлык в меню «Пуск» называется как программа: так её находит и сама Карина, и другие программы Bogestv0.
 ; Ярлык на рабочем столе создаёт последняя страница мастера (по желанию).
