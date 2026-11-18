@@ -64,6 +64,15 @@ jobs:
       - name: "Голос Карины (Silero «Байя») — кладём внутрь установщика"
         run: python build/fetch_voice.py
 
+      - name: Кэш моделей распознавания
+        uses: actions/cache@v4
+        with:
+          path: whisper_models
+          key: whisper-small-tiny-v1
+
+      - name: "Модели распознавания речи (small и tiny) — кладём внутрь установщика"
+        run: python build/fetch_whisper.py
+
       - name: Проверка, что голос на месте
         shell: pwsh
         run: |
