@@ -1,5 +1,11 @@
 """Кладёт движок VPN (sing-box) в vpn_engine/ — установщик по желанию человека ставит его сразу, без скачивания в настройках.
 Версия и контрольная сумма берутся из karina/tunnel.py (те же, что у скачивания внутри программы). Запуск из корня: python build/fetch_vpn_engine.py"""
+import sys as _sys
+for _s in (_sys.stdout, _sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import hashlib
 import sys
 import urllib.request

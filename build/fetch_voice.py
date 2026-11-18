@@ -2,6 +2,12 @@
 Запуск из корня репозитория: python build/fetch_voice.py   (потом pyinstaller build/karina.spec подхватит voices/ сам).
 
 Без этого шага сборка падает: установщик без голоса заставил бы человека скачивать его в настройках."""
+import sys as _sys
+for _s in (_sys.stdout, _sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import shutil
 import sys
 import urllib.request
