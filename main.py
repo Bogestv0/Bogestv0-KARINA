@@ -354,6 +354,20 @@ def selftest() -> int:
             bad.append("t.pdf не PDF")
     except BaseException:
         bad.append("файлы: " + traceback.format_exc().strip().splitlines()[-1])
+    step["now"] = "голос Карины"
+    try:
+        from karina import silero_voice
+        if not silero_voice.has_bundled():
+            bad.append("нет встроенного голоса voices/silero_*.pt")
+        else:
+            wav = DATA / "selftest_voice.wav"
+            silero_voice.synth_wav(DATA, "Проверка голоса.", str(wav))
+            logf.write(f"голос: {wav.stat().st_size} байт\n")
+            if wav.stat().st_size < 20000:
+                bad.append("голос Карины записал слишком короткий звук")
+            wav.unlink(missing_ok=True)
+    except BaseException:
+        bad.append("голос: " + traceback.format_exc().strip().splitlines()[-1])
     step["now"] = "движок моделей"
     try:
         import subprocess

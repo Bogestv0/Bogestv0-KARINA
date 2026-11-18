@@ -22,7 +22,7 @@ input,textarea{user-select:text;-webkit-user-select:text;cursor:text;outline:0}
 #root{--r:18px;position:relative;width:100%;height:100%;overflow:hidden}
 #stage{position:absolute;left:var(--sx,0px);top:var(--sy,0px);width:var(--sw,100%);height:var(--sh,100%);overflow:hidden;border-radius:var(--r);transition:opacity .16s}
 #rim{position:absolute;left:var(--sx,0px);top:var(--sy,0px);width:var(--sw,100%);height:var(--sh,100%);border-radius:var(--r);pointer-events:none;z-index:30;transition:opacity .2s}
-#rim::after{content:"";position:absolute;inset:1px;border-radius:calc(var(--r) - 1px);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 38%,transparent);transition:box-shadow .35s}
+/* цветной кромки по краю острова больше нет: по контуру только чёрная сглаженная подложка (halo.py) */
 #root:not(.ready) #stage,#root:not(.ready) .full,#root:not(.ready) #rim{visibility:hidden}     /* пока Python не прислал раскладку */
 #root.anim #rim{opacity:0}                                                   /* пока регион растёт, кромка по конечному месту была бы не к месту */
 #root.fly #stage,#root.fly .full,#root.fly #rim{opacity:0!important;transition:opacity .12s}          /* плашку тащат или она летит к краю */
@@ -46,7 +46,7 @@ input,textarea{user-select:text;-webkit-user-select:text;cursor:text;outline:0}
 @keyframes dance{0%,100%{transform:rotate(-9deg) translateY(0)}25%{transform:rotate(0) translateY(-2px)}50%{transform:rotate(9deg) translateY(0)}75%{transform:rotate(0) translateY(-2px)}}
 @keyframes note{0%{opacity:0;transform:translateY(4px) scale(.8)}20%{opacity:1}100%{opacity:0;transform:translateY(-16px) rotate(15deg) scale(1.1)}}
 /* реакции: голос (голова пульсирует), ошибка (качает головой), неожиданное (подпрыгивает) */
-.s-idle.anime-on .compact .chr img.an,.s-called.anime-on .compact .chr img.an{transform:scale(calc(1 + var(--lv,0) * .12));transition:transform .09s}
+.s-idle.anime-on .compact .chr img.an,.s-called.anime-on .compact .chr img.an,.s-confirm.anime-on .compact .chr img.an{transform:scale(calc(1 + var(--lv,0) * .12));transition:transform .09s}
 .s-error.anime-on .compact .chr img.an{animation:shake .5s ease-in-out 2}
 .anime-on .chr img.an.jump{animation:jump .45s ease-out}
 .anime-on.s-sleep .compact .chr::after{content:'z';position:absolute;right:-4px;top:-3px;color:var(--muted);font:700 10px/1 'Onest',sans-serif;animation:zzz 2.4s ease-in-out infinite}
@@ -551,7 +551,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
   let api = null;
   const call = async (n, ...a) => { try { return await api[n](...a); } catch (e) { return null; } };
   const STATES = {
-    loading:  ['Запуск', '#9a9cae'], idle: ['Жду имя', '#6ab3f3'], called: ['Позвали', '#7fd6a4'], thinking: ['Думаю…', '#f5cf8a'], speaking: ['Говорю', '#7fd6a4'],
+    loading:  ['Запуск', '#9a9cae'], idle: ['Жду имя', '#6ab3f3'], called: ['Позвали', '#7fd6a4'], thinking: ['Думаю…', '#f5cf8a'], confirm: ['Жду ответ', '#f5cf8a'], speaking: ['Говорю', '#7fd6a4'],
     paused:   ['Пауза', '#9a9cae'], error: ['Ошибка', '#ff8a80'], sleep: ['Сплю', '#9a9cae'],
   };
   const st = { state: 'loading', sleeping: false, listening: true, detail: '', name: 'Карина', you: '', reply: '', err: '' };
@@ -593,7 +593,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (k === 'sleep') return 'closed';
     if (k === 'error') return 'talk';
     if (musicPlaying()) return ['idle', 'closed', 'hair', 'closed'][Math.floor(t / 350) % 4];                              // музыка: качает головой с закрытыми глазами, волосы летают
-    if ((k === 'idle' || k === 'called') && Date.now() < gazeUntil) return gaze;                                          // смотрит за курсором
+    if ((k === 'idle' || k === 'called' || k === 'confirm') && Date.now() < gazeUntil) return gaze;                                          // смотрит за курсором
     if (k === 'speaking') return ['talk', 'idle', 'talk', 'hair'][Math.floor(t / 210) % 4];                              // рот открывается, волосы подхватывает ветер
     if (k === 'thinking' || k === 'loading') return ['up', 'hair', 'right', 'idle', 'left', 'hair', 'up', 'idle'][Math.floor(t / 420) % 8];   // думает: глаза бегают, волосы раздуваются
     const b = t % 5200, w = t % 12000;                                                                                       // слушает: моргает и иногда смотрит по сторонам
@@ -623,7 +623,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (dragging) return 'drop';
     if (Date.now() < toastUntil) return 'wide';
     const k = key();
-    if (k === 'called' || k === 'thinking' || k === 'speaking' || k === 'loading') return 'wide';
+    if (k === 'called' || k === 'thinking' || k === 'speaking' || k === 'loading' || k === 'confirm') return 'wide';
     if (k === 'error' && Date.now() < errUntil) return 'wide';
     if (musicOn()) return 'music';
     if (infoOn() || rec.on) return 'info';
@@ -682,6 +682,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     if (Date.now() < toastUntil) { head = '🔔'; sub = clip(toastText, 52); }
     else if (k === 'called') sub = st.you ? '«' + clip(st.you, 40) + '»' : '';
     else if (k === 'thinking') sub = st.you ? '«' + clip(st.you, 40) + '»' : '';
+    else if (k === 'confirm') sub = 'да, нет или стоп';
     else if (k === 'speaking') sub = clip(st.reply, 48);
     else if (k === 'error') sub = clip(st.err || st.detail, 48);
     else if (k === 'loading') sub = clip(st.detail, 40);
@@ -690,6 +691,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     let main = '', small = '';
     if (k === 'idle') { main = `Скажите «${st.name}, …»`; small = st.you ? 'Вы: ' + clip(st.you, 56) : '«открой блокнот», «громкость пятьдесят»'; }
     else if (k === 'called') { main = 'Да, слушаю!'; small = st.you ? '«' + clip(st.you, 56) + '»' : ''; }
+    else if (k === 'confirm') { main = 'Слушаю ответ…'; small = st.heard ? clip(st.heard, 60) : 'Скажите «да», «нет» или «стоп»'; }
     else if (k === 'thinking') { main = 'Думаю…'; small = st.you ? '«' + clip(st.you, 56) + '»' : ''; }
     else if (k === 'speaking') { main = clip(st.reply, 40) || 'Говорю…'; small = st.you ? 'Вы: ' + clip(st.you, 56) : ''; }
     else if (k === 'paused') { main = 'Микрофон выключен'; small = 'Включите, чтобы продолжить'; }
@@ -763,12 +765,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         if ('listening' in ev) st.listening = !!ev.listening;
         if (ev.state === 'error') errUntil = Date.now() + 6000;
         if (ev.state === 'thinking') st.reply = '';
+        if (ev.state !== 'confirm') st.heard = '';
         render();
         if (ev.state === 'error') setTimeout(render, 6100);
       } else if (ev.type === 'level') { /* уровень звука больше не показываем: иначе остров «слушает» на каждый шорох */ }
       else if (ev.type === 'log') {
         if (ev.kind === 'you') { st.you = ev.text || ''; render(); }
         else if (ev.kind === 'karina') { st.reply = ev.text || ''; render(); }
+        else if (ev.kind === 'info' && st.state === 'confirm') { st.heard = ev.text || ''; render(); }          // услышала, но это не ответ: покажем, что именно
         else if (ev.kind === 'error') { st.err = ev.text || ''; render(); }
       } else if (ev.type === 'media') {
         info.media = ev.status === 'none' ? null : ev;
@@ -792,6 +796,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     const k = key(); let a = 0, t = Date.now();
     if (k === 'idle') a = .08 + (Math.sin(t / 700) + 1) * .03;          // не реагируем на уровень шума: «слушает» показывать не нужно
     else if (k === 'called') a = .5 + .3 * Math.sin(t / 140);
+    else if (k === 'confirm') a = .3 + .2 * Math.sin(t / 260);          // слушает ответ: ровное дыхание, чтобы было видно, что она ждёт
     else if (k === 'speaking') a = .35 + Math.random() * .6;
     else if (k === 'thinking') a = .25 + .2 * Math.sin(t / 180);
     else if (k === 'loading') a = .2 + .15 * Math.sin(t / 260);

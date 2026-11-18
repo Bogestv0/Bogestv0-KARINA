@@ -31,6 +31,7 @@
     loading:  ['Запуск', 'Загружаюсь…', 'Подождите немного.'],
     idle:     ['Жду имя', null, 'Начните с имени, например: «Карина, открой блокнот». Я отзываюсь только на своё имя. Прежде чем искать в интернете или спрашивать нейросеть, я переспрошу.'],
     called:   ['Позвали', 'Да, слушаю вас…', 'Я услышала своё имя. Говорите команду.'],
+    confirm:  ['Жду ответ', 'Слушаю ваш ответ…', 'Скажите «да», «нет» или «стоп». Имя говорить не нужно.'],
     thinking: ['Обработка', 'Думаю…', 'Распознаю вашу фразу.'],
     speaking: ['Отвечаю', 'Говорю…', 'Пока я говорю, микрофон не слушает.'],
     paused:   ['Пауза', 'Микрофон выключен', 'Включите микрофон кнопкой ниже.'],
@@ -45,7 +46,7 @@
     $('#stateTitle').textContent = sleeping && key === 'idle' ? 'Я сплю' : (title || `Скажите «${cfg ? cfg.name : 'Карина'}, …»`);
     $('#stateHint').textContent = sleeping && key === 'idle' ? `Скажите «${cfg ? cfg.name : 'Карина'}, проснись».` : (detail || hint);
     $('#btnListen').textContent = listening === false ? 'Включить микрофон' : 'Выключить микрофон';
-    $('#kvMode').textContent = sleeping ? 'Сон' : listening === false ? 'Пауза' : 'Жду имя';
+    $('#kvMode').textContent = sleeping ? 'Сон' : listening === false ? 'Пауза' : key === 'confirm' ? 'Жду ответ' : 'Жду имя';
   }
 
   function renderStatus(st) {
@@ -56,7 +57,7 @@
     $('#kvNet').textContent = st.online ? 'есть' : 'нет — работаю автономно';
     const names = { tiny: 'минимальная', base: 'базовая', small: 'хорошая', medium: 'высокая' };
     $('#kvStt').textContent = (names[st.model] || st.model) + ' · офлайн';
-    $('#kvVoice').textContent = st.voice === 'silero' ? 'Карина (нейросеть, локально)' : 'системный (пока не скачан голос Карины)';
+    $('#kvVoice').textContent = st.voice === 'silero' ? 'Карина (нейросеть, локально)' : 'системный (файл голоса Карины не найден)';
     $('#kvMics').textContent = st.mics_text || '—'; renderMicStatus(st.mics);
     const w = $('#ttsWarn'); w.hidden = !st.tts_warning; w.textContent = st.tts_warning || '';
     const p = $('#pluginWarn'); p.hidden = !(st.plugin_errors && st.plugin_errors.length); p.textContent = (st.plugin_errors || []).join('\n');
@@ -1026,6 +1027,11 @@
 
   // ---------- голос Silero ----------
   function silView(st) {
+    if (st.bundled) {                      // голос лежит в самой программе: ни скачивать, ни обновлять не нужно
+      $('#silStatus').textContent = `Голос встроен в программу (${fmtMb(st.size)}). Работает без интернета${st.torch ? '.' : '. ' + (st.hint || 'Не хватает пакета torch.')}`;
+      $('#silDl').hidden = $('#silDel').hidden = $('#silUpd').hidden = true; $('#silBar').hidden = true; $('#silBox').classList.add('bundled');
+      return;
+    }
     $('#silStatus').textContent = st.downloading ? 'Скачиваю…' : st.ready ? `Скачан (${fmtMb(st.size)})${st.torch ? '. Всё готово.' : '. ' + (st.hint || 'Не хватает пакета torch.')}` : 'Не скачан: пока Карина говорит обычным голосом.';
     $('#silDl').hidden = st.ready; $('#silDl').disabled = !!st.downloading; $('#silDel').hidden = !st.ready; $('#silUpd').hidden = !st.ready; $('#silUpd').disabled = !!st.downloading;
     if (!st.downloading) $('#silBar').hidden = true;
