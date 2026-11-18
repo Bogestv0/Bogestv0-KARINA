@@ -49,6 +49,25 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python build/fetch_engine.py
 
+      - name: "Движок VPN (sing-box) — для необязательной установки из мастера"
+        run: python build/fetch_vpn_engine.py
+
+      - name: Кэш голоса Карины
+        uses: actions/cache@v4
+        with:
+          path: voices
+          key: silero-voice-v5_6_ru
+
+      - name: "Голос Карины (Silero «Байя») — кладём внутрь установщика"
+        run: python build/fetch_voice.py
+
+      - name: Проверка, что голос на месте
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem voices -Filter "silero_*.pt" -ErrorAction SilentlyContinue
+          if (-not $f) { Write-Error "voices/silero_*.pt нет после fetch_voice.py"; exit 1 }
+          $f | ForEach-Object { Write-Host "$($_.Name) $([math]::Round($_.Length/1MB)) МБ" }
+
       - name: Сборка приложения (PyInstaller)
         run: pyinstaller build/karina.spec --noconfirm --distpath dist --workpath build/work
 
