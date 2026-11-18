@@ -213,12 +213,14 @@ class SileroAuto(unittest.TestCase):
         a = asst.Assistant.__new__(asst.Assistant)
         a.cfg = cfg(tts=tts)
         a._stop = threading.Event()
-        a.emit = lambda e: None
+        a.events = []
+        a.emit = a.events.append
         return a
 
-    def run_setup(self, a, torch=True, ready=False, online=True):
+    def run_setup(self, a, torch=True, ready=False, online=True, torch_error="", preload=True):
         with mock.patch.object(asst.time, "sleep"), mock.patch.object(silero_voice, "torch_available", return_value=torch), \
-             mock.patch.object(silero_voice, "is_ready", return_value=ready), mock.patch.object(silero_voice, "preload") as pre, \
+             mock.patch.object(silero_voice, "torch_check", return_value=(torch, torch_error)), \
+             mock.patch.object(silero_voice, "is_ready", return_value=ready), mock.patch.object(silero_voice, "preload", return_value=preload) as pre, \
              mock.patch.object(silero_voice, "ensure_model") as ens, mock.patch.object(asst.net, "is_online", return_value=online):
             a._voice_setup()
         return pre, ens
@@ -242,6 +244,19 @@ class SileroAuto(unittest.TestCase):
         pre, ens = self.run_setup(a, ready=True)
         pre.assert_called_once()
         ens.assert_not_called()
+
+    def test_broken_torch_is_reported_not_swallowed(self):
+        a = self.make(voice="karina")
+        pre, ens = self.run_setup(a, torch=False, torch_error="OSError: [WinError 126] c10.dll")
+        ens.assert_not_called(); pre.assert_not_called()
+        self.assertTrue(a.events and a.events[-1]["type"] == "silero_dl_done" and not a.events[-1]["ready"])
+
+    def test_model_that_does_not_load_is_reported(self):
+        a = self.make(voice="karina")
+        with mock.patch.object(silero_voice, "last_error", return_value="Модель голоса есть, но не загрузилась: RuntimeError: boom"):
+            pre, ens = self.run_setup(a, ready=True, preload=False)
+        ens.assert_not_called()
+        self.assertIn("не загрузилась", a.events[-1]["error"])
 
     def test_torch_is_expected_in_packaged_build(self):
         with mock.patch.object(silero_voice.sys, "frozen", True, create=True), mock.patch.object(silero_voice.importlib.util, "find_spec", return_value=object()):

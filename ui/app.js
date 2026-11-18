@@ -47,7 +47,33 @@
     $('#stateHint').textContent = sleeping && key === 'idle' ? `Скажите «${cfg ? cfg.name : 'Карина'}, проснись».` : (detail || hint);
     $('#btnListen').textContent = listening === false ? 'Включить микрофон' : 'Выключить микрофон';
     $('#kvMode').textContent = sleeping ? 'Сон' : listening === false ? 'Пауза' : key === 'confirm' ? 'Жду ответ' : 'Жду имя';
+    if (typeof renderPills === 'function') renderPills();
   }
+
+  // ---------- главная: приветствие, плашки, точки состояния, волна ----------
+  function setDot(id, kind) { const d = $('#' + id); if (d && d.previousElementSibling) d.previousElementSibling.dataset.dot = kind; }
+  function greeting() {
+    const h = new Date().getHours();
+    const g = h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер';
+    const n = cfg && cfg.profile && cfg.profile.name ? ', ' + cfg.profile.name : '';
+    return g + n;
+  }
+  function renderPills() {
+    const wake = !cfg || cfg.wake_required !== false;
+    $('#pillMode').textContent = 'Режим: ' + (status.sleeping ? 'сон' : status.listening === false ? 'пауза' : wake ? 'по имени' : 'всегда слушаю');
+    const r = $('#pillReady'); let kind = 'ok', text = 'Всё готово';
+    if (status.state === 'error') { kind = 'bad'; text = 'Есть ошибка'; }
+    else if (status.state === 'loading') { kind = 'warn'; text = 'Загрузка…'; }
+    else if (status.voice_error) { kind = 'bad'; text = 'Голос с ошибкой'; }
+    else if (status.voice && status.voice !== 'silero') { kind = 'warn'; text = 'Голос не готов'; }
+    r.className = 'pill ' + kind; r.textContent = text;
+    if (!$('#tab-home').classList.contains('firstrun')) $('#homeTitle').textContent = greeting();
+  }
+  (() => {
+    const hs = [10,16,26,18,34,44,30,20,38,52,40,24,14,28,46,36,22,12,30,42,54,38,26,18,34,48,32,20,14,24,40,50,36,22,16,28,44,34,20,12,22,32,26,16,10,18,12,8];
+    const w = $('#wave'); if (!w) return;
+    hs.forEach((h, i) => { const b = el('span'); b.style.cssText = `--h:${h}px;--o:${(h / 54).toFixed(2)};--i:${i}`; w.append(b); });
+  })();
 
   function renderStatus(st) {
     status = st;
@@ -57,11 +83,14 @@
     $('#kvNet').textContent = st.online ? 'есть' : 'нет — работаю автономно';
     const names = { tiny: 'минимальная', base: 'базовая', small: 'хорошая', medium: 'высокая' };
     $('#kvStt').textContent = (names[st.model] || st.model) + ' · офлайн';
-    $('#kvVoice').textContent = st.voice === 'silero' ? 'Карина (нейросеть, локально)' : 'системный (голос Карины не загружен)';
+    const silero = st.voice === 'silero';
+    $('#kvVoice').textContent = silero && !st.voice_error ? 'Карина (Байя, локально)' : silero ? 'Карина (есть ошибка)' : 'системный (голос Карины не загружен)';
+    setDot('kvNet', st.online ? 'ok' : 'warn'); setDot('kvVoice', silero && !st.voice_error ? 'ok' : st.voice_error ? 'bad' : 'warn'); setDot('kvStt', 'ok'); setDot('kvMode', 'ok'); setDot('kvVer', 'muted');
     $('#kvMics').textContent = st.mics_text || '—'; renderMicStatus(st.mics);
-    const w = $('#ttsWarn'); w.hidden = !st.tts_warning; w.textContent = st.tts_warning || '';
+    const w = $('#ttsWarn'); const wt = st.tts_warning || st.voice_error || ''; w.hidden = !wt; w.textContent = wt;
     const p = $('#pluginWarn'); p.hidden = !(st.plugin_errors && st.plugin_errors.length); p.textContent = (st.plugin_errors || []).join('\n');
     renderState(st.state, '', st.sleeping, st.listening);
+    renderPills();
   }
 
   // ---------- разговор ----------
@@ -167,6 +196,7 @@
       else if (ev.type === 'cloud_test') { const r = $(`.cloud-row[data-pid="${ev.pid}"]`); if (r) { const o = $('.note', r); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Работает (${ev.sec} с): ${ev.text}` : ev.text; $$('button', r).forEach(b => b.disabled = false); } loadCloud(); loadBrain(); }
       else if (ev.type === 'brain_test') { const o = $('#brainTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Claude отвечает: «${ev.text}» (${ev.sec} с)` : ev.text; $('#brainTest').disabled = false; }
       else if (ev.type === 'google_done') googleDone(ev);
+      else if (ev.type === 'components') compEvent(ev);
       else if (ev.type === 'silero_dl') silProgress(ev);
       else if (ev.type === 'silero_dl_done') silDone(ev);
       else if (ev.type === 'tunnel_dl') tnProgress(ev);
@@ -785,12 +815,12 @@
     const notes = (u.notes || '').replace(/[#*`]/g, '').split('\n').map(x => x.trim()).filter(Boolean).slice(0, 4).join(' · ');
     $('#updNotes').textContent = notes || 'Список изменений — на странице релиза.';
     $('#updInstall').textContent = u.can_install ? 'Скачать и установить' : 'Открыть страницу загрузки';
-    $('#updLabel').textContent = 'Обновить ●';
+    $('#updLabel').textContent = 'Доступно обновление ●';
   }
   async function checkUpdate(manual) {
     const lab = $('#updLabel'); if (manual) lab.textContent = 'Проверяю…';
     const u = await call('check_update', manual);
-    lab.textContent = 'Обновить';
+    lab.textContent = 'Проверить обновления';
     if (!u) return;
     if (u.error) { if (manual) { flash($('#updMsg'), u.error, true); alert(u.error); } return; }
     if (u.available) showUpdate(u);
@@ -891,6 +921,7 @@
     if (!b) return; brain = b;
     const sig = JSON.stringify(b); if (renderBrain.sig === sig) return; renderBrain.sig = sig;     // не перерисовываем без изменений (иначе закрывается открытый список)
     $('#chBrain').textContent = '🧠 Мозг: ' + BRAIN_SHORT[b.mode];
+    setDot('kvBrain', b.mode === 'local' && b.local && !b.local.ok ? 'warn' : 'ok');
     $('#kvBrain').textContent = b.mode === 'claude' ? b.claude.label : b.mode === 'cloud' ? 'Бесплатные облака' : b.mode === 'auto' ? 'Авто (локально + облако + Claude)' : 'Локальная модель';
     const box = $('#brainList'); if (!box) return; box.textContent = '';
     for (const m of ['local', 'cloud', 'claude', 'auto']) {
@@ -1027,25 +1058,91 @@
   $('#gOut').onclick = async () => { const d = await call('google_logout'); if (d) { fillProfile(d); gMsg(''); } };
   function googleDone(ev) { gMsg(ev.error || 'Готово: вы вошли.', !!ev.error); loadProfile(); }
 
+  // ---------- первый запуск: докачка компонентов ----------
+  const fmtEta = sec => !sec ? 'Считаю скорость…' : sec < 60 ? 'Осталось меньше минуты' : sec < 3600 ? `Осталось около ${Math.round(sec / 60)} мин` : `Осталось около ${Math.floor(sec / 3600)} ч ${Math.round(sec % 3600 / 60)} мин`;
+  const frSet = (step, st, label) => { const li = $(`#frSteps [data-step="${step}"]`); if (!li) return; li.dataset.st = st; $('em', li).textContent = label; };
+  function frShow(on) {
+    $('#frCard').hidden = !on; $('#tab-home').classList.toggle('firstrun', on);
+    if (on) { $('#homeEyebrow').textContent = 'Главная'; $('#homeTitle').textContent = 'Первый запуск'; } else { renderPills(); }
+  }
+  function compEvent(ev) {
+    const card = $('#frCard'), mb = b => Math.round(b / 2 ** 20), pct = ev.total ? Math.min(100, ev.done / ev.total * 100) : 0;
+    if (ev.stage === 'done') { frShow(false); loadSil(); return; }
+    frShow(true);
+    card.classList.toggle('err', ev.stage === 'error'); card.classList.toggle('paused', ev.stage === 'paused');
+    const bar = $('#frBar'); bar.classList.toggle('busy', ev.stage === 'offline' || (ev.stage === 'download' && !ev.total));
+    $('i', bar).style.width = pct.toFixed(1) + '%'; $('#frPct').textContent = Math.round(pct) + '%';
+    $('#frErr').hidden = ev.stage !== 'error'; $('#frRetry').hidden = ev.stage !== 'error'; $('#frPause').hidden = ev.stage === 'error';
+    if (ev.stage !== 'paused') $('#frPause').textContent = 'Пауза';
+    const L = $('#frLabel'), T = $('#frTitle'), H = $('#frHint');
+    if (ev.stage === 'download') {
+      L.textContent = 'Настраиваюсь'; T.textContent = 'Скачиваю компоненты'; H.textContent = 'Это нужно один раз. Дальше Карина запускается сразу и работает без загрузок.';
+      $('#frNums').textContent = ev.total ? `${mb(ev.done)} из ${mb(ev.total)} МБ` : `${mb(ev.done)} МБ`;
+      $('#frEta').textContent = ev.speed ? `${fmtEta(ev.eta)} · ${fmtSpeed(ev.speed)}` : 'Считаю скорость…';
+      frSet('download', 'run', 'скачиваю'); frSet('verify', 'wait', 'в очереди'); frSet('extract', 'wait', 'в очереди');
+    } else if (ev.stage === 'verify') {
+      T.textContent = 'Проверяю файлы'; $('#frNums').textContent = 'Контрольная сумма SHA-256'; $('#frEta').textContent = 'Почти готово';
+      frSet('download', 'done', 'готово'); frSet('verify', 'run', 'проверяю'); frSet('extract', 'wait', 'в очереди');
+    } else if (ev.stage === 'extract') {
+      T.textContent = 'Устанавливаю компоненты'; $('#frNums').textContent = 'Распаковка файлов'; $('#frEta').textContent = 'Ещё немного';
+      frSet('download', 'done', 'готово'); frSet('verify', 'done', 'готово'); frSet('extract', 'run', 'устанавливаю');
+    } else if (ev.stage === 'paused') {
+      L.textContent = 'Пауза'; T.textContent = 'Загрузка на паузе'; $('#frEta').textContent = 'Нажмите «Продолжить» — докачаю с того же места'; $('#frPause').textContent = 'Продолжить';
+    } else if (ev.stage === 'retry') {
+      H.textContent = 'Связь прервалась. Пробую ещё раз, уже скачанное не пропадёт.'; $('#frEta').textContent = 'Переподключаюсь…';
+    } else if (ev.stage === 'offline') {
+      L.textContent = 'Жду интернет'; T.textContent = 'Нет подключения'; H.textContent = 'Как только появится интернет, продолжу загрузку. Если GitHub закрыт, включите VPN.'; $('#frNums').textContent = '—'; $('#frEta').textContent = 'Жду сеть…';
+    } else if (ev.stage === 'error') {
+      L.textContent = 'Ошибка'; T.textContent = 'Не удалось скачать компоненты'; H.textContent = 'Без них не работает голос Карины. Уже скачанное сохранено.';
+      $('#frErr').textContent = ev.error || 'Неизвестная ошибка'; frSet('download', 'bad', 'ошибка'); $('#frEta').textContent = 'Нажмите «Повторить»';
+    }
+  }
+  $('#frPause').onclick = async () => { const on = $('#frPause').textContent === 'Пауза'; const r = await call('components_pause', on); $('#frPause').textContent = r && r.paused ? 'Продолжить' : 'Пауза'; if (on) compEvent({ stage: 'paused', done: 0, total: 0 }); };
+  $('#frRetry').onclick = async () => { $('#frRetry').hidden = true; $('#frErr').hidden = true; $('#frCard').classList.remove('err'); $('#frTitle').textContent = 'Подключаюсь…'; await call('components_retry'); };
+  $('#frHide').onclick = () => call('win_minimize');
+
   // ---------- голос Silero ----------
+  const fmtSpeed = v => v >= 1048576 ? (v / 1048576).toFixed(1).replace('.', ',') + ' МБ/с' : Math.max(1, Math.round(v / 1024)) + ' КБ/с';
+  let silT = { t: 0, b: 0, v: 0 };
   function silView(st) {
+    const box = $('#silBox'), err = st.error || '', comp = st.components || {};
+    $('#silStatus').classList.remove('err');
     if (st.bundled) {                      // голос лежит в самой программе: ни скачивать, ни обновлять не нужно
       $('#silStatus').textContent = `Голос встроен в программу (${fmtMb(st.size)}). Работает без интернета${st.torch ? '.' : '. ' + (st.hint || 'Не хватает пакета torch.')}`;
-      $('#silDl').hidden = $('#silDel').hidden = $('#silUpd').hidden = true; $('#silBar').hidden = true; $('#silBox').classList.add('bundled');
+      $('#silDl').hidden = $('#silDel').hidden = $('#silUpd').hidden = $('#silCancel').hidden = true; $('#silBar').hidden = true; box.classList.add('bundled'); box.classList.remove('err');
       return;
     }
-    $('#silStatus').textContent = st.downloading ? 'Скачиваю…' : st.ready ? `Скачан (${fmtMb(st.size)})${st.torch ? '. Всё готово.' : '. ' + (st.hint || 'Не хватает пакета torch.')}` : 'Не скачан: пока Карина говорит обычным голосом.';
-    $('#silDl').hidden = st.ready; $('#silDl').disabled = !!st.downloading; $('#silDel').hidden = !st.ready; $('#silUpd').hidden = !st.ready; $('#silUpd').disabled = !!st.downloading;
+    let text;
+    if (st.downloading) text = 'Скачиваю…';
+    else if (!st.ready && comp.running) text = 'Голос приходит в архиве компонентов вместе с torch и моделями речи. Прогресс — на главной' + (comp.paused ? ' (загрузка на паузе).' : '.');
+    else if (err) text = (st.ready ? 'Голос есть, но не работает: ' : 'Голос не готов: ') + err;
+    else if (st.ready) text = `Скачан (${fmtMb(st.size)})${st.torch ? '. Всё готово.' : '. ' + (st.hint || 'Не хватает пакета torch.')}`;
+    else text = 'Не скачан: пока Карина говорит обычным голосом.';
+    $('#silStatus').textContent = text;
+    box.classList.toggle('err', !!err && !st.downloading);
+    $('#silDl').textContent = err && !st.ready ? 'Повторить' : 'Скачать голос Silero';
+    $('#silDl').hidden = st.ready || !!st.downloading || !!comp.running;
+    $('#silCancel').hidden = !st.downloading;
+    $('#silDel').hidden = !st.ready || !!st.downloading; $('#silUpd').hidden = !st.ready || !!st.downloading;
     if (!st.downloading) $('#silBar').hidden = true;
   }
   async function loadSil() { const st = await call('silero_status'); if (st) silView(st); }
   function silProgress(ev) {
-    const pb = $('#silBar'); pb.hidden = false; $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%';
-    $('#silStatus').textContent = ev.total ? `Скачано ${fmtMb(ev.done)} из ${fmtMb(ev.total)}` : 'Подключаюсь…';
+    const pb = $('#silBar'); pb.hidden = false; $('#silDl').hidden = $('#silUpd').hidden = $('#silDel').hidden = true; $('#silCancel').hidden = false;
+    $('#silBox').classList.remove('err');
+    const now = Date.now();
+    if (ev.stage === 'download') {
+      if (!silT.t || ev.done < silT.b) silT = { t: now, b: ev.done, v: 0 };
+      else if (now - silT.t >= 1000) { const inst = (ev.done - silT.b) / ((now - silT.t) / 1000); silT = { t: now, b: ev.done, v: silT.v ? silT.v * .7 + inst * .3 : inst }; }
+    }
+    $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%';
+    $('#silStatus').textContent = ev.stage === 'reconnect' ? `Связь прервалась, переподключаюсь… (скачано ${fmtMb(ev.done)}${ev.total ? ' из ' + fmtMb(ev.total) : ''})`
+      : ev.total ? `Скачано ${fmtMb(ev.done)} из ${fmtMb(ev.total)}${silT.v ? ' · ' + fmtSpeed(silT.v) : ''}` : 'Подключаюсь…';
   }
-  function silDone(ev) { if (ev.error && ev.error !== 'cancelled') flash($('#setMsg'), ev.error, true); loadSil(); }
+  function silDone(ev) { silT = { t: 0, b: 0, v: 0 }; if (ev.error && ev.error !== 'cancelled') flash($('#setMsg'), ev.error, true); loadSil(); }
   $('#silDl').onclick = async () => { $('#silDl').disabled = true; $('#silStatus').textContent = 'Подключаюсь…'; if (!(await call('silero_download'))) loadSil(); };
   $('#silUpd').onclick = async () => { $('#silUpd').disabled = true; $('#silStatus').textContent = 'Подключаюсь…'; if (!(await call('silero_download', true))) loadSil(); };
+  $('#silCancel').onclick = async () => { $('#silCancel').disabled = true; await call('silero_cancel'); setTimeout(() => { $('#silCancel').disabled = false; loadSil(); }, 600); };
   $('#silDel').onclick = async () => { const st = await call('silero_delete'); if (st) silView(st); };
 
   // ---------- свой VPN и прокси ----------
@@ -1299,7 +1396,7 @@
     const s = await call('get_state'); if (!s) return;
     outDevs = s.outs || outDevs; fillSettings(s.config, s.mics);
     setFrameless(s.frameless, s.maximized);
-    version = s.version || version; $('#kvVer').textContent = version; renderStatus(s.status);
+    version = s.version || version; $('#kvVer').textContent = version; $('#updVer').textContent = version; renderStatus(s.status);
   }
 
   async function init() {

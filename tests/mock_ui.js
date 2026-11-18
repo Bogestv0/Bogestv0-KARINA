@@ -2,7 +2,7 @@
 (() => {
   const cfg = {name:'Карина',name_aliases:['карина','карену'],wake_required:true,followup_seconds:8,ui:{background:true,theme:'auto'},
     stt:{model:'small',mic_device:null,vad_threshold:0.012,assist:'smart',mics:[{enabled:true,device:1,name:'Микрофон (USB Audio)'},{enabled:true,device:2,name:'Микрофон (Realtek)'},{enabled:false,device:null,name:''},{enabled:false,device:null,name:''}]},audio_out:{device:null,name:'',volume:100},tts:{enabled:true,engine:'auto',voice:'svetlana_cute',offline:'auto',rate:0},search_engine:'google',llm:{enabled:false,has_key:false,api_key:''},apps:[],commands:[{phrases:['включи запись'],do:{type:'keys',value:'ctrl+shift+r'},reply:'Запись включена'}]};
-  const st = {online:true,model:'small',voice:'online',tts_warning:'',state:'idle',sleeping:false,listening:true,name:'Карина',plugin_errors:[],mics:[{slot:0,state:'ok',text:'',device:1},{slot:1,state:'error',text:'Не открылся: устройство занято',device:null},{slot:2,state:'off',text:''},{slot:3,state:'off',text:''}],mics_text:'1 из 2 работают',out_warning:''};
+  const st = {online:true,model:'small',voice:'silero',voice_error:'',tts_warning:'',state:'idle',sleeping:false,listening:true,name:'Карина',plugin_errors:[],mics:[{slot:0,state:'ok',text:'',device:1},{slot:1,state:'error',text:'Не открылся: устройство занято',device:null},{slot:2,state:'off',text:''},{slot:3,state:'off',text:''}],mics_text:'1 из 2 работают',out_warning:''};
   const outs=[{id:5,name:'Динамики (Realtek)',api:'MME',label:'Динамики (Realtek)'},{id:6,name:'Наушники (USB Audio)',api:'MME',label:'Наушники (USB Audio)'}];
   const mics=[{id:1,name:'Микрофон (USB Audio)',label:'Микрофон (USB Audio)'},{id:2,name:'Микрофон (Realtek)',label:'Микрофон (Realtek)'},{id:3,name:'Гарнитура (Bluetooth)',label:'Гарнитура (Bluetooth)'}];
   const outState=()=>({device:cfg.audio_out.device,name:cfg.audio_out.name,volume:cfg.audio_out.volume,found:true,warning:''});
@@ -36,6 +36,7 @@
     brain_state: async()=>brainState, brain_set: async(m,cm)=>{ if(m) brainState.mode=m; if(cm) brainState.claude_model=cm; return brainState; }, brain_test_claude: async()=>{ setTimeout(()=>window.karina.event({type:'brain_test',ok:true,text:'работаю',sec:1.2}),300); return true; },
     file_open: async(n)=>n==='скрипт.py'?{ok:false,error:'Файл не найден — возможно, его переместили или удалили.'}:{ok:true}, file_reveal: async()=>({ok:true}), files_open_folder: async()=>({ok:true}),
     file_preview: async()=>({ok:true,result:'data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120"><rect x="10" y="30" width="110" height="50" rx="8" fill="#cfe3f6" stroke="#1f77bd"/><text x="65" y="60" text-anchor="middle" font-family="sans-serif" font-size="14">Клиент</text><path d="M120 55H190" stroke="#1f77bd" stroke-width="2"/><rect x="190" y="30" width="110" height="50" rx="8" fill="#cfe3f6" stroke="#1f77bd"/><text x="245" y="60" text-anchor="middle" font-family="sans-serif" font-size="14">Сервер</text></svg>')}),
+    silero_status: async()=>window.__sil||({ready:true,size:141*2**20,downloading:false,torch:true,hint:'',bundled:false,error:'',components:{running:false,paused:false,installed:true}}), silero_download: async()=>true, silero_cancel: async()=>true, silero_delete: async()=>window.__sil, components_pause: async(on)=>({running:true,paused:!!on,installed:false}), components_retry: async()=>true,
     send_text: async()=>true, voice_offline_status: async()=>({ready:false,size:0,downloading:false}), voice_offline_download: async()=>true, voice_offline_delete: async()=>({ready:false,size:0,downloading:false}), set_listening: async()=>true, test_voice: async()=>true, wake_up: async()=>true, save_settings: async()=>cfg
   }};
   window.__demo = () => {
@@ -47,5 +48,13 @@
     e({type:'log',kind:'karina',text:'Громкость 60.',ts:'10:31:27'});
     e({type:'log',kind:'error',text:'Не удалось озвучить: пример ошибки',ts:'10:31:30'});
     e({type:'level',v:0.5});
+  };
+  window.__firstrun = (stage) => {
+    const e = window.karina.event;
+    if (stage === 'download') e({type:'components',stage:'download',done:241*2**20,total:1210*2**20,speed:3.4*2**20,eta:285});
+    else if (stage === 'verify') e({type:'components',stage:'verify',done:700,total:1000,speed:0,eta:0});
+    else if (stage === 'error') e({type:'components',stage:'error',done:0,total:0,speed:0,eta:0,error:'не удалось скачать компоненты (загрузка оборвалась на 74 из 141 МБ). Проверьте интернет; если GitHub закрыт — включите VPN на время первого запуска.'});
+    else if (stage === 'done') e({type:'components',stage:'done',done:1,total:1});
+    else e({type:'components',stage:stage,done:0,total:0});
   };
 })();

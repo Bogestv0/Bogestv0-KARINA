@@ -10,20 +10,6 @@
 <body>
 <header class="topbar" id="topbar">
   <div class="brand"><img src="logo.png" alt=""><span>Bogestv0 <b>KARINA</b></span></div>
-  <nav class="tabs" id="tabs">
-    <button data-tab="home" class="on">Главная</button>
-    <button data-tab="chat">Чат</button>
-    <button data-tab="commands">Команды</button>
-    <button data-tab="models">Модели</button>
-    <button data-tab="apps">Программы</button>
-    <button data-tab="sound">Звук</button>
-    <button data-tab="profile">Профиль</button>
-    <button data-tab="settings">Настройки</button>
-  </nav>
-  <div class="chips">
-    <button class="chip btn-chip" id="btnUpdate" title="Проверить обновления"><span id="updLabel">Обновить</span></button>
-    <span class="chip" id="chipNet"><i></i><span>…</span></span>
-  </div>
   <div class="winctl" id="winctl" hidden>
     <button type="button" id="wcMin" title="Свернуть" aria-label="Свернуть"><svg viewBox="0 0 10 10"><path d="M1 5.5h8"/></svg></button>
     <button type="button" id="wcMax" title="Развернуть" aria-label="Развернуть">
@@ -33,6 +19,24 @@
     <button type="button" id="wcClose" class="close" title="Закрыть" aria-label="Закрыть"><svg viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button>
   </div>
 </header>
+<div class="shell">
+<aside class="side-nav" id="sideNav">
+  <nav class="tabs" id="tabs" aria-label="Разделы">
+    <button data-tab="home" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Главная</span></button>
+    <button data-tab="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.5A8 8 0 1 1 21 12z"/></svg><span>Чат</span></button>
+    <button data-tab="commands"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Команды</span></button>
+    <button data-tab="models"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/></svg><span>Модели</span></button>
+    <button data-tab="apps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span>Программы</span></button>
+    <button data-tab="sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10zM17 9a4 4 0 0 1 0 6"/></svg><span>Звук</span></button>
+    <button data-tab="profile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"/></svg><span>Профиль</span></button>
+    <button data-tab="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.6a7 7 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 2 1.2L10 21h4l.6-2.6a7 7 0 0 0 2-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg><span>Настройки</span></button>
+  </nav>
+  <div class="side-foot">
+    <span class="chip" id="chipNet"><i></i><span>…</span></span>
+    <button class="btn-upd" id="btnUpdate" title="Проверить обновления"><span id="updLabel">Проверить обновления</span><code id="updVer"></code></button>
+  </div>
+</aside>
+<div class="content">
 <div class="rz" id="rz" hidden>
   <i data-e="n"></i><i data-e="s"></i><i data-e="w"></i><i data-e="e"></i>
   <i data-e="nw"></i><i data-e="ne"></i><i data-e="sw"></i><i data-e="se"></i>
@@ -54,14 +58,49 @@
 <main>
 <!-- ============ ГЛАВНАЯ ============ -->
 <section id="tab-home" class="tab on">
-  <div class="grid-home">
+  <header class="page-head home-head">
+    <div><div class="eyebrow" id="homeEyebrow">Главная</div><h1 id="homeTitle">Добрый день</h1></div>
+    <div class="head-chips"><span class="pill" id="pillMode">Режим: по имени</span><span class="pill ok" id="pillReady">Всё готово</span></div>
+  </header>
+
+  <!-- Первый запуск: докачка архива компонентов (torch, голос, модели речи) -->
+  <div class="card fr" id="frCard" hidden>
+    <div class="fr-top">
+      <div class="orb-wrap"><div class="orb"><img src="logo.png" alt=""></div></div>
+      <div class="hero-text">
+        <div class="eyebrow" id="frLabel">Настраиваюсь</div>
+        <h2 id="frTitle">Скачиваю компоненты</h2>
+        <p class="muted" id="frHint">Это нужно один раз. Дальше Карина запускается сразу и работает без загрузок.</p>
+      </div>
+    </div>
+    <div class="fr-prog">
+      <div class="fr-nums"><span id="frNums" class="mono">—</span><b id="frPct">0%</b></div>
+      <div class="pbar big" id="frBar"><i></i></div>
+      <div class="fr-meta"><span id="frEta">Подключаюсь…</span><span id="frSrc">github.com · продолжится после обрыва</span></div>
+    </div>
+    <ol class="fr-steps" id="frSteps">
+      <li data-step="download" data-st="run"><i>1</i><span>Архив: torch, голос Байя (Silero), модели речи</span><em>скачиваю</em></li>
+      <li data-step="verify" data-st="wait"><i>2</i><span>Проверка файлов (SHA-256)</span><em>в очереди</em></li>
+      <li data-step="extract" data-st="wait"><i>3</i><span>Установка и проверка голоса</span><em>в очереди</em></li>
+      <li data-step="app" data-st="done"><i>✓</i><span>Приложение и интерфейс</span><em>готово</em></li>
+    </ol>
+    <div class="note bad" id="frErr" hidden></div>
+    <div class="fr-actions">
+      <button class="btn" id="frPause" type="button">Пауза</button>
+      <button class="btn primary" id="frRetry" type="button" hidden>Повторить</button>
+      <button class="btn ghost" id="frHide" type="button">Скрыть окно</button>
+    </div>
+  </div>
+
+  <div class="grid-home" id="gridHome">
     <div class="card hero" id="hero" data-state="loading">
       <div class="orb-wrap"><div class="orb" id="orb"><img src="logo.png" alt=""></div></div>
       <div class="hero-text">
         <div class="eyebrow" id="stateLabel">Запуск</div>
-        <h1 id="stateTitle">Загружаюсь…</h1>
+        <h2 id="stateTitle">Загружаюсь…</h2>
         <p class="muted" id="stateHint">Подождите немного.</p>
       </div>
+      <div class="wave" id="wave" role="img" aria-label="Уровень звука с микрофона"></div>
       <div class="hero-actions">
         <button class="btn primary" id="btnListen">Выключить микрофон</button>
         <button class="btn" id="btnVoice">Проверить голос</button>
@@ -159,6 +198,7 @@
 
 <!-- ============ КОМАНДЫ ============ -->
 <section id="tab-commands" class="tab">
+  <header class="page-head"><div class="eyebrow">Команды</div><h1>Что умеет Карина</h1><p class="muted">Начинайте с имени: «<span class="nm">Карина</span>, …». После ответа можно говорить без имени в течение нескольких секунд.</p></header>
   <div class="card">
     <div class="eyebrow">Встроенные команды</div>
     <p class="muted small">Начинайте с имени: «<span class="nm">Карина</span>, …». После ответа можно говорить без имени в течение нескольких секунд.</p>
@@ -189,6 +229,7 @@
 
 <!-- ============ МОДЕЛИ ============ -->
 <section id="tab-models" class="tab">
+  <header class="page-head"><div class="eyebrow">Модели</div><h1>Мозг и картинки</h1><p class="muted">Кто отвечает в чате и на свободные вопросы голосом. Команды управления компьютером («открой блокнот», «громкость…») всегда выполняются на этом компьютере.</p></header>
   <div class="card" id="brainCard">
     <div class="eyebrow">Мозг Карины</div>
     <p class="muted small">Кто отвечает в чате и на свободные вопросы голосом. Команды управления компьютером («открой блокнот», «громкость…») всегда выполняются на этом компьютере.</p>
@@ -316,6 +357,7 @@
 
 <!-- ============ ПРОГРАММЫ ============ -->
 <section id="tab-apps" class="tab">
+  <header class="page-head"><div class="eyebrow">Программы</div><h1>Чем управляет Карина</h1><p class="muted">«Карина, открой миксер» · «закрой ремоут» · «переключись на анблок». Ассистент также находит всё из меню «Пуск» по названию.</p></header>
   <div class="card">
     <div class="eyebrow">Программы, которыми можно управлять</div>
     <p class="muted small">«Карина, открой миксер» · «закрой ремоут» · «переключись на анблок». Ассистент также находит всё из меню «Пуск» по названию.</p>
@@ -337,6 +379,7 @@
 
 <!-- ============ ЗВУК ============ -->
 <section id="tab-sound" class="tab">
+  <header class="page-head"><div class="eyebrow">Звук</div><h1>Куда Карина выводит звук</h1><p class="muted">Колонки, наушники или виртуальный кабель. Изменения применяются сразу, сохранять не нужно.</p></header>
   <div class="settings">
     <div class="card">
       <div class="eyebrow">Куда Карина выводит звук</div>
@@ -359,6 +402,7 @@
 
 <!-- ============ ПРОФИЛЬ ============ -->
 <section id="tab-profile" class="tab">
+  <header class="page-head"><div class="eyebrow">Профиль</div><h1>О вас</h1><p class="muted">Карина поздравит с днём рождения (вас и питомца), назовёт по имени, скажет погоду в вашем городе и будет знать клички.</p></header>
   <div class="card">
     <div class="eyebrow">Вход через Google</div>
     <div id="gSigned" hidden>
@@ -406,6 +450,7 @@
 
 <!-- ============ НАСТРОЙКИ ============ -->
 <section id="tab-settings" class="tab">
+  <header class="page-head"><div class="eyebrow">Настройки</div><h1>Всё в одном месте</h1></header>
   <form id="setForm" class="settings">
     <div class="card">
       <div class="eyebrow">Обращение</div>
@@ -447,7 +492,7 @@
         <p class="muted small" style="margin:0">Голос Карины — живой нейросетевой голос (Silero «Байя»). Он единственный.</p>
         <div class="note" id="silBox">
           <span id="silStatus" class="muted small"></span>
-          <div class="row" style="margin-top:8px"><button type="button" class="btn" id="silDl">Скачать голос Silero</button><button type="button" class="btn" id="silUpd" hidden>Обновить голос</button><button type="button" class="btn danger" id="silDel" hidden>Удалить</button></div>
+          <div class="row" style="margin-top:8px"><button type="button" class="btn" id="silDl">Скачать голос Silero</button><button type="button" class="btn" id="silUpd" hidden>Обновить голос</button><button type="button" class="btn danger" id="silDel" hidden>Удалить</button><button type="button" class="btn" id="silCancel" hidden>Отмена</button></div>
           <div class="pbar" id="silBar" hidden><i></i></div>
           <p class="muted small" style="margin:8px 0 0">Работает на вашем компьютере, без интернета, не роботизированный. Голос и пакет <b>torch</b> идут в комплекте с Кариной. Лицензия модели — для личного некоммерческого использования.</p>
         </div>
@@ -579,6 +624,8 @@
   </form>
 </section>
 </main>
+</div>
+</div>
 <script src="app.js"></script>
 </body>
 </html>
