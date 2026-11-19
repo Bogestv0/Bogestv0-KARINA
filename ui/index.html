@@ -28,6 +28,7 @@
     <button data-tab="models"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/></svg><span>Модели</span></button>
     <button data-tab="apps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span>Программы</span></button>
     <button data-tab="sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10zM17 9a4 4 0 0 1 0 6"/></svg><span>Звук</span></button>
+    <button data-tab="widget"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Виджет</span></button>
     <button data-tab="profile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"/></svg><span>Профиль</span></button>
     <button data-tab="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.6a7 7 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 2 1.2L10 21h4l.6-2.6a7 7 0 0 0 2-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg><span>Настройки</span></button>
   </nav>
@@ -79,7 +80,7 @@
       <div class="fr-meta"><span id="frEta">Подключаюсь…</span><span id="frSrc">github.com · продолжится после обрыва</span></div>
     </div>
     <ol class="fr-steps" id="frSteps">
-      <li data-step="download" data-st="run"><i>1</i><span>Архив: torch, голос Байя (Silero), модели речи</span><em>скачиваю</em></li>
+      <li data-step="download" data-st="run"><i>1</i><span>Архив: torch, голос Карины, модели речи</span><em>скачиваю</em></li>
       <li data-step="verify" data-st="wait"><i>2</i><span>Проверка файлов (SHA-256)</span><em>в очереди</em></li>
       <li data-step="extract" data-st="wait"><i>3</i><span>Установка и проверка голоса</span><em>в очереди</em></li>
       <li data-step="app" data-st="done"><i>✓</i><span>Приложение и интерфейс</span><em>готово</em></li>
@@ -401,6 +402,70 @@
 </section>
 
 <!-- ============ ПРОФИЛЬ ============ -->
+<section id="tab-widget" class="tab">
+  <header class="page-head"><div class="eyebrow">Виджет</div><h1>Динамический остров</h1><p class="muted">Плашка на экране, которая показывает, что Карина слушает, думает и говорит. Все настройки острова теперь здесь: где он стоит, что показывает и как выглядит.</p></header>
+  <div class="wg">
+    <div class="card wg-place">
+      <div class="eyebrow">Положение</div>
+      <div class="wg-screen" id="scr">
+        <div class="wg-desk"><i></i><i></i><i></i></div>
+        <div class="wg-pill" id="pill"><span class="wg-dot"></span><b id="pillT">12:48</b><em>Слушаю</em></div>
+        <div class="wg-guide" id="guide"></div>
+      </div>
+      <div class="wg-ctl">
+        <div class="wg-row"><span>Край экрана</span><div class="seg" id="sDock"><button data-v="top" class="on">Сверху</button><button data-v="bottom">Снизу</button><button data-v="left">Слева</button><button data-v="right">Справа</button></div></div>
+        <div class="wg-row"><span>Вдоль края</span><div class="wg-slide"><input type="range" id="sPos" min="0" max="100" value="50"><output id="oPos">по центру</output></div></div>
+        <div class="wg-row" id="rowMon" hidden><span>Монитор</span><div class="seg" id="sMon"></div></div>
+        <label class="switch"><input type="checkbox" id="wgPin"><span class="sw"></span><span>Закрепить: плашку нельзя сдвинуть мышью, пока не открепите</span></label>
+        <div class="wg-actions"><button class="btn" type="button" id="bReset">Вернуть наверх по центру</button><span class="muted small">Или перетащите плашку мышью к любому краю. Выбранное здесь место запоминается и после перезапуска.</span></div>
+      </div>
+    </div>
+
+    <div class="wg-col">
+      <div class="card">
+        <div class="eyebrow">Остров</div>
+        <div class="form">
+          <label class="switch"><input type="checkbox" id="wgEnable"><span class="sw"></span><span>Показывать остров на экране</span></label>
+          <label class="switch"><input type="checkbox" id="wgAuto"><span class="sw"></span><span>Запускать Карину и остров вместе с Windows</span></label>
+        </div>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Свёрнутая плашка</div>
+        <p class="muted small" style="margin:0 0 12px">Что показывать, пока Карина молчит</p>
+        <div class="seg multi" id="sIdle"><button data-k="idle_time">Время</button><button data-k="idle_battery">Заряд</button><button data-k="idle_temp">Температура</button><button data-k="idle_music">Музыка</button></div>
+        <div class="wg-idle" id="idle"><span class="wg-dot idle"></span><b>12:48</b><span>87%</span><span>54°</span><span class="mus">♪ Трек</span></div>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Персонаж</div>
+        <div class="wg-chars" id="chars">
+          <button data-c="anime"><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="12" fill="#2a3a52"/><circle cx="12" cy="15" r="2" fill="#6ab3f3"/><circle cx="20" cy="15" r="2" fill="#6ab3f3"/><path d="M12 21q4 3 8 0" stroke="#6ab3f3" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg><span>Аниме</span></button>
+          <button data-c="eyes"><svg viewBox="0 0 32 32"><rect x="8" y="7" width="6" height="16" rx="3" fill="#f3f3f6"/><rect x="18" y="7" width="6" height="16" rx="3" fill="#f3f3f6"/></svg><span>Глаза</span></button>
+          <button data-c="pixel"><svg viewBox="0 0 32 32" shape-rendering="crispEdges"><path fill="#ff6a1a" d="M10 4h12v2h4v2h2v18h-4v-4h-4v4h-4v-4h-4v4H8v-4H4v4H2V8h2V6h4V4z"/><rect x="9" y="11" width="5" height="6" fill="#15151a"/><rect x="18" y="11" width="5" height="6" fill="#15151a"/></svg><span>Пиксель</span></button>
+          <button data-c="logo"><svg viewBox="0 0 32 32"><rect x="3" y="3" width="26" height="26" rx="8" fill="#1d3247"/><path d="M9 18v-4M13 21V11M17 24V8M21 21V11M25 18v-4" stroke="#6ab3f3" stroke-width="2.2" stroke-linecap="round" transform="translate(-3 0)"/></svg><span>Логотип</span></button>
+        </div>
+        <div class="wg-sets">
+          <div class="wg-row"><span>Новый год на острове</span><div class="seg" id="sHol"><button data-v="dates">По датам</button><button data-v="always">Всегда</button><button data-v="off">Нет</button></div></div>
+          <div class="wg-row"><span>Снег</span><div class="seg" id="sSnow"><button data-v="1">Да</button><button data-v="0">Нет</button></div></div>
+          <div class="wg-row"><span>Гирлянда</span><div class="seg" id="sGar"><button data-v="off">Выкл</button><button data-v="blink">Мигает</button><button data-v="wave">Волна</button></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card wg-wide">
+      <div class="eyebrow">Погода и горячие клавиши</div>
+      <div class="wg-two">
+        <label class="field"><span>Город для погоды на острове</span><input id="wgCity" placeholder="по умолчанию город из профиля" maxlength="60"><small class="muted">Пусто — берётся город из «Профиля».</small></label>
+        <div class="wg-keys" id="wgKeys">
+          <div data-hk="talk"><span>Говорить с Кариной</span><button type="button" class="kbtn"></button></div>
+          <div data-hk="stop"><span>Остановить речь</span><button type="button" class="kbtn"></button></div>
+          <div data-hk="island"><span>Открыть остров</span><button type="button" class="kbtn"></button></div>
+          <div data-hk="snip"><span>Снимок области</span><button type="button" class="kbtn"></button></div>
+          <p class="muted small" id="hkMsg" style="margin:8px 0 0">Нажмите на сочетание и введите новое. Backspace очищает, Esc отменяет.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 <section id="tab-profile" class="tab">
   <header class="page-head"><div class="eyebrow">Профиль</div><h1>О вас</h1><p class="muted">Карина поздравит с днём рождения (вас и питомца), назовёт по имени, скажет погоду в вашем городе и будет знать клички.</p></header>
   <div class="card">
@@ -489,10 +554,10 @@
       <div class="eyebrow">Голос</div>
       <div class="form">
         <label class="switch"><input type="checkbox" name="tts_enabled"><span class="sw"></span><span>Отвечать голосом</span></label>
-        <p class="muted small" style="margin:0">Голос Карины — живой нейросетевой голос (Silero «Байя»). Он единственный.</p>
+        <p class="muted small" style="margin:0">Голос Карины — живой нейросетевой голос (Карина).</p>
         <div class="note" id="silBox">
           <span id="silStatus" class="muted small"></span>
-          <div class="row" style="margin-top:8px"><button type="button" class="btn" id="silDl">Скачать голос Silero</button><button type="button" class="btn" id="silUpd" hidden>Обновить голос</button><button type="button" class="btn danger" id="silDel" hidden>Удалить</button><button type="button" class="btn" id="silCancel" hidden>Отмена</button></div>
+          <div class="row" style="margin-top:8px"><button type="button" class="btn" id="silDl">Скачать голос</button><button type="button" class="btn" id="silUpd" hidden>Обновить голос</button><button type="button" class="btn danger" id="silDel" hidden>Удалить</button><button type="button" class="btn" id="silCancel" hidden>Отмена</button></div>
           <div class="pbar" id="silBar" hidden><i></i></div>
           <p class="muted small" style="margin:8px 0 0">Работает на вашем компьютере, без интернета, не роботизированный. Голос и пакет <b>torch</b> идут в комплекте с Кариной. Лицензия модели — для личного некоммерческого использования.</p>
         </div>
@@ -589,6 +654,7 @@
         <label>Приложения (имена exe через запятую, например chrome.exe, Discord.exe)
           <input type="text" id="tnApps" placeholder="chrome.exe, Discord.exe" spellcheck="false" autocomplete="off"></label>
         <label class="switch"><input type="checkbox" id="tnConfirm"><span class="sw"></span><span>Переспрашивать «да или нет» перед включением голосом</span></label>
+        <label class="switch"><input type="checkbox" id="tnCloud"><span class="sw"></span><span>Облачные модели (Gemini, Claude, свой сервер) сами идут через VPN-сервер. VPN на компьютере при этом не включается и права администратора не нужны</span></label>
         <label class="switch"><input type="checkbox" id="tnDirectRu"><span class="sw"></span><span>Сайты .ru, .su и .рф открывать напрямую, мимо сервера</span></label>
         <div class="row"><button type="button" class="btn" id="tnStart">Включить</button><button type="button" class="btn" id="tnStop">Выключить</button></div>
         <div class="note" id="tnStatus"></div>
@@ -607,13 +673,19 @@
       <div class="eyebrow">Окно и оформление</div>
       <div class="form">
         <label class="switch"><input type="checkbox" name="background"><span class="sw"></span><span>Работать в фоне: закрытие окна сворачивает Карину в трей (выход — через значок в трее)</span></label>
-        <label class="switch"><input type="checkbox" name="island"><span class="sw"></span><span>Динамический остров: плашка у верхнего края экрана показывает, что Карина слушает, думает и говорит (нажмите на неё, чтобы раскрыть)</span></label>
         <div id="admRow" hidden>
           <label class="switch"><input type="checkbox" id="admSwitch"><span class="sw"></span><span>Запускать от имени администратора (пока не выключите)</span></label>
           <div class="note" id="admNote"></div>
           <div class="form-actions" style="margin-top:8px"><button type="button" class="btn" id="admRestart" hidden>Перезапустить Карину сейчас</button><span class="msg" id="admMsg"></span></div>
         </div>
         <label>Тема<select name="theme"><option value="auto">Как в Windows</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Удаление</div>
+      <div class="form">
+        <p class="muted small">Можно убрать только скачанное (модели, голос, движки) или стереть Карину целиком вместе с настройками, диалогами и самой программой. Что именно удалять, выбираете вы.</p>
+        <div class="form-actions"><button type="button" class="btn danger" id="btnUninstall">Удалить…</button></div>
       </div>
     </div>
     <div class="savebar">

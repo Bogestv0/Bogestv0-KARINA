@@ -8,6 +8,27 @@
   const call = async (name, ...args) => { try { return await api[name](...args); } catch (e) { console.error(name, e); return null; } };
   const flash = (node, text, err) => { node.textContent = text; node.classList.toggle('err', !!err); clearTimeout(node._t); node._t = setTimeout(() => node.textContent = '', 4000); };
 
+
+  // ---------- свои окна подтверждения (вместо системных confirm/alert) ----------
+  function ask(text, o = {}) {
+    return new Promise(res => {
+      const back = el('div', 'dlg-back'), box = el('div', 'dlg'); box.setAttribute('role', 'alertdialog'); box.setAttribute('aria-modal', 'true');
+      if (o.title) box.append(el('h3', null, o.title));
+      const p = el('p'); p.textContent = text; box.append(p);
+      const row = el('div', 'dlg-btns');
+      const done = v => { document.removeEventListener('keydown', key, true); back.classList.remove('on'); setTimeout(() => back.remove(), 160); res(v); };
+      const no = el('button', 'btn', o.cancel || 'Отмена'); no.onclick = () => done(false);
+      const ok = el('button', 'btn ' + (o.danger ? 'danger' : 'primary'), o.ok || 'ОК'); ok.onclick = () => done(true);
+      if (o.info) row.append(ok); else row.append(no, ok);
+      box.append(row); back.append(box); document.body.append(back);
+      const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); done(true); } };
+      document.addEventListener('keydown', key, true);
+      back.addEventListener('mousedown', e => { if (e.target === back) done(false); });
+      requestAnimationFrame(() => { back.classList.add('on'); ok.focus(); });
+    });
+  }
+  const note = (text, title) => ask(text, { info: true, title });
+
   // ---------- вкладки ----------
   $('#tabs').addEventListener('click', e => {
     const b = e.target.closest('button[data-tab]'); if (!b) return;
@@ -18,6 +39,7 @@
     if (b.dataset.tab === 'models') { loadModels(); loadBrain(); loadCloud(); loadImg(); }
     if (b.dataset.tab === 'chat') openChatTab();
     if (b.dataset.tab === 'sound') loadOut(false);
+    if (b.dataset.tab === 'widget') loadWidget();
     try { localStorage.setItem('karina.tab', b.dataset.tab); } catch (_) {}
   });
 
@@ -84,7 +106,7 @@
     const names = { tiny: 'минимальная', base: 'базовая', small: 'хорошая', medium: 'высокая' };
     $('#kvStt').textContent = (names[st.model] || st.model) + ' · офлайн';
     const silero = st.voice === 'silero';
-    $('#kvVoice').textContent = silero && !st.voice_error ? 'Карина (Байя, локально)' : silero ? 'Карина (есть ошибка)' : 'системный (голос Карины не загружен)';
+    $('#kvVoice').textContent = silero && !st.voice_error ? 'Карина' : silero ? 'Карина (есть ошибка)' : 'системный (голос Карины не загружен)';
     setDot('kvNet', st.online ? 'ok' : 'warn'); setDot('kvVoice', silero && !st.voice_error ? 'ok' : st.voice_error ? 'bad' : 'warn'); setDot('kvStt', 'ok'); setDot('kvMode', 'ok'); setDot('kvVer', 'muted');
     $('#kvMics').textContent = st.mics_text || '—'; renderMicStatus(st.mics);
     const w = $('#ttsWarn'); const wt = st.tts_warning || st.voice_error || ''; w.hidden = !wt; w.textContent = wt;
@@ -572,7 +594,7 @@
     const box = $('#chList'); box.textContent = '';
     for (const c of r.chats) {
       const it = el('div', 'citem' + (c.id === chCur ? ' on' : '')); it.append(el('span', 't', c.title || 'Новый чат'));
-      const x = el('button', 'x', '×'); x.title = 'Удалить'; x.onclick = async e => { e.stopPropagation(); if (confirm('Удалить этот чат?')) { await call('chat_delete', c.id); if (chCur === c.id) { chCur = null; showWelcome(); } loadChatList(); } };
+      const x = el('button', 'x', '×'); x.title = 'Удалить'; x.onclick = async e => { e.stopPropagation(); if (await ask('Удалить этот чат?', { ok: 'Удалить', danger: true })) { await call('chat_delete', c.id); if (chCur === c.id) { chCur = null; showWelcome(); } loadChatList(); } };
       it.append(x); it.onclick = () => openChat(c.id); box.append(it);
     }
     return r;
@@ -725,7 +747,7 @@
   function showRun(on) { const b = $('#chRun'); b.classList.toggle('on', !!on); b.setAttribute('aria-checked', on ? 'true' : 'false'); b.dataset.on = on ? '1' : ''; }
   $('#chRun').onclick = async () => {
     const turnOn = !$('#chRun').dataset.on;
-    if (turnOn && !confirm('Разрешить Карине запускать написанный ею код для проверки?\n\nЭто не песочница: программа выполняется с вашими правами. Разрешены только python, pytest и node, без сети, подпроцессов и удаления файлов (Карина проверяет код перед запуском). Нужен установленный Python или Node.js.')) return;
+    if (turnOn && !await ask('Разрешить Карине запускать написанный ею код для проверки?\n\nЭто не песочница: программа выполняется с вашими правами. Разрешены только python, pytest и node, без сети, подпроцессов и удаления файлов (Карина проверяет код перед запуском). Нужен установленный Python или Node.js.')) return;
     const s = await call('coder_set', turnOn); if (s) showRun(s.run);
   };
   async function loadCoderState() { const s = await call('coder_state'); if (s) showRun(s.settings.run); }
@@ -784,7 +806,7 @@
       if (dl) { const b = el('button', 'btn', 'Отмена'); b.onclick = () => call('localimg_cancel'); it.append(b); }
       else if (m.installed) {
         if (!m.selected) { const b = el('button', 'btn primary', 'Выбрать'); b.onclick = async () => renderImg(await call('localimg_select', m.id)); it.append(b); }
-        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (confirm('Удалить модель с диска?')) { await call('localimg_delete', m.id); loadImg(); } }; it.append(d);
+        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (await ask('Удалить модель с диска?', { ok: 'Удалить', danger: true })) { await call('localimg_delete', m.id); loadImg(); } }; it.append(d);
       } else {
         const b = el('button', 'btn primary', 'Скачать'); b.onclick = async () => { b.disabled = true; await call('localimg_download', m.id); loadImg(); }; it.append(b);
       }
@@ -822,9 +844,9 @@
     const u = await call('check_update', manual);
     lab.textContent = 'Проверить обновления';
     if (!u) return;
-    if (u.error) { if (manual) { flash($('#updMsg'), u.error, true); alert(u.error); } return; }
+    if (u.error) { if (manual) { flash($('#updMsg'), u.error, true); note(u.error); } return; }
     if (u.available) showUpdate(u);
-    else if (manual) { showUpdate(null); flash($('#updMsg'), `Установлена последняя версия (${u.current})`); alert(`У вас последняя версия: ${u.current}`); }
+    else if (manual) { showUpdate(null); flash($('#updMsg'), `Установлена последняя версия (${u.current})`); note(`У вас последняя версия: ${u.current}`); }
   }
   $('#btnUpdate').onclick = () => checkUpdate(true);
   $('#btnUpdate2').onclick = () => checkUpdate(true);
@@ -986,7 +1008,7 @@
       if (m.dl) { const b = el('button', 'btn', 'Отмена'); b.onclick = () => call('model_cancel', m.id); it.append(b); }
       else if (m.installed) {
         if (!m.active) { const b = el('button', 'btn primary', 'Выбрать'); b.onclick = async () => { await call('model_select', m.id); loadModels(); }; it.append(b); }
-        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (confirm('Удалить модель с диска?')) { await call('model_delete', m.id); loadModels(); } }; it.append(d);
+        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (await ask('Удалить модель с диска?', { ok: 'Удалить', danger: true })) { await call('model_delete', m.id); loadModels(); } }; it.append(d);
       } else {
         const b = el('button', 'btn primary', 'Скачать'); b.onclick = async () => { b.disabled = true; await call('model_download', m.id); loadModels(); }; it.append(b);
       }
@@ -1120,7 +1142,7 @@
     else text = 'Не скачан: пока Карина говорит обычным голосом.';
     $('#silStatus').textContent = text;
     box.classList.toggle('err', !!err && !st.downloading);
-    $('#silDl').textContent = err && !st.ready ? 'Повторить' : 'Скачать голос Silero';
+    $('#silDl').textContent = err && !st.ready ? 'Повторить' : 'Скачать голос';
     $('#silDl').hidden = st.ready || !!st.downloading || !!comp.running;
     $('#silCancel').hidden = !st.downloading;
     $('#silDel').hidden = !st.ready || !!st.downloading; $('#silUpd').hidden = !st.ready || !!st.downloading;
@@ -1161,12 +1183,12 @@
     sel.value = st.active; sel.disabled = !st.servers.length;
     $('#tnMode').value = st.mode; $('#tnScope').value = st.scope; $('#tnApps').value = (st.apps || []).join(', ');
     $('#tnApps').disabled = st.scope !== 'apps'; $('#tnMode').disabled = st.scope === 'apps';
-    $('#tnConfirm').checked = !!st.confirm; $('#tnDirectRu').checked = !!st.direct_ru;
+    $('#tnConfirm').checked = !!st.confirm; $('#tnDirectRu').checked = !!st.direct_ru; $('#tnCloud').checked = st.cloud !== false;
     $('#tnRefresh').hidden = !st.has_sub; $('#tnRemove').disabled = $('#tnClear').disabled = !st.servers.length;
     const run = st.status && st.status.running;
     $('#tnStart').disabled = !st.servers.length || !st.engine || !st.win; $('#tnStart').textContent = run ? 'Перезапустить' : 'Включить'; $('#tnStop').disabled = !run;
     hvView(st);
-    $('#tnStatus').className = 'note' + (run ? ' ok' : ''); $('#tnStatus').textContent = st.text + ((!st.admin && (st.mode === 'vpn' || st.scope === 'apps')) ? ' Для режима VPN Карина должна быть запущена от имени администратора.' : '');
+    $('#tnStatus').className = 'note' + (run ? ' ok' : ''); $('#tnStatus').textContent = st.text + (st.cloud_on && !run ? ' Для облачных моделей работает отдельный прокси (остальной трафик компьютера идёт напрямую).' : '') + ((!st.admin && (st.mode === 'vpn' || st.scope === 'apps')) ? ' Для режима VPN Карина должна быть запущена от имени администратора.' : '');
   }
   // ---------- VPN на главной ----------
   let hvBusy = false;
@@ -1216,9 +1238,9 @@
   async function loadTunnel() { tnView(await call('tunnel_state')); }
   const tnReply = r => { if (!r) return; if (r.state) tnView(r.state); tnMsg(r.ok ? '' : r.error, !r.ok); return r; };
   async function tnSave() {
-    tnReply(await call('tunnel_set', { active: $('#tnServer').value, mode: $('#tnMode').value, scope: $('#tnScope').value, apps: $('#tnApps').value, confirm: $('#tnConfirm').checked, direct_ru: $('#tnDirectRu').checked }));
+    tnReply(await call('tunnel_set', { active: $('#tnServer').value, mode: $('#tnMode').value, scope: $('#tnScope').value, apps: $('#tnApps').value, confirm: $('#tnConfirm').checked, direct_ru: $('#tnDirectRu').checked, cloud: $('#tnCloud').checked }));
   }
-  ['tnServer', 'tnMode', 'tnScope', 'tnConfirm', 'tnDirectRu'].forEach(id => $('#' + id).addEventListener('change', tnSave));
+  ['tnServer', 'tnMode', 'tnScope', 'tnConfirm', 'tnDirectRu', 'tnCloud'].forEach(id => $('#' + id).addEventListener('change', tnSave));
   $('#tnApps').addEventListener('change', tnSave);
   $('#tnAdd').onclick = async () => {
     $('#tnAdd').disabled = true; tnMsg('Добавляю…');
@@ -1227,7 +1249,7 @@
   };
   $('#tnRefresh').onclick = async () => { tnMsg('Обновляю…'); const r = tnReply(await call('tunnel_refresh')); if (r && r.ok) tnMsg(`Серверов в подписке: ${r.result.added}.`); };
   $('#tnRemove').onclick = async () => tnReply(await call('tunnel_remove', $('#tnServer').value));
-  $('#tnClear').onclick = async () => { if (confirm('Убрать все серверы и выключить VPN?')) tnReply(await call('tunnel_clear')); };
+  $('#tnClear').onclick = async () => { if (await ask('Убрать все серверы и выключить VPN?', { ok: 'Убрать', danger: true })) tnReply(await call('tunnel_clear')); };
   $('#tnStart').onclick = async () => { $('#tnStart').disabled = true; tnMsg('Запускаю…'); const r = tnReply(await call('tunnel_start')); if (r && r.ok) tnMsg(''); };
   $('#tnStop').onclick = async () => tnReply(await call('tunnel_stop'));
   $('#tnDl').onclick = async () => { $('#tnDl').disabled = true; $('#tnEngine').textContent = 'Подключаюсь…'; if (!(await call('tunnel_download'))) loadTunnel(); };
@@ -1342,6 +1364,94 @@
   $('#outVoice').onclick = () => call('test_voice');
   $('#outRefresh').onclick = async () => { await loadOut(true); flash($('#outMsg'), `Найдено устройств вывода: ${outDevs.length}`); };
 
+  // ---------- вкладка «Виджет» (динамический остров) ----------
+  const W = { dock: 'top', pos: .5, mon: 0, pinned: false, running: false, loaded: false };
+  const wgPill = () => $('#pill'), wgScr = () => $('#scr');
+  function wgPlace() {                                          // рисуем плашку на схеме экрана
+    const scr = wgScr(), pill = wgPill(); if (!scr || !pill || !scr.clientWidth) return;
+    const Wd = scr.clientWidth, H = scr.clientHeight, vert = W.dock === 'left' || W.dock === 'right';
+    pill.classList.toggle('v', vert);
+    const pw = pill.offsetWidth, ph = pill.offsetHeight, m = 10;
+    pill.style.left = (vert ? (W.dock === 'left' ? m : Wd - pw - m) : (Wd - pw) * W.pos) + 'px';
+    pill.style.top = (vert ? (H - ph) * W.pos : (W.dock === 'top' ? m : H - ph - m)) + 'px';
+    const g = $('#guide'); Object.assign(g.style, { left: 'auto', right: 'auto', top: 'auto', bottom: 'auto', width: 'auto', height: 'auto' },
+      vert ? { [W.dock]: '2px', top: '6px', bottom: '6px', width: '30px' } : { [W.dock]: '2px', left: '6px', right: '6px', height: '30px' });
+    const p = Math.round(W.pos * 100), d = Math.abs(p - 50) * 2;
+    $('#oPos').textContent = p === 50 ? 'по центру' : (vert ? (p < 50 ? 'выше центра: ' : 'ниже центра: ') : (p < 50 ? 'левее центра: ' : 'правее центра: ')) + d + '%';
+    $('#sPos').value = p;
+    $$('#sDock button').forEach(b => b.classList.toggle('on', b.dataset.v === W.dock));
+    $$('#sMon button').forEach(b => b.classList.toggle('on', Number(b.dataset.v) === W.mon));
+    $('#wgPin').checked = W.pinned;
+  }
+  let wgT = 0;
+  function wgSend(now) { clearTimeout(wgT); wgT = setTimeout(() => call('widget_place', W.dock, W.pos, W.mon), now ? 0 : 280); }
+  function wgIdlePreview(s) {
+    const sp = $$('#idle > *'); const on = { time: s.idle_time, bat: s.idle_battery, temp: s.idle_temp, music: s.idle_music };
+    sp[1].hidden = !on.time; sp[2].hidden = !on.bat; sp[3].hidden = !on.temp; sp[4].hidden = !on.music;
+  }
+  function wgFill(d) {
+    const s = d.settings || {}, w = d.where || {};
+    Object.assign(W, { dock: w.dock || 'top', pos: w.pos ?? .5, mon: w.mon || 0, pinned: !!w.pinned, running: !!w.running, loaded: true });
+    $('#wgEnable').checked = !!d.enabled; $('#wgAuto').checked = !!d.autostart;
+    const mons = d.monitors || []; $('#rowMon').hidden = mons.length < 2;
+    $('#sMon').replaceChildren(...mons.map((m, i) => { const b = el('button'); b.dataset.v = i; b.textContent = (m.primary ? 'Основной' : 'Монитор ' + (i + 1)) + ` · ${m.w}×${m.h}`; return b; }));
+    $$('#sIdle button').forEach(b => b.classList.toggle('on', !!s[b.dataset.k])); wgIdlePreview(s);
+    $$('#chars button').forEach(b => b.classList.toggle('on', b.dataset.c === s.character));
+    $$('#sHol button').forEach(b => b.classList.toggle('on', b.dataset.v === s.holiday));
+    $$('#sSnow button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.snow ? '1' : '0')));
+    $$('#sGar button').forEach(b => b.classList.toggle('on', b.dataset.v === s.garland));
+    $('#wgCity').value = s.city || '';
+    wgKeys((d.hotkeys || {}).keys || {}, (d.hotkeys || {}).errors || []);
+    wgPlace();
+  }
+  async function loadWidget() { const d = await call('widget_get'); if (d) wgFill(d); }
+  const wgSave = patch => call('widget_set', patch);
+  $('#sDock').onclick = e => { const b = e.target.closest('button'); if (!b) return; W.dock = b.dataset.v; wgPlace(); wgSend(true); };
+  $('#sMon').onclick = e => { const b = e.target.closest('button'); if (!b) return; W.mon = Number(b.dataset.v); wgPlace(); wgSend(true); };
+  $('#sPos').oninput = e => { W.pos = e.target.value / 100; wgPlace(); wgSend(false); };
+  $('#scr').onclick = e => {                                    // клик по схеме: ближайший край и место вдоль него
+    if (e.target.closest('.wg-pill')) return;
+    const r = wgScr().getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height, d = { top: y, bottom: 1 - y, left: x, right: 1 - x };
+    W.dock = Object.keys(d).sort((a, b) => d[a] - d[b])[0]; W.pos = Math.min(1, Math.max(0, W.dock === 'top' || W.dock === 'bottom' ? x : y)); wgPlace(); wgSend(true);
+  };
+  $('#wgPin').onchange = async e => { const r = await call('widget_pin', e.target.checked); if (r) { W.pinned = !!r.pinned; wgPlace(); } };
+  $('#bReset').onclick = async () => { const r = await call('widget_reset'); if (r) { W.dock = r.dock; W.pos = r.pos; W.mon = r.mon; W.pinned = false; wgPlace(); } };
+  $('#wgEnable').onchange = e => call('widget_enable', e.target.checked);
+  $('#wgAuto').onchange = async e => { const r = await call('widget_autostart', e.target.checked); if (r && r.ok === false) { e.target.checked = !e.target.checked; } else if (r && r.island) $('#wgEnable').checked = true; };
+  $('#sIdle').onclick = async e => { const b = e.target.closest('button'); if (!b) return; b.classList.toggle('on'); const s = {}; $$('#sIdle button').forEach(x => s[x.dataset.k] = x.classList.contains('on')); wgIdlePreview(s); wgSave({ [b.dataset.k]: s[b.dataset.k] }); };
+  $('#chars').onclick = e => { const b = e.target.closest('button'); if (!b) return; $$('#chars button').forEach(x => x.classList.toggle('on', x === b)); wgSave({ character: b.dataset.c }); };
+  const wgSeg = (id, key, conv) => $(id).onclick = e => { const b = e.target.closest('button'); if (!b) return; $$(id + ' button').forEach(x => x.classList.toggle('on', x === b)); wgSave({ [key]: conv ? conv(b.dataset.v) : b.dataset.v }); };
+  wgSeg('#sHol', 'holiday'); wgSeg('#sSnow', 'snow', v => v === '1'); wgSeg('#sGar', 'garland');
+  $('#wgCity').onchange = e => wgSave({ city: e.target.value.trim() });
+  // горячие клавиши: нажать на сочетание и ввести новое
+  const KEYNAME = { ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift', win: 'Win' };
+  function wgKeys(keys, errors) {
+    $$('#wgKeys [data-hk]').forEach(row => {
+      const b = $('.kbtn', row), combo = keys[row.dataset.hk] || ''; b.dataset.combo = combo; b.classList.remove('rec');
+      b.replaceChildren(...(combo ? combo.split('+').map(k => { const x = el('kbd'); x.textContent = KEYNAME[k] || (k.length === 1 ? k.toUpperCase() : k.charAt(0).toUpperCase() + k.slice(1)); return x; }) : [Object.assign(el('span'), { className: 'empty', textContent: 'не задано' })]));
+    });
+    const m = $('#hkMsg'); m.classList.toggle('err', !!errors.length); m.textContent = errors.length ? errors.join(' ') : 'Нажмите на сочетание и введите новое. Backspace очищает, Esc отменяет.';
+  }
+  let hkRow = null;
+  $('#wgKeys').addEventListener('click', e => {
+    const row = e.target.closest('[data-hk]'); if (!row || hkRow === row) return;
+    hkRow = row; const b = $('.kbtn', row); b.classList.add('rec'); b.replaceChildren(document.createTextNode('Нажмите сочетание…'));
+  });
+  document.addEventListener('keydown', async e => {
+    if (!hkRow) return; e.preventDefault(); e.stopPropagation();
+    const row = hkRow, name = row.dataset.hk;
+    const done = async combo => { hkRow = null; const r = combo === null ? null : await call('widget_hotkey', name, combo); if (r && r.ok === false) { const m = $('#hkMsg'); m.textContent = r.error; m.classList.add('err'); loadWidget(); setTimeout(() => { const d = $('#hkMsg'); d.classList.remove('err'); }, 6000); } else loadWidget(); };
+    if (e.key === 'Escape') return done(null);
+    if (e.key === 'Backspace') return done('');
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+    let k = e.code.startsWith('Key') ? e.code.slice(3).toLowerCase() : e.code.startsWith('Digit') ? e.code.slice(5) : /^F\d+$/.test(e.code) ? e.code.toLowerCase() : (e.key.length === 1 ? e.key.toLowerCase() : e.code.toLowerCase());
+    const mods = [e.ctrlKey && 'ctrl', e.altKey && 'alt', e.shiftKey && 'shift', e.metaKey && 'win'].filter(Boolean);
+    if (!mods.length) { const m = $('#hkMsg'); m.textContent = 'Нужна хотя бы одна из Ctrl, Alt, Shift, Win и обычная клавиша.'; m.classList.add('err'); return; }
+    done([...mods, k].join('+'));
+  }, true);
+  window.addEventListener('resize', wgPlace);
+  new MutationObserver(() => wgPlace()).observe($('#tab-widget'), { attributes: true, attributeFilter: ['class'] });
+
   // ---------- настройки ----------
   const sf = () => $('#setForm');
   function fillSettings(c, mics) {
@@ -1350,7 +1460,7 @@
     f.name.value = c.name; f.aliases.value = (c.name_aliases || []).join(', ');
     f.wake_required.checked = !!c.wake_required; f.followup_seconds.value = c.followup_seconds;
     f.model.value = c.stt.model; f.vad_threshold.value = c.stt.vad_threshold; f.assist.value = c.stt.assist || 'smart';
-    f.tts_enabled.checked = !!c.tts.enabled; f.background.checked = (c.ui || {}).background !== false; f.island.checked = !!(c.ui || {}).island; loadSil(); f.rate.value = c.tts.rate;
+    f.tts_enabled.checked = !!c.tts.enabled; f.background.checked = (c.ui || {}).background !== false; loadSil(); f.rate.value = c.tts.rate;
     const mx = c.mixer || {}, vp = c.vpn || {};
     f.mixer_enabled.checked = mx.enabled !== false; f.mixer_prefer.checked = !!mx.prefer; f.mixer_pin.value = mx.pin || ''; f.mixer_port.value = mx.port || 0; f.mixer_step.value = mx.step_db || 3; f.vpn_enabled.checked = vp.enabled !== false; loadVpnStatus();
     f.persona_rude.checked = !!(c.persona || {}).rude; loadTunnel(); f.upd_auto.checked = (c.updates || {}).auto !== false; f.search_engine.value = c.search_engine; f.llm_enabled.checked = !!c.llm.enabled; f.theme.value = (c.ui || {}).theme || 'auto';
@@ -1382,7 +1492,7 @@
       mixer: { enabled: f.mixer_enabled.checked, prefer: f.mixer_prefer.checked, pin: f.mixer_pin.value.trim(), port: Number(f.mixer_port.value) || 0, step_db: Number(f.mixer_step.value) },
       vpn: { enabled: f.vpn_enabled.checked },
       persona: { rude: f.persona_rude.checked },
-      updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value, background: f.background.checked, island: f.island.checked },
+      updates: { auto: f.upd_auto.checked }, search_engine: f.search_engine.value, ui: { theme: f.theme.value, background: f.background.checked },
       llm: { enabled: f.llm_enabled.checked, api_key: $('#apiKey').value.trim() },
     };
     const c = await call('save_settings', patch);
@@ -1391,6 +1501,61 @@
   });
   $('#btnClearKey').onclick = async () => { const c = await call('clear_api_key'); if (c) { fillSettings(c, null); flash($('#keyMsg'), 'Ключ удалён'); loadBrain(); } };
   $('#btnData').onclick = () => call('open_data_folder');
+
+  // ---------- удаление по частям ----------
+  const fmtBig = n => n >= 2 ** 30 ? (n / 2 ** 30).toFixed(1) + ' ГБ' : fmtSize(n);
+  async function openUninstall() {
+    const r = await call('uninstall_list'); if (!r) return;
+    const items = r.items || [];
+    if (!items.length) { note('Удалять нечего: данных и скачанных компонентов нет.', 'Удаление'); return; }
+    const back = el('div', 'dlg-back'), box = el('div', 'dlg wide'); box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true');
+    box.append(el('h3', null, 'Что удалить?'));
+    const hint = el('p', null, 'Отметьте нужное. Скачанное можно загрузить заново, а настройки и диалоги вернуть нельзя.'); box.append(hint);
+    const pre = el('div', 'un-pre'), list = el('div', 'un-list'), sum = el('div', 'un-sum');
+    const checks = [];
+    const groups = { downloads: 'Скачанное', data: 'Ваши данные', system: 'Система' };
+    Object.keys(groups).forEach(g => {
+      const its = items.filter(i => i.group === g); if (!its.length) return;
+      list.append(el('div', 'un-g', groups[g]));
+      its.forEach(i => {
+        const row = el('label', 'un-row'), cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = i.id; cb.dataset.group = i.group;
+        row.append(cb, el('b', null, i.title), el('span', 'sz', i.size ? fmtBig(i.size) : ''), el('small', null, i.desc));
+        list.append(row); checks.push(cb); cb.addEventListener('change', upd);
+      });
+    });
+    const sel = fn => { checks.forEach(c => c.checked = fn(c)); upd(); };
+    const bDl = el('button', 'btn', 'Только скачанное'), bAll = el('button', 'btn', 'Выбрать всё'), bNone = el('button', 'btn', 'Снять выбор');
+    [bDl, bAll, bNone].forEach(b => b.type = 'button');
+    bDl.onclick = () => sel(c => c.dataset.group === 'downloads'); bAll.onclick = () => sel(() => true); bNone.onclick = () => sel(() => false);
+    pre.append(bDl, bAll, bNone); box.append(pre, list, sum);
+    const row = el('div', 'dlg-btns'), no = el('button', 'btn', 'Отмена'), go = el('button', 'btn danger-solid', 'Удалить выбранное');
+    no.type = go.type = 'button'; row.append(no, go); box.append(row); back.append(box); document.body.append(back);
+    const close = () => { document.removeEventListener('keydown', key, true); back.classList.remove('on'); setTimeout(() => back.remove(), 160); };
+    const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', key, true);
+    no.onclick = close;
+    function upd() {
+      const on = checks.filter(c => c.checked), bytes = on.reduce((s, c) => s + ((items.find(i => i.id === c.value) || {}).size || 0), 0);
+      go.disabled = !on.length;
+      sum.textContent = on.length ? `Выбрано: ${on.length}` + (bytes ? ` · освободится ${fmtBig(bytes)}` : '') : 'Ничего не выбрано.';
+    }
+    upd();
+    go.onclick = async () => {
+      const ids = checks.filter(c => c.checked).map(c => c.value), names = ids.map(id => (items.find(i => i.id === id) || {}).title);
+      const full = ids.includes('settings') || ids.includes('chats') || ids.includes('program');
+      const okk = await ask('Будет удалено:\n• ' + names.join('\n• ') + (full ? '\n\nНастройки, диалоги и программу восстановить нельзя.' : '') + (ids.some(i => !['llm', 'engine', 'vpn', 'voice', 'system', 'plugins'].includes(i)) ? '\n\nКарина закроется, чтобы стереть занятые файлы.' : ''), { title: 'Удалить безвозвратно?', ok: 'Удалить', danger: true });
+      if (!okk) return;
+      go.disabled = no.disabled = true; sum.textContent = 'Удаляю…';
+      const res = await call('uninstall_run', ids);
+      close();
+      if (!res) { note('Не удалось выполнить удаление.', 'Удаление'); return; }
+      if (!res.ok) { note(res.error || 'Не удалось.', 'Удаление'); return; }
+      const done = (res.done || []).map(id => (items.find(i => i.id === id) || {}).title).filter(Boolean);
+      note((done.length ? 'Удалено:\n• ' + done.join('\n• ') : 'Готово.') + ((res.problems || []).length ? '\n\nНе получилось:\n• ' + res.problems.join('\n• ') : '') + (res.quit ? '\n\nКарина сейчас закроется и сотрёт остальное.' : ''), 'Удаление');
+    };
+    requestAnimationFrame(() => back.classList.add('on'));
+  }
+  $('#btnUninstall').onclick = openUninstall;
 
   async function refresh() {
     const s = await call('get_state'); if (!s) return;

@@ -774,6 +774,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         else if (ev.kind === 'karina') { st.reply = ev.text || ''; render(); }
         else if (ev.kind === 'info' && st.state === 'confirm') { st.heard = ev.text || ''; render(); }          // услышала, но это не ответ: покажем, что именно
         else if (ev.kind === 'error') { st.err = ev.text || ''; render(); }
+      } else if (ev.type === 'settings') { set = ev.settings || set; applyLook(); paintLook(); render();
       } else if (ev.type === 'media') {
         info.media = ev.status === 'none' ? null : ev;
         if (ev.status === 'playing') { info.lastPlay = Date.now(); }

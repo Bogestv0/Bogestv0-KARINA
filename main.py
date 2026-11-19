@@ -5,6 +5,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
+if len(sys.argv) > 2 and sys.argv[1] == "--cleanup":       # вторая копия после «Настройки → Удаление»: ждёт выхода основной и стирает выбранное (ничего не создаёт в данных)
+    from karina.uninstall import cleanup_main
+    sys.exit(cleanup_main(sys.argv[2]))
+
+if len(sys.argv) > 1 and sys.argv[1] in ("--setup", "--setup-update", "--setup-uninstall"):   # окно установки/удаления (ui/setup.html)
+    from karina.config import DATA as _D
+    from karina import setup_app
+    setup_app.run({"--setup": "install", "--setup-update": "update", "--setup-uninstall": "uninstall"}[sys.argv[1]], _D)
+    sys.exit(0)
+
 from karina.config import Config, DATA
 from karina import components
 components.activate()          # докачанные компоненты (torch и др.) подключаем до любых импортов, которым они нужны

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bogestv0 KARINA — Установка</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><img src="logo.png" alt=""><span>Bogestv0 <b>KARINA</b></span></div>
+  <div class="winctl">
+    <button type="button" id="wcMin" title="Свернуть" aria-label="Свернуть"><svg viewBox="0 0 10 10"><path d="M1 5.5h8"/></svg></button>
+    <button type="button" id="wcClose" class="close" title="Закрыть" aria-label="Закрыть"><svg viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button>
+  </div>
+</header>
+
+<main class="stage">
+
+  <!-- ===== УСТАНОВКА ===== -->
+  <section class="step" data-step="i-welcome">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 256 256"><rect class="tile" x="8" y="8" width="240" height="240" rx="62"/>
+        <rect class="b" x="38" y="98" width="26" height="60" rx="13"/><rect class="b" x="76" y="78" width="26" height="100" rx="13"/>
+        <rect class="c b" x="115" y="58" width="26" height="140" rx="13"/><rect class="b" x="154" y="78" width="26" height="100" rx="13"/><rect class="b" x="192" y="98" width="26" height="60" rx="13"/></svg>
+    </div>
+    <h1>Добро пожаловать в <b>KARINA</b>!</h1>
+    <p class="lead" id="iWelcomeLead">Голосовой помощник для Windows. Установка займёт около минуты.</p>
+    <div class="actions"><button class="btn primary lg" id="btnStart" type="button">Установить</button></div>
+    <button class="link" id="btnCustom" type="button">Выбрать, что поставить</button>
+  </section>
+
+  <section class="step wide" data-step="i-options">
+    <div class="head"><span class="eyebrow">Установка</span><h2 style="margin-top:6px">Что поставить</h2><p class="lead tight" style="max-width:none;font-size:13.5px">Всё это можно поменять потом в настройках Карины.</p></div>
+    <div class="list" id="optList"></div>
+    <div class="actions" style="margin-top:16px"><button class="btn ghost" data-go="i-welcome" type="button">Назад</button><button class="btn primary" data-go="i-profile" type="button">Далее</button></div>
+  </section>
+
+  <section class="step" data-step="i-profile">
+    <span class="eyebrow">Необязательно</span>
+    <h2 style="margin-top:10px">Немного о вас</h2>
+    <p class="lead" style="margin-bottom:20px">Карина будет называть вас по имени, брать город для погоды и поздравит с днём рождения.</p>
+    <div class="form">
+      <label class="w3">Как к вам обращаться<input id="pName" maxlength="40" placeholder="Анна" autocomplete="off"></label>
+      <label class="w3">Город (для погоды)<input id="pCity" maxlength="60" placeholder="Красноярск" autocomplete="off"></label>
+      <label>День рождения: день<input id="pDay" maxlength="2" inputmode="numeric" placeholder="05"></label>
+      <label>месяц<input id="pMonth" maxlength="2" inputmode="numeric" placeholder="03"></label>
+      <label>год<input id="pYear" maxlength="4" inputmode="numeric" placeholder="1995"></label>
+    </div>
+    <div class="warn" id="pErr" hidden style="max-width:440px"></div>
+    <div class="actions"><button class="btn ghost" data-go="i-options" type="button">Назад</button><button class="btn primary" id="btnInstall" type="button">Установить</button></div>
+  </section>
+
+  <!-- ===== УДАЛЕНИЕ ===== -->
+  <section class="step" data-step="u-welcome">
+    <div class="mark bad" aria-hidden="true">
+      <svg viewBox="0 0 256 256"><rect class="tile" x="8" y="8" width="240" height="240" rx="62"/>
+        <rect class="b" x="38" y="98" width="26" height="60" rx="13"/><rect class="b" x="76" y="78" width="26" height="100" rx="13"/>
+        <rect class="c b" x="115" y="58" width="26" height="140" rx="13"/><rect class="b" x="154" y="78" width="26" height="100" rx="13"/><rect class="b" x="192" y="98" width="26" height="60" rx="13"/></svg>
+    </div>
+    <h1>Удалить <b>KARINA</b>?</h1>
+    <p class="lead" id="uWelcomeLead">Можно убрать всё до последнего файла или только то, что скачано: модели, голос, движки.</p>
+    <div class="actions">
+      <button class="btn danger lg" id="btnUAll" type="button">Удалить всё</button>
+      <button class="btn lg" id="btnUPick" type="button">Выбрать, что удалить</button>
+    </div>
+  </section>
+
+  <section class="step wide" data-step="u-choose">
+    <div class="head"><span class="eyebrow bad">Удаление</span><h2 style="margin-top:8px">Что удалить</h2></div>
+    <div class="list" id="delList"></div>
+    <div class="warn" id="uWarn" hidden>Выбраны ваши данные: диалоги, настройки или ключи. Вернуть их будет нельзя.</div>
+    <div class="bar">
+      <div class="seg" id="uPreset"><button type="button" data-p="dl">Скачанное</button><button type="button" data-p="all">Всё</button><button type="button" data-p="none">Ничего</button></div>
+      <div class="sum" id="uSum"></div>
+      <button class="btn ghost" data-go="u-welcome" type="button">Назад</button>
+      <button class="btn danger" id="btnUDo" type="button" disabled>Удалить</button>
+    </div>
+  </section>
+
+  <!-- ===== общие ===== -->
+  <section class="step" data-step="progress">
+    <div class="mark" id="progMark" aria-hidden="true">
+      <svg viewBox="0 0 256 256"><rect class="tile" x="8" y="8" width="240" height="240" rx="62"/>
+        <rect class="b" x="38" y="98" width="26" height="60" rx="13"/><rect class="b" x="76" y="78" width="26" height="100" rx="13"/>
+        <rect class="c b" x="115" y="58" width="26" height="140" rx="13"/><rect class="b" x="154" y="78" width="26" height="100" rx="13"/><rect class="b" x="192" y="98" width="26" height="60" rx="13"/></svg>
+    </div>
+    <h1 id="progTitle" style="font-size:24px">Устанавливаю…</h1>
+    <div class="progress"><div class="meter" id="meter"><i id="meterFill"></i></div>
+      <div class="pline"><span id="progText">Подготовка</span><b id="progPct">0%</b></div></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </section>
+
+  <section class="step" data-step="done">
+    <div class="tick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11"/></svg></div>
+    <h1 id="doneTitle" style="font-size:26px">Готово!</h1>
+    <p class="lead" id="doneLead"></p>
+    <div class="fin" id="finOpts" hidden>
+      <label class="chk"><input type="checkbox" id="fLaunch" checked> Запустить Карину</label>
+      <label class="chk"><input type="checkbox" id="fDesk"> Ярлык на рабочий стол</label>
+    </div>
+    <div class="report" id="doneReport" hidden></div>
+    <div class="actions"><button class="btn primary lg" id="btnFinish" type="button">Закрыть</button></div>
+  </section>
+
+</main>
+
+<footer class="foot"><div class="dots" id="dots"></div><code id="ver"></code></footer>
+<script src="setup.js"></script>
+</body>
+</html>

@@ -1,0 +1,166 @@
+/* Окно установки и удаления Карины. Раскладка как у WSATools (по центру: знак, заголовок, подпись, одна большая кнопка),
+   оформление то же, что у главного окна: синий акцент, Unbounded + Onest, светлая и тёмная тема. */
+:root{
+  --bg:#eef0f6; --surface:#fff; --surface-2:#f4f5fa; --line:#dfe2ec; --fg:#15151a; --muted:#6b6f80;
+  --accent:#1f77bd; --accent-ink:#fff; --accent-soft:#e6f1fb;
+  --warn:#8a5a00; --warn-soft:#fdf1d8; --bad:#b3261e; --bad-soft:#fbe8e6; --ok:#1a7f4b; --ok-soft:#e3f5ea;
+  --f-display:'Unbounded','Onest',system-ui,sans-serif; --f-body:'Onest',system-ui,sans-serif; --f-mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+  --glass:rgba(255,255,255,.78); --glow1:rgba(31,119,189,.10); --glow2:rgba(124,92,230,.06); --hair:rgba(20,24,48,.12);
+  --shadow:0 1px 2px rgba(20,24,48,.05),0 10px 28px -14px rgba(20,24,48,.22);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#101116; --surface:#181a21; --surface-2:#1e212a; --line:#2a2d38; --fg:#f1f2f6; --muted:#a8acbd;
+  --accent:#6ab3f3; --accent-ink:#0b1a2a; --accent-soft:#1d3247;
+  --warn:#f5cf8a; --warn-soft:#3a2c14; --bad:#ff8a80; --bad-soft:#3a1f1d; --ok:#7fd6a4; --ok-soft:#173326;
+  --glass:rgba(20,22,28,.9); --glow1:rgba(106,179,243,.10); --glow2:rgba(150,110,255,.06); --hair:rgba(255,255,255,.14);
+  --shadow:0 1px 0 rgba(255,255,255,.03) inset,0 12px 30px -14px rgba(0,0,0,.65); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101116; --surface:#181a21; --surface-2:#1e212a; --line:#2a2d38; --fg:#f1f2f6; --muted:#a8acbd;
+  --accent:#6ab3f3; --accent-ink:#0b1a2a; --accent-soft:#1d3247;
+  --warn:#f5cf8a; --warn-soft:#3a2c14; --bad:#ff8a80; --bad-soft:#3a1f1d; --ok:#7fd6a4; --ok-soft:#173326;
+  --glass:rgba(20,22,28,.9); --glow1:rgba(106,179,243,.10); --glow2:rgba(150,110,255,.06); --hair:rgba(255,255,255,.14);
+  --shadow:0 1px 0 rgba(255,255,255,.03) inset,0 12px 30px -14px rgba(0,0,0,.65); color-scheme:dark}
+
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:
+  radial-gradient(620px 360px at 50% -8%,var(--glow1),transparent 68%),
+  radial-gradient(520px 360px at 108% 108%,var(--glow2),transparent 62%),
+  var(--bg);
+  color:var(--fg);font:400 15px/1.5 var(--f-body);display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased;user-select:none}
+body::after{content:"";position:fixed;inset:0;border:1px solid var(--hair);pointer-events:none;z-index:50}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+[hidden]{display:none!important}
+::selection{background:var(--accent-soft);color:var(--accent)}
+.muted{color:var(--muted)}
+
+/* заголовок окна */
+.topbar{display:flex;align-items:center;min-height:42px;padding-left:16px;flex:none;-webkit-app-region:drag}
+.brand{display:flex;align-items:center;gap:9px;font:600 12px var(--f-display);letter-spacing:.01em;color:var(--muted)}
+.brand img{width:20px;height:20px;border-radius:6px;display:block}
+.brand b{color:var(--accent);font-weight:600}
+.winctl{display:flex;align-self:stretch;margin-left:auto;-webkit-app-region:no-drag}
+.winctl button{width:46px;display:grid;place-items:center;color:var(--muted);transition:background .12s,color .12s}
+.winctl svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:1.1;stroke-linecap:round}
+.winctl button:hover{background:color-mix(in srgb,var(--fg) 9%,transparent);color:var(--fg)}
+.winctl button.close:hover{background:#e81123;color:#fff}
+
+/* сцена */
+.stage{flex:1;min-height:0;position:relative}
+.step{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;padding:0 40px 8px;text-align:center}
+.step.on{display:flex;animation:in .32s cubic-bezier(.2,.7,.2,1) both}
+.step.wide{justify-content:flex-start;padding-top:6px}
+@keyframes in{from{opacity:0;transform:translateY(8px)}}
+
+h1{font:600 28px/1.15 var(--f-display);margin:22px 0 10px;letter-spacing:-.01em}
+h1 b{color:var(--accent);font-weight:600}
+h2{font:600 20px/1.2 var(--f-display);margin:0 0 6px}
+.lead{margin:0;color:var(--muted);font-size:15px;max-width:440px}
+.lead.tight{margin-top:2px}
+.eyebrow{font:600 11px var(--f-body);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:inline-flex;align-items:center;gap:8px}
+.eyebrow::before{content:"";width:6px;height:6px;border-radius:2px;background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.eyebrow.bad::before{background:var(--bad);box-shadow:0 0 0 3px var(--bad-soft)}
+
+/* знак: те же семь полос, что на логотипе, чуть «дышат» */
+.mark{position:relative;width:104px;height:104px;display:grid;place-items:center}
+.mark::before{content:"";position:absolute;inset:-26px;border-radius:50%;background:radial-gradient(closest-side,color-mix(in srgb,var(--accent) 34%,transparent),transparent 72%);animation:glow 3.4s ease-in-out infinite}
+.mark svg{position:relative;width:104px;height:104px;display:block;filter:drop-shadow(0 10px 22px color-mix(in srgb,var(--accent) 38%,transparent))}
+.mark .tile{fill:#1a1c24;stroke:color-mix(in srgb,#fff 10%,transparent)}
+.mark rect.b{fill:#1f77bd;transform-box:fill-box;transform-origin:center;animation:eq 1.8s ease-in-out infinite}
+.mark rect.c{fill:#6ab3f3}
+.mark rect:nth-of-type(2){animation-delay:-.3s}.mark rect:nth-of-type(3){animation-delay:-.6s}.mark rect:nth-of-type(4){animation-delay:-.9s}
+.mark rect:nth-of-type(5){animation-delay:-1.2s}.mark rect:nth-of-type(6){animation-delay:-1.5s}.mark rect:nth-of-type(7){animation-delay:-.15s}
+@keyframes eq{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.62)}}
+@keyframes glow{0%,100%{opacity:.7;transform:scale(.96)}50%{opacity:1;transform:scale(1.04)}}
+.mark.bad::before{background:radial-gradient(closest-side,color-mix(in srgb,var(--bad) 26%,transparent),transparent 72%)}
+.mark.ok svg .tile{fill:#17221d}
+.tick{position:relative;width:96px;height:96px;border-radius:50%;display:grid;place-items:center;background:var(--ok-soft);box-shadow:0 0 0 10px color-mix(in srgb,var(--ok) 10%,transparent)}
+.tick svg{width:44px;height:44px;fill:none;stroke:var(--ok);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:44;stroke-dashoffset:44;animation:draw .55s .15s ease forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+@media (prefers-reduced-motion:reduce){.mark rect.b,.mark::before,.step.on{animation:none}.tick svg{animation:none;stroke-dashoffset:0}}
+
+/* кнопки */
+.actions{display:flex;gap:10px;align-items:center;justify-content:center;margin-top:26px}
+.btn{padding:9px 18px;border-radius:11px;background:var(--surface-2);border:1px solid var(--line);font-weight:500;font-size:14px;transition:border-color .15s,transform .12s,filter .15s,box-shadow .15s}
+.btn:hover{border-color:var(--accent)}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.5;cursor:default;transform:none}
+.btn.lg{padding:11px 30px;font-size:15px;border-radius:12px;min-width:170px}
+.btn.primary{background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 86%,#fff),var(--accent));color:var(--accent-ink);border-color:var(--accent);font-weight:600;box-shadow:0 8px 20px -10px color-mix(in srgb,var(--accent) 85%,transparent)}
+.btn.primary:hover{filter:brightness(1.07);transform:translateY(-1px)}
+.btn.primary:disabled:hover{filter:none;transform:none}
+.btn.danger{background:linear-gradient(180deg,color-mix(in srgb,var(--bad) 88%,#fff),var(--bad));color:#fff;border-color:var(--bad);font-weight:600;box-shadow:0 8px 20px -10px color-mix(in srgb,var(--bad) 80%,transparent)}
+:root:not([data-theme="light"]) .btn.danger{color:#2a0b09}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn.ghost:hover{color:var(--fg);border-color:var(--line)}
+.link{color:var(--accent);font-size:13px;margin-top:14px}
+.link:hover{text-decoration:underline}
+
+/* списки настроек */
+.head{width:100%;max-width:600px;text-align:left;margin:4px 0 10px}
+.list{width:100%;max-width:600px;display:flex;flex-direction:column;gap:8px;text-align:left;overflow:auto;min-height:0;padding:2px 4px 14px 2px;margin-right:-4px;-webkit-mask-image:linear-gradient(#000 calc(100% - 22px),transparent);mask-image:linear-gradient(#000 calc(100% - 22px),transparent)}
+.list{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--muted) 45%,transparent) transparent}
+.opt{display:flex;align-items:center;gap:14px;padding:10px 14px;flex:none;border-radius:14px;background:var(--surface);border:1px solid var(--line);cursor:pointer;transition:border-color .15s,background .15s}
+.opt:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+.opt.on{border-color:color-mix(in srgb,var(--accent) 60%,var(--line));background:color-mix(in srgb,var(--accent) 5%,var(--surface))}
+.opt .ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);flex:none}
+.opt .ic svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.opt .tx{flex:1;min-width:0}
+.opt .t{font-weight:600;font-size:14px;line-height:1.3}
+.opt .d{font-size:12.5px;color:var(--muted);line-height:1.35;margin-top:1px}
+.opt.del .d{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.opt .sz{font:500 12px var(--f-mono);color:var(--muted);white-space:nowrap}
+.opt input{position:absolute;opacity:0;pointer-events:none}
+.sw{width:40px;height:23px;border-radius:99px;background:color-mix(in srgb,var(--muted) 40%,transparent);position:relative;flex:none;transition:.15s}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:#fff;transition:.15s}
+.opt input:checked~.sw{background:var(--accent)} .opt input:checked~.sw::after{left:20px}
+.opt input:focus-visible~.sw{box-shadow:0 0 0 3px var(--accent-soft)}
+.opt.del input:checked~.sw{background:var(--bad)}
+.opt.del.on{border-color:color-mix(in srgb,var(--bad) 55%,var(--line));background:color-mix(in srgb,var(--bad) 5%,var(--surface))}
+.opt.del .ic{background:var(--bad-soft);color:var(--bad)}
+.grp{font:600 11px var(--f-body);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:8px 2px 0}
+.grp:first-child{margin-top:0}
+
+.bar{width:100%;max-width:600px;display:flex;align-items:center;gap:12px;margin-top:6px;flex:none;text-align:left}
+.bar .sum{flex:1;font-size:13px;color:var(--muted);white-space:nowrap;text-align:left} .bar .sum b{color:var(--fg);font-weight:600}
+.seg{display:flex;gap:2px;background:var(--surface-2);padding:3px;border-radius:12px;border:1px solid var(--line)}
+.seg button{padding:5px 12px;border-radius:9px;color:var(--muted);font-weight:500;font-size:13px;transition:.15s}
+.seg button:hover{color:var(--fg)}
+.seg button.on{background:var(--surface);color:var(--accent);box-shadow:0 1px 2px rgba(0,0,0,.14),0 0 0 1px var(--line)}
+.warn{width:100%;max-width:600px;margin-top:4px;flex:none;padding:8px 14px;border-radius:12px;background:var(--warn-soft);color:var(--warn);font-size:13px;text-align:left}
+
+/* профиль */
+.form{width:100%;max-width:440px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:left}
+.form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);font-weight:500}
+.form .w3{grid-column:1/-1}
+.form input{width:100%;padding:10px 12px;border-radius:11px;background:var(--surface-2);border:1px solid var(--line);outline:none;font:inherit;color:var(--fg);user-select:text}
+.form input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.form input::placeholder{color:color-mix(in srgb,var(--muted) 70%,transparent)}
+
+/* ход работы */
+.progress{width:100%;max-width:460px;margin-top:22px}
+.meter{height:8px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
+.meter i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 65%,#fff));transition:width .25s ease;position:relative;overflow:hidden}
+.meter i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);transform:translateX(-100%);animation:sheen 1.6s linear infinite}
+.meter.bad i{background:linear-gradient(90deg,var(--bad),color-mix(in srgb,var(--bad) 65%,#fff))}
+@keyframes sheen{to{transform:translateX(100%)}}
+.pline{display:flex;justify-content:space-between;gap:12px;margin-top:9px;font-size:13px;color:var(--muted)}
+.pline span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.pline b{font:600 12px var(--f-mono);color:var(--accent)}
+.log{margin-top:14px;width:100%;max-width:460px;height:74px;overflow:hidden;border-radius:12px;background:var(--surface);border:1px solid var(--line);padding:8px 12px;text-align:left;font:400 11.5px/1.65 var(--f-mono);color:var(--muted);display:flex;flex-direction:column;justify-content:flex-end}
+.log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.log div.ok::before{content:"✓ ";color:var(--ok)} .log div.bad{color:var(--bad)}
+
+.fin{margin-top:18px;display:flex;flex-direction:column;gap:2px;text-align:left}
+.chk{display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;padding:5px 0}
+.chk input{width:17px;height:17px;accent-color:var(--accent);margin:0}
+.report{margin-top:12px;width:100%;max-width:460px;padding:10px 14px;border-radius:12px;background:var(--warn-soft);color:var(--warn);font-size:12.5px;text-align:left}
+
+/* подвал */
+.foot{flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 18px 14px;font-size:12px;color:var(--muted);min-height:34px}
+.dots{display:flex;gap:6px}
+.dots i{width:6px;height:6px;border-radius:50%;background:var(--line);transition:.25s}
+.dots i.on{background:var(--accent);width:18px;border-radius:99px}
+.dots i.past{background:color-mix(in srgb,var(--accent) 50%,var(--line))}
+.foot code{font:500 11.5px var(--f-mono);padding:2px 8px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line)}
