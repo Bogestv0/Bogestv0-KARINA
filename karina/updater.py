@@ -95,11 +95,11 @@ def download(info: dict, progress=None, cancel: threading.Event | None = None) -
             if cancel.is_set():
                 f.close(); tmp.unlink(missing_ok=True)
                 raise Cancelled()
-            b = r.read(1 << 20)
+            b = r.read(1 << 18)
             if not b:
                 break
             f.write(b); h.update(b); done += len(b)
-            if progress and time.time() - last > 0.3:
+            if progress and time.time() - last > 0.25:
                 progress(done, total); last = time.time()
     if h.hexdigest() != expected:
         tmp.unlink(missing_ok=True)

@@ -22,9 +22,22 @@ class Api:
         self.quitting = False           # True — окну можно закрыться по-настоящему (выход из трея, обновление)
         self._events: queue.Queue = queue.Queue(maxsize=500)
         threading.Thread(target=self._emit_loop, daemon=True, name="karina-emit").start()
+        from .sync import Sync
+        self.sync = Sync(cfg, emit=self.emit, on_applied=self._sync_applied)
 
     def bind(self, assistant):
         self.assistant = assistant
+        self.sync.start_background()
+
+    def _sync_applied(self):
+        """Из другого компьютера пришли настройки: забываем прежние отказы облачных провайдеров и обновляем окно."""
+        try:
+            c = self.assistant.brain.cloud
+            c._auto.clear()
+            c._st.clear()
+        except Exception:
+            pass
+        self.emit({"type": "sync_applied"})
 
     # ---- события в окно ----
     def emit(self, ev: dict):
@@ -73,6 +86,8 @@ class Api:
         d = json.loads(json.dumps(self.cfg.data))
         d["llm"]["has_key"] = bool(d["llm"].get("api_key"))
         d["llm"]["api_key"] = ""       # ключ в окно не отдаём
+        d["google"] = {"client_id": (d.get("google") or {}).get("client_id", "")}     # секрет клиента Google в окно не отдаём
+        d["sync"] = {"enabled": bool((d.get("sync") or {}).get("enabled"))}          # персональный код и доступ к Google — тоже
         d.setdefault("images", {})["has_key"] = bool((d.get("images") or {}).get("key"))
         d["images"]["key"] = ""        # ключ сервиса картинок в окно не отдаём
         tn = d.setdefault("tunnel", {})
@@ -446,10 +461,22 @@ class Api:
 
     # ---- профиль и вход через Google ----
     def get_profile(self):
-        from . import profile as prof
+        from . import profile as prof, google_auth
         g = self.cfg.get("google") or {}
-        return {"profile": prof.get(self.cfg), "kinds": prof.PET_KINDS, "google": {"client_id": g.get("client_id", ""), "has_secret": bool(g.get("client_secret"))},
-                "signing_in": "google" in self._downloads}
+        return {"profile": prof.get(self.cfg), "kinds": prof.PET_KINDS, "genders": prof.GENDERS, "partner_kinds": prof.PARTNER_KINDS,
+                "google": {"client_id": g.get("client_id", ""), "has_secret": bool(g.get("client_secret")), "bundled": bool(google_auth.BUNDLED_CLIENT_ID)},
+                "signing_in": "google" in self._downloads, "sync": self.sync.state(), "system_tz": self._system_tz()}
+
+    @staticmethod
+    def _system_tz() -> str:
+        """Часовой пояс компьютера в виде имени IANA, если получается определить (иначе пусто)."""
+        try:
+            import datetime
+            n = datetime.datetime.now().astimezone()
+            off = n.utcoffset()
+            return f"UTC{'+' if off.total_seconds() >= 0 else '-'}{abs(int(off.total_seconds() // 3600)):02d}:{abs(int(off.total_seconds() % 3600 // 60)):02d}"
+        except Exception:
+            return ""
 
     def save_profile(self, p: dict):
         from . import profile as prof
@@ -458,6 +485,7 @@ class Api:
         if new["birth_day"] != cur["birth_day"] or new["birth_month"] != cur["birth_month"]:
             new["last_greeted"] = ""            # дату поменяли: сегодняшнее поздравление снова возможно
         self.cfg.update({"profile": new})
+        self.sync.touch()
         return self.get_profile()
 
     def save_google_client(self, client_id: str, client_secret: str = ""):
@@ -469,28 +497,34 @@ class Api:
 
     def google_login(self):
         from . import google_auth, profile as prof
+        from .sync import SyncError
         if "google" in self._downloads:
             return False
         cancel = threading.Event()
         self._downloads["google"] = {"cancel": cancel}
-        g = dict(self.cfg.get("google") or {})
+        cid, csec = google_auth.client_credentials(self.cfg)
 
         def run():
-            err, info = "", None
+            err, res = "", {}
             try:
-                info = google_auth.sign_in(g.get("client_id", ""), g.get("client_secret", ""), cancel=cancel)
+                info = google_auth.sign_in(cid, csec, cancel=cancel)
                 cur = prof.get(self.cfg)
                 patch = {"google": {k: info[k] for k in ("sub", "name", "email", "picture")}}
                 if not cur["name"]:
                     patch["name"] = info.get("given_name") or info.get("name") or ""      # имя подставляем, только если своё не вписано
                 self.cfg.update({"profile": patch})
+                try:
+                    res = self.sync.on_login(info)
+                except SyncError as e:
+                    res = {"kind": "error"}
+                    self.cfg.update({"sync": {"error": str(e)}})
             except google_auth.GoogleError as e:
                 err = str(e)
             except Exception as e:
                 err = f"Не получилось войти: {e}"
             finally:
                 self._downloads.pop("google", None)
-                self.emit({"type": "google_done", "error": err})
+                self.emit({"type": "google_done", "error": err, "sync": res})
         threading.Thread(target=run, daemon=True, name="google-login").start()
         return True
 
@@ -501,11 +535,55 @@ class Api:
         return True
 
     def google_logout(self):
+        def run():
+            self.sync.disconnect()
+            self.emit({"type": "sync_done", "error": "", "quiet": False})
+        threading.Thread(target=run, daemon=True, name="google-logout").start()
         self.cfg.update({"profile": {"google": {}}})
         c = self.cfg.data["profile"]
         c["google"] = {}                      # _merge не умеет «обнулять» вложенные словари, поэтому чистим напрямую
         self.cfg.save()
         return self.get_profile()
+
+    # ---- синхронизация между компьютерами ----
+    def sync_state(self):
+        return self.sync.state()
+
+    def _sync_task(self, fn, label: str):
+        from .sync import SyncError
+        if self.sync.busy:
+            return False
+        self.sync.busy = True
+
+        def run():
+            err, res = "", None
+            try:
+                res = fn()
+            except SyncError as e:
+                err = str(e)
+            except Exception as e:
+                err = f"Не получилось ({label}): {e.__class__.__name__}"
+            finally:
+                self.sync.busy = False
+                self.cfg.update({"sync": {"error": err}})
+                self.emit({"type": "sync_done", "error": err, "quiet": False, "label": label, "result": res if isinstance(res, (str, dict)) else None})
+        threading.Thread(target=run, daemon=True, name="karina-sync-" + label).start()
+        return True
+
+    def sync_enter_code(self, code: str):
+        return self._sync_task(lambda: self.sync.enter_code(code), "code")
+
+    def sync_now(self):
+        return self._sync_task(self.sync.sync_now, "now")
+
+    def sync_reset(self):
+        return self._sync_task(self.sync.reset, "reset")
+
+    def sync_remove_device(self, did: str):
+        return self._sync_task(lambda: self.sync.remove_device(str(did)), "remove")
+
+    def sync_disconnect(self):
+        return self._sync_task(self.sync.disconnect, "off")
 
     # ---- микшер и VPN ----
     def integrations_status(self):
@@ -567,6 +645,8 @@ class Api:
         if isinstance(ui_p, dict) and "island" in ui_p:
             ui_p["island"] = bool(ui_p["island"])
         self.cfg.update(patch)
+        if llm.get("api_key") or "enabled" in llm:
+            self.sync.touch()
         if self.island is not None and isinstance(ui_p, dict) and "island" in ui_p:
             threading.Thread(target=self.island.apply, args=(bool(ui_p["island"]),), daemon=True, name="karina-island-toggle").start()
         if bool(self.cfg["vpn"].get("enabled", True)) != old_vpn:
@@ -584,6 +664,20 @@ class Api:
 
     def clear_api_key(self):
         self.cfg.update({"llm": {"api_key": "", "enabled": False}})
+        self.sync.touch()
+        return self._safe_cfg()
+
+    def save_claude_key(self, key: str = "", enabled=None):
+        """Ключ Claude из вкладки «Облако». Пустой ключ = «оставить как было»."""
+        key = str(key or "").strip()
+        patch: dict = {}
+        if key and len(key) <= 400 and not any(ch.isspace() for ch in key):
+            patch["api_key"] = key
+        if enabled is not None:
+            patch["enabled"] = bool(enabled)
+        if patch:
+            self.cfg.update({"llm": patch})
+            self.sync.touch()
         return self._safe_cfg()
 
     # ---- чат ----
@@ -673,6 +767,8 @@ class Api:
             patch["claude_model"] = claude_model
         if patch:
             self.cfg.update({"brain": patch})
+            if "claude_model" in patch:
+                self.sync.touch()
         return self.assistant.brain.describe()
 
     def brain_test_claude(self):
@@ -709,6 +805,7 @@ class Api:
                 patch["name"] = str(data["name"] or "").strip()[:40]
         if patch:
             self.cfg.update({"cloud": {"providers": {pid: patch}}})
+            self.sync.touch()
             if "model" in patch or "url" in patch or "key" in patch:
                 self.assistant.brain.cloud._auto.pop(pid, None)        # сменили модель/адрес/ключ — подбор заново
                 self.assistant.brain.cloud._st.pop(pid, None)          # и забываем прежний отказ
@@ -718,6 +815,7 @@ class Api:
         from . import cloud as cloudmod
         if pid in cloudmod.PRESETS:
             self.cfg.update({"cloud": {"providers": {pid: {"key": "", "enabled": False}}}})
+            self.sync.touch()
         return self.cloud_state()
 
     def cloud_move(self, pid: str, delta: int):
@@ -729,12 +827,14 @@ class Api:
             j = max(0, min(len(order) - 1, i + (1 if int(delta) > 0 else -1)))
             order[i], order[j] = order[j], order[i]
             self.cfg.update({"cloud": {"order": order}})
+            self.sync.touch()
         return self.cloud_state()
 
     def cloud_strategy(self, strategy: str):
         from . import cloud as cloudmod
         if strategy in cloudmod.STRATEGIES:
             self.cfg.update({"cloud": {"strategy": strategy}})
+            self.sync.touch()
         return self.cloud_state()
 
     def cloud_models(self, pid: str):

@@ -1,6 +1,6 @@
 """Вход через Google в браузере (OAuth 2.0 для приложений на компьютере, с PKCE): открываем обычный браузер, вы выбираете аккаунт,
 Google возвращает вас на локальную страницу Карины (127.0.0.1), мы забираем имя, почту и фото. Пароль Google Карина не видит,
-токены не сохраняются (нужны только на секунду, чтобы спросить имя).
+доступ к скрытой папке приложения в Drive (для синхронизации между компьютерами) хранится только на этом компьютере.
 
 Требуется один раз создать «Идентификатор клиента OAuth» типа «Приложение для компьютера» в Google Cloud Console и вписать Client ID
 (и Client secret, если Google его выдал) в Карине. Дату рождения и город Google без особой проверки приложения не отдаёт — их заполняете сами.
@@ -12,10 +12,26 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 SCOPES = "openid email profile"
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata"     # скрытая папка приложения в Google Drive (синхронизация между компьютерами); чужих файлов не видит
 
 _PAGE = """<!doctype html><meta charset="utf-8"><title>Карина</title>
 <body style="font:18px system-ui;background:#10131a;color:#e8ecf4;display:grid;place-items:center;height:100vh;margin:0"><div style="text-align:center">
 <h2>{title}</h2><p style="opacity:.7">{text}</p></div></body>"""
+
+
+# Если вы собираете Карину сами: впишите сюда Client ID (и Client secret) своего «Приложения для компьютера» — тогда пользователям не придётся
+# создавать свой в Google Cloud Console, а вход и синхронизация заработают сразу. Для приложений на компьютере этот секрет не считается тайной.
+BUNDLED_CLIENT_ID = ""
+BUNDLED_CLIENT_SECRET = ""
+
+
+def client_credentials(cfg) -> tuple[str, str]:
+    """(client_id, client_secret): свои из профиля, а если не заданы — встроенные."""
+    g = cfg.get("google") or {}
+    cid = str(g.get("client_id") or "").strip()
+    if cid:
+        return cid, str(g.get("client_secret") or "").strip()
+    return BUNDLED_CLIENT_ID, BUNDLED_CLIENT_SECRET
 
 
 class GoogleError(Exception):
@@ -44,8 +60,9 @@ def _post(url: str, data: dict) -> dict:
         raise GoogleError("Не получилось связаться с Google. Проверьте интернет.") from None
 
 
-def sign_in(client_id: str, client_secret: str = "", open_browser=None, timeout: float = 180.0, cancel: threading.Event | None = None) -> dict:
-    """Возвращает {sub, name, given_name, email, picture}. Бросает GoogleError с понятным текстом."""
+def sign_in(client_id: str, client_secret: str = "", open_browser=None, timeout: float = 180.0, cancel: threading.Event | None = None, sync: bool = True) -> dict:
+    """Возвращает {sub, name, given_name, email, picture, refresh_token, drive}. sync=True — дополнительно просим доступ к скрытой папке приложения в Drive.
+    Бросает GoogleError с понятным текстом."""
     if not client_id.strip():
         raise GoogleError("Не указан Client ID. Создайте его в Google Cloud Console (инструкция в профиле) и впишите в поле.")
     open_browser = open_browser or webbrowser.open
@@ -86,8 +103,8 @@ def sign_in(client_id: str, client_secret: str = "", open_browser=None, timeout:
     threading.Thread(target=srv.serve_forever, daemon=True, name="google-oauth").start()
     try:
         url = AUTH_URL + "?" + urllib.parse.urlencode({
-            "client_id": client_id.strip(), "redirect_uri": redirect, "response_type": "code", "scope": SCOPES, "state": state,
-            "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "select_account"})
+            "client_id": client_id.strip(), "redirect_uri": redirect, "response_type": "code", "scope": SCOPES + (" " + DRIVE_SCOPE if sync else ""), "state": state,
+            "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "select_account consent", **({"access_type": "offline"} if sync else {})})
         open_browser(url)
         end = time.time() + timeout
         while not done.wait(0.25):
@@ -108,7 +125,24 @@ def sign_in(client_id: str, client_secret: str = "", open_browser=None, timeout:
         except Exception:
             raise GoogleError("Вход прошёл, но данные профиля получить не удалось.") from None
         return {"sub": str(info.get("sub") or ""), "name": info.get("name") or "", "given_name": info.get("given_name") or "",
-                "email": info.get("email") or "", "picture": info.get("picture") or ""}
+                "email": info.get("email") or "", "picture": info.get("picture") or "", "refresh_token": tok.get("refresh_token") or "",
+                "drive": DRIVE_SCOPE in str(tok.get("scope") or "")}
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def refresh_access(client_id: str, client_secret: str, refresh_token: str) -> str:
+    """Новый короткий токен доступа по сохранённому refresh_token. GoogleError, если доступ отозван или нет сети."""
+    if not (client_id.strip() and refresh_token):
+        raise GoogleError("Нет доступа к Google: войдите через Google заново.")
+    try:
+        tok = _post(TOKEN_URL, {"client_id": client_id.strip(), "refresh_token": refresh_token, "grant_type": "refresh_token",
+                                **({"client_secret": client_secret.strip()} if client_secret.strip() else {})})
+    except GoogleError as e:
+        if "отклонил вход" in str(e):
+            raise GoogleError("Доступ к Google отозван или истёк. Выйдите и войдите через Google заново.") from None
+        raise
+    if not tok.get("access_token"):
+        raise GoogleError("Google не выдал доступ. Войдите через Google заново.")
+    return tok["access_token"]

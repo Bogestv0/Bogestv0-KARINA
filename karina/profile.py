@@ -1,7 +1,8 @@
-"""Профиль пользователя: имя, день рождения, город, питомцы. Карина подстраивается: поздравляет, называет по имени, берёт город для погоды,
+"""Профиль пользователя: имя, пол, день рождения, страна, город, часовой пояс, партнёр, занятие, интересы, питомцы. Карина подстраивается: поздравляет, называет по имени, берёт город для погоды,
 знает кличку питомца, а нейросеть получает короткую справку о вас (если не отключено в профиле)."""
 from __future__ import annotations
 import datetime, re
+from zoneinfo import ZoneInfo
 from . import prompts
 from .textutil import plural
 
@@ -10,6 +11,11 @@ _KIND_WORDS = {  # как их называют голосом (основы с�
     "dog": ["собак", "пес", "пёс", "щенок", "щенк"], "cat": ["кошк", "кот", "котик", "кошечк"], "parrot": ["попуга"],
     "hamster": ["хомяк"], "rabbit": ["кролик"], "fish": ["рыб"], "other": ["питом", "животн", "зверь"],
 }
+GENDERS = {"": "не указан", "male": "мужской", "female": "женский", "other": "другое"}
+PARTNER_KINDS = {"none": "нет / не указывать", "girl": "девушка", "boy": "парень", "other": "другое"}
+_PARTNER_WORD = {"girl": "девушка", "boy": "парень", "other": "партнёр"}
+_TZ_RX = re.compile(r"^(?:UTC|GMT|[A-Za-z_]+(?:/[A-Za-z0-9_+\-]+){1,2})$")
+_OFFSET_RX = re.compile(r"^UTC([+-])(\d{1,2})(?::(\d{2}))?$")
 _MONTHS = ["", "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
 _ORD = {1: "первого", 2: "второго", 3: "третьего", 4: "четвёртого", 5: "пятого", 6: "шестого", 7: "седьмого", 8: "восьмого", 9: "девятого", 10: "десятого",
         11: "одиннадцатого", 12: "двенадцатого", 13: "тринадцатого", 14: "четырнадцатого", 15: "пятнадцатого", 16: "шестнадцатого", 17: "семнадцатого",
@@ -18,8 +24,13 @@ _ORD = {1: "первого", 2: "второго", 3: "третьего", 4: "ч�
         29: "двадцать девятого", 30: "тридцатого", 31: "тридцать первого"}
 
 
+def default_partner() -> dict:
+    return {"kind": "none", "name": "", "birth_day": 0, "birth_month": 0}
+
+
 def default() -> dict:
-    return {"name": "", "birth_day": 0, "birth_month": 0, "birth_year": 0, "city": "", "pets": [], "google": {},
+    return {"name": "", "full_name": "", "gender": "", "birth_day": 0, "birth_month": 0, "birth_year": 0, "country": "", "city": "", "timezone": "",
+            "partner": default_partner(), "occupation": "", "interests": "", "about": "", "pets": [], "google": {},
             "last_greeted": "", "share_with_llm": True}
 
 
@@ -28,7 +39,15 @@ def clean(p: dict) -> dict:
     out = default()
     out.update({k: p[k] for k in ("google", "last_greeted") if k in p and isinstance(p[k], (dict, str))})
     out["name"] = str(p.get("name") or "").strip()[:40]
+    out["full_name"] = str(p.get("full_name") or "").strip()[:80]
+    out["gender"] = p.get("gender") if p.get("gender") in GENDERS else ""
+    out["country"] = str(p.get("country") or "").strip()[:60]
     out["city"] = str(p.get("city") or "").strip()[:60]
+    tz = str(p.get("timezone") or "").strip()[:40]
+    out["timezone"] = tz if valid_timezone(tz) else ""
+    out["occupation"] = str(p.get("occupation") or "").strip()[:80]
+    out["interests"] = str(p.get("interests") or "").strip()[:300]
+    out["about"] = str(p.get("about") or "").strip()[:600]
     out["share_with_llm"] = bool(p.get("share_with_llm", True))
 
     def num(v, lo, hi):
@@ -44,6 +63,19 @@ def clean(p: dict) -> dict:
             datetime.date(2024, out["birth_month"], out["birth_day"])
         except ValueError:
             out["birth_day"] = out["birth_month"] = 0
+    pt = p.get("partner") if isinstance(p.get("partner"), dict) else {}
+    partner = default_partner()
+    partner["kind"] = pt.get("kind") if pt.get("kind") in PARTNER_KINDS else "none"
+    if partner["kind"] != "none":
+        partner["name"] = str(pt.get("name") or "").strip()[:40]
+        d, m = num(pt.get("birth_day"), 1, 31), num(pt.get("birth_month"), 1, 12)
+        if d and m:
+            try:
+                datetime.date(2024, m, d)
+                partner.update(birth_day=d, birth_month=m)
+            except ValueError:
+                pass
+    out["partner"] = partner
     pets = []
     for x in (p.get("pets") or [])[:12]:
         name = str((x or {}).get("name") or "").strip()[:30]
@@ -59,8 +91,46 @@ def clean(p: dict) -> dict:
     return out
 
 
+def valid_timezone(tz: str) -> bool:
+    """Пусто — «определить по компьютеру». Иначе имя зоны IANA («Asia/Krasnoyarsk») или UTC; список зон может быть неполным (нет tzdata), поэтому достаточно формы записи."""
+    if not tz:
+        return True
+    if _OFFSET_RX.match(tz):
+        m = _OFFSET_RX.match(tz)
+        return int(m.group(2)) <= 14 and int(m.group(3) or 0) < 60
+    if not _TZ_RX.match(tz):
+        return False
+    try:
+        ZoneInfo(tz)
+    except Exception:
+        pass
+    return True
+
+
 def get(cfg) -> dict:
-    return {**default(), **(cfg.get("profile") or {})}
+    out = {**default(), **(cfg.get("profile") or {})}
+    out["partner"] = {**default_partner(), **(out.get("partner") if isinstance(out.get("partner"), dict) else {})}
+    return out
+
+
+def now(p: dict | None = None) -> datetime.datetime:
+    """Текущее время в часовом поясе из профиля (если не указан или недоступен — по часам компьютера)."""
+    tz = (p or {}).get("timezone") or ""
+    m = _OFFSET_RX.match(tz)
+    if m and valid_timezone(tz):
+        off = datetime.timedelta(hours=int(m.group(2)), minutes=int(m.group(3) or 0)) * (1 if m.group(1) == "+" else -1)
+        return datetime.datetime.now(datetime.timezone(off))
+    if tz:
+        try:
+            return datetime.datetime.now(ZoneInfo(tz))
+        except Exception:
+            pass
+    return datetime.datetime.now()
+
+
+def today(cfg_or_profile) -> datetime.date:
+    p = cfg_or_profile if "birth_day" in cfg_or_profile else get(cfg_or_profile)
+    return now(p).date()
 
 
 def first_name(cfg) -> str:
@@ -95,8 +165,8 @@ def is_birthday(p: dict, today: datetime.date | None = None) -> bool:
 
 def due_greeting(cfg, today: datetime.date | None = None) -> str:
     """Что сказать сегодня (один раз за день): поздравление пользователя и/или питомцев. Пусто, если нечего."""
-    today = today or datetime.date.today()
     p = get(cfg)
+    today = today or now(p).date()
     if p["last_greeted"] == today.isoformat():
         return ""
     parts = []
@@ -104,6 +174,11 @@ def due_greeting(cfg, today: datetime.date | None = None) -> str:
         n, a = first_name(cfg), age(p, today)
         parts.append(f"С днём рождения{', ' + n if n else ''}! " + (f"Вам сегодня исполняется {years_word(a)}. " if a else "")
                      + "Желаю радости, здоровья и хорошего настроения!")
+    pr = p["partner"]
+    if pr["kind"] != "none" and _is_today(pr["birth_day"], pr["birth_month"], today):
+        who = _PARTNER_WORD.get(pr["kind"], "партнёра")
+        acc = {"девушка": "вашей девушки", "парень": "вашего парня", "партнёр": "вашего партнёра"}.get(who, "вашего партнёра")
+        parts.append(f"Сегодня день рождения {acc}" + (f", {pr['name']}" if pr["name"] else "") + ". Не забудьте поздравить!")
     for pet in p["pets"]:
         if _is_today(pet.get("birth_day", 0), pet.get("birth_month", 0), today):
             parts.append(f"А ещё у питомца по имени {pet['name']} сегодня день рождения. Поздравляю!")
@@ -111,7 +186,7 @@ def due_greeting(cfg, today: datetime.date | None = None) -> str:
 
 
 def mark_greeted(cfg, today: datetime.date | None = None):
-    cfg.update({"profile": {"last_greeted": (today or datetime.date.today()).isoformat()}})
+    cfg.update({"profile": {"last_greeted": (today or now(get(cfg)).date()).isoformat()}})
 
 
 def days_to_birthday(p: dict, today: datetime.date | None = None) -> int | None:
@@ -143,8 +218,23 @@ def prompt_section(cfg) -> str:
     a = age(p)
     if a is not None:
         bits.append(prompts.fill(prompts.PROFILE_AGE, age=years_word(a)))
+    if p["gender"] in ("male", "female"):
+        bits.append(prompts.PROFILE_GENDER_M if p["gender"] == "male" else prompts.PROFILE_GENDER_F)
     if p["city"]:
-        bits.append(prompts.fill(prompts.PROFILE_CITY, city=p["city"]))
+        bits.append(prompts.fill(prompts.PROFILE_CITY, city=p["city"] + (f", {p['country']}" if p["country"] else "")))
+    elif p["country"]:
+        bits.append(prompts.fill(prompts.PROFILE_COUNTRY, country=p["country"]))
+    if p["timezone"]:
+        bits.append(prompts.fill(prompts.PROFILE_TZ, tz=p["timezone"], time=now(p).strftime("%H:%M, %d.%m.%Y")))
+    pr = p["partner"]
+    if pr["kind"] != "none":
+        bits.append(prompts.fill(prompts.PROFILE_PARTNER, who=_PARTNER_WORD.get(pr["kind"], "партнёр"), name=(f" по имени {pr['name']}" if pr["name"] else "")))
+    if p["occupation"]:
+        bits.append(prompts.fill(prompts.PROFILE_JOB, job=p["occupation"]))
+    if p["interests"]:
+        bits.append(prompts.fill(prompts.PROFILE_INTERESTS, interests=p["interests"]))
+    if p["about"]:
+        bits.append(prompts.fill(prompts.PROFILE_ABOUT, about=p["about"]))
     if p["pets"]:
         bits.append(prompts.fill(prompts.PROFILE_PETS, pets=pets_text(p)))
     return (prompts.PROFILE_HEADER + " ".join(bits)) if bits else ""
@@ -163,3 +253,10 @@ def match_pet(p: dict, text: str):
 
 def date_words(d: int, m: int) -> str:
     return f"{_ORD[d]} {_MONTHS[m]}"
+
+
+def partner_text(p: dict) -> str:
+    pr = p["partner"]
+    if pr["kind"] == "none":
+        return ""
+    return _PARTNER_WORD.get(pr["kind"], "партнёр") + (f" по имени {pr['name']}" if pr["name"] else "")

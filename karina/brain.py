@@ -12,9 +12,9 @@ from .engine import EngineError
 from .textutil import norm
 
 MODES = ("local", "claude", "cloud", "auto")
-MODE_LABEL = {"local": "Локальная модель", "claude": "Claude", "cloud": "Бесплатные облака", "auto": "Авто"}
+MODE_LABEL = {"local": "Локальная модель", "claude": "Claude", "cloud": "Облачные модели", "auto": "Авто"}
 LOCAL_NAME = "Локальная модель"
-CLOUD_NAME = "Бесплатное облако"
+CLOUD_NAME = "Облако"
 
 # Признаки «сложной» просьбы для режима «авто». text — фраза пользователя как есть.
 COMPLEX = re.compile(
@@ -61,7 +61,7 @@ class Brain:
 
     def claude_status(self) -> tuple[bool, str]:
         if not self.claude.has_key():
-            return False, "Ключ Claude не задан. Введите его в «Настройки» (раздел «Claude»)."
+            return False, "Ключ Claude не задан. Введите его во вкладке «Облако»."
         if not net.is_online():
             return False, "Нет интернета, поэтому Claude сейчас недоступен."
         return True, ""

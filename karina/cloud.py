@@ -1,4 +1,4 @@
-"""Облачные модели: только Google Gemini (бесплатный ключ из AI Studio) и «свой сервер» (любой OpenAI-совместимый адрес). Остальные бесплатные сервисы убраны.
+"""Облачные модели: Google Gemini (бесплатный ключ из AI Studio), DeepSeek (платный API по очень низкой цене, свой ключ) и «свой сервер» (любой OpenAI-совместимый адрес).
 
 У каждого человека свои ключи и свои лимиты. Провайдеры идут по очереди; когда у одного кончился лимит (ошибка 429),
 Карина сразу переходит к следующему, а исчерпанный откладывает на время, которое назвал сервер. Интерфейс такой же, как у
@@ -12,6 +12,8 @@ from .engine import EngineError
 
 CHARS_PER_TOKEN = 2.6          # русский текст: оценка токенов по числу символов (с запасом)
 MAX_COOLDOWN = 24 * 3600
+RETRY_DELAYS = (1.5, 4.0)      # паузы (с) перед повтором, когда сервер перегружен (503 и др. 5xx): обычно хватает пары секунд
+MAX_ALT_MODELS = 2             # сколько запасных моделей того же провайдера пробовать после перегрузки
 UA = "Bogestv0-KARINA"          # Cloudflare у части провайдеров режет стандартный User-Agent Python
 
 
@@ -27,18 +29,24 @@ PRESETS: dict[str, dict] = {
         "signup": "https://aistudio.google.com/apikey", "prefer": [r"gemini-[\d.]+-flash$", r"flash"], "newest": True,   # модель не зашита: Google снимает старые («gemini-2.5-flash» → 404), берём самую новую flash из списка
         "note": "Длинный контекст: хорош для больших текстов и глубокого поиска. Лимиты видны в Google AI Studio. Вне ЕС, Великобритании и Швейцарии бесплатные запросы могут использоваться Google для обучения — личное не отправляйте.",
     },
+    "deepseek": {
+        "name": "DeepSeek", "url": "https://api.deepseek.com", "model": "", "max_in": 60000, "max_out": 8000,
+        "signup": "https://platform.deepseek.com/api_keys", "prefer": [r"^deepseek-chat$", r"deepseek-chat", r"deepseek"],
+        "note": "Сильная и очень недорогая модель (платный API: пополните баланс на platform.deepseek.com, обычно хватает нескольких долларов на месяцы). «deepseek-chat» — быстрые ответы, «deepseek-reasoner» — думает дольше, лучше для сложного. Серверы DeepSeek находятся в Китае: личное не отправляйте.",
+    },
     "custom": {
         "name": "Свой сервер", "url": "", "model": "", "max_in": 16000, "max_out": 2000, "signup": "", "prefer": [],
         "note": "Любой сервис с OpenAI-совместимым API (адрес вида https://…/v1): другие бесплатные облака из списков на GitHub, Ollama или LM Studio в вашей сети.",
     },
 }
-DEFAULT_ORDER = ["gemini", "custom"]
+DEFAULT_ORDER = ["gemini", "deepseek", "custom"]
 STRATEGIES = ("failover", "spread")
 _NOT_CHAT = re.compile(r"embed|whisper|tts|guard|moderat|image|rerank|speech|orpheus|safeguard|transcri|audio|dall|veo|imagen", re.I)
 
 
 # ---------- внутренние «причины отказа» ----------
 class _Fail(Exception):
+    """kind: limit (429) | auth | model (404) | big | busy (5xx: сервер перегружен, временно) | down (обрыв) | error"""
     def __init__(self, msg: str, cooldown: float = 0.0, kind: str = "error"):
         super().__init__(msg)
         self.msg, self.cooldown, self.kind = msg, cooldown, kind
@@ -169,12 +177,12 @@ class CloudPool:
         with self._lock:
             return max(0.0, self._s(pid)["until"] - time.time())
 
-    def _mark_ok(self, p: dict):
+    def _mark_ok(self, p: dict, model: str = ""):
         with self._lock:
             s = self._s(p["id"])
             s.update(until=0.0, err="", kind="")
             s["ok"] += 1
-            self.last_label = f"{p['name']} · {self._model_name(p)}"
+            self.last_label = f"{p['name']} · {model or self._model_name(p)}"
 
     def _mark_fail(self, p: dict, f: _Fail):
         with self._lock:
@@ -194,7 +202,7 @@ class CloudPool:
     def unavailable_reason(self) -> str:
         conf = self.configured()
         if not conf:
-            return "Бесплатные облачные модели не настроены: откройте «Модели», добавьте ключ хотя бы одного провайдера и включите его."
+            return "Облачные модели не настроены: откройте вкладку «Облако», добавьте ключ хотя бы одного провайдера и включите его."
         left = sorted((self._cooling(p["id"]), p["name"]) for p in conf)
         if left[0][0] > 0 and not self.available():
             return f"Лимиты всех подключённых облачных моделей исчерпаны. Ближайшая ({left[0][1]}) освободится через {fmt_wait(left[0][0])}."
@@ -264,8 +272,12 @@ class CloudPool:
         base = {401: "ключ не принят (401)",
                 403: "доступ запрещён (403) — чаще всего сервис не пускает из вашей страны (нужен VPN/прокси) или ключ без прав",
                 402: "нужна оплата или закончились кредиты (402)", 404: "модель или адрес не найдены (404)",
-                429: "лимит исчерпан (429)"}.get(code, f"ошибка {code}")
-        return base + (f": {msg[:160]}" if msg and code not in (401,) else "") + (cloudnet.note() if code == 403 else "")
+                429: "лимит исчерпан (429)",
+                500: "сбой на стороне провайдера (500)", 502: "сервер провайдера не отвечает (502)",
+                503: "сервер перегружен (503) — слишком много запросов у самого провайдера, это временно",
+                504: "сервер провайдера не успел ответить (504)"}.get(code, f"ошибка {code}")
+        keep = msg and code not in (401,) and code < 500          # у 5xx английский текст сервера только пугает: причина уже названа выше
+        return base + (f": {msg[:160]}" if keep else "") + (cloudnet.note() if code == 403 else "")
 
     def _call(self, p: dict, msgs: list[dict], max_tokens: int, temperature: float, on_delta, stop, json_mode: bool, plain: bool = False, _again: bool = True) -> str:
         if p["model"] and p["model"] in self._dead.get(p["id"], set()):
@@ -337,7 +349,7 @@ class CloudPool:
             if e.code == 413 or (e.code == 400 and re.search(r"context|too (long|large)|maximum", low)):
                 raise _Fail("запрос слишком большой для этого сервера", 0, "big")
             if e.code >= 500:
-                raise _Fail(self._explain(e.code, text), 30, "down")
+                raise _Fail(self._explain(e.code, text), 20, "busy")
             raise _Fail(self._scrub(p, self._explain(e.code, text)), 60, "error")
         except _Fail:
             raise
@@ -347,6 +359,57 @@ class CloudPool:
         if not text and not (stop is not None and stop.is_set()):
             raise _Fail("пустой ответ", 15, "down")
         return text
+
+    # ---------- повторы и запасные модели ----------
+    @staticmethod
+    def _wait(sec: float, stop) -> bool:
+        """Пауза, которую можно прервать кнопкой «Стоп». True — прервали."""
+        if sec <= 0:
+            return bool(stop is not None and stop.is_set())
+        if stop is not None:
+            return stop.wait(sec)
+        time.sleep(sec)
+        return False
+
+    def _alternatives(self, p: dict, used: str) -> list[str]:
+        """Запасные модели того же провайдера на случай перегрузки основной (например, предыдущая версия flash или flash-lite).
+        Если модель выбрана вручную или это «свой сервер» — запасных нет, уважаем выбор."""
+        if p["model"] or p["id"] == "custom":
+            return []
+        try:
+            ids = [i for i in self.list_models(p["id"]) if i != used and i not in self._dead.get(p["id"], set())]
+        except CloudError:
+            return []
+        ranked: list[str] = []
+        for rx in p["prefer"]:
+            found = [i for i in ids if re.search(rx, i, re.I) and i not in ranked]
+            ranked += sorted(found, key=lambda i: [int(x) for x in re.findall(r"\d+", i)], reverse=True)
+        return ranked[:MAX_ALT_MODELS]
+
+    def _run(self, p: dict, msgs: list[dict], max_tokens: int, temperature: float, on_delta, stop, json_mode: bool) -> tuple[str, str]:
+        """Один провайдер целиком: при перегрузке (503) повторяет с паузой, затем пробует запасные модели.
+        Возвращает (текст, модель). Любая другая причина отказа сразу уходит наверх — переходим к следующему провайдеру."""
+        last: _Fail | None = None
+        alts: list[str] | None = None
+        cur = p
+        while True:
+            for delay in (0.0,) + tuple(RETRY_DELAYS):
+                if self._wait(delay, stop):
+                    return "", ""
+                try:
+                    return self._call(cur, msgs, max_tokens, temperature, on_delta, stop, json_mode), self._model_name(cur)
+                except _Fail as f:
+                    if f.kind == "busy" or (f.kind == "model" and cur is not p):     # у запасной модели 404 — просто берём следующую
+                        last = f
+                        if f.kind == "model":
+                            break
+                    else:
+                        raise
+            if alts is None:
+                alts = self._alternatives(p, self._model_name(cur))
+            if not alts:
+                raise last
+            cur = dict(p, model=alts.pop(0))
 
     def chat(self, messages: list[dict], max_tokens: int = 1024, temperature: float = 0.6, on_delta=None,
              stop: threading.Event | None = None, json_mode: bool = False) -> str:
@@ -360,22 +423,24 @@ class CloudPool:
         if not tries:        # слишком большой запрос: отправляем самому вместительному, обрезав середину
             big = max(cands, key=lambda p: p["max_in"])
             tries = [(big, force_fit(messages, big["max_in"]))]
-        errors = []
+        errors, kinds = [], []
         for p, msgs in tries:
             if stop is not None and stop.is_set():
                 break
             try:
-                text = self._call(p, msgs, max_tokens, temperature, on_delta, stop, json_mode)
-                self._mark_ok(p)
+                text, used = self._run(p, msgs, max_tokens, temperature, on_delta, stop, json_mode)
+                if stop is not None and stop.is_set() and not text:
+                    break
+                self._mark_ok(p, used)
                 return text
             except _Fail as f:
                 self._mark_fail(p, f)
-                errors.append(f"{p['name']}: {f.msg}")
+                errors.append(f"{p['name']}: {f.msg}"); kinds.append(f.kind)
             except CloudError as e:
-                errors.append(f"{p['name']}: {e}")
+                errors.append(f"{p['name']}: {e}"); kinds.append("error")
         if stop is not None and stop.is_set():
             return ""
-        raise CloudError("Ни одна бесплатная модель не ответила.\n" + "\n".join(errors[-6:]))
+        raise CloudError(explain_failure(errors, kinds))
 
     # ---------- проверка и описание ----------
     def ping(self, pid: str) -> tuple[bool, str, float]:
@@ -413,6 +478,17 @@ class CloudPool:
                         "model_auto": self._auto.get(pid, ""), "url": p["url"] if pid == "custom" else "", "state": state, "text": text,
                         "used_today": s["ok"], "signup": p["signup"], "note": p["note"], "wait": int(wait)})
         return out
+
+
+def explain_failure(errors: list[str], kinds: list[str]) -> str:
+    """Понятный итог, когда не ответил никто: сначала что случилось и что делать, ниже по строке на провайдера."""
+    if kinds and all(k == "busy" for k in kinds):
+        head = "Серверы бесплатных моделей сейчас перегружены — это временно и не связано с вашим компьютером или ключом. Подождите минуту и повторите вопрос."
+    elif kinds and all(k == "limit" for k in kinds):
+        head = "Бесплатные лимиты у всех подключённых моделей исчерпаны. Подождите или добавьте ещё один ключ во вкладке «Облако»."
+    else:
+        head = "Бесплатные модели не смогли ответить."
+    return head + "\n" + "\n".join("• " + e for e in errors[-6:])
 
 
 def fmt_wait(sec: float) -> str:

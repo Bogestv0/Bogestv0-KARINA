@@ -59,11 +59,11 @@ class ClaudeClient:
             pass
         low = msg.lower()
         if code == 401:
-            return "Claude не принял ключ API. Проверьте ключ в «Настройки»."
+            return "Claude не принял ключ API. Проверьте ключ во вкладке «Облако»."
         if code == 403:
             return "У этого ключа нет доступа к Claude (ошибка 403): сервис мог не пустить из вашей страны." + cloudnet.note()
         if code == 404:
-            return f"Модель «{self.model_id}» недоступна для вашего ключа. Выберите другую в «Модели → Мозг»."
+            return f"Модель «{self.model_id}» недоступна для вашего ключа. Выберите другую во вкладке «Облако»."
         if code == 429:
             return "Слишком много запросов к Claude или исчерпан лимит. Подождите немного и повторите."
         if code == 400 and ("credit balance" in low or "billing" in low):
@@ -97,7 +97,7 @@ class ClaudeClient:
     def chat(self, messages: list[dict], max_tokens: int = 1024, temperature: float = 0.6, on_delta=None,
              stop: threading.Event | None = None, json_mode: bool = False) -> str:
         if not self.has_key():
-            raise ClaudeError("Ключ Claude не задан. Введите его в «Настройки».")
+            raise ClaudeError("Ключ Claude не задан. Введите его во вкладке «Облако».")
         system, msgs = self._split(messages)
         if json_mode:
             system += "\n\nОтвечай только корректным JSON без пояснений и без обрамляющих знаков."

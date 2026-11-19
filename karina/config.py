@@ -78,8 +78,13 @@ DEFAULTS: dict = {
     # Bogestv0 VPN: расширение само подключается к Карине на 127.0.0.1:port (только с адреса расширения) и ждёт команды «включи / выключи впн»
     "vpn": {"enabled": True, "port": 47835},
     # Профиль: имя, дата рождения, город, питомцы. google.client_id / client_secret — ваш OAuth-клиент для входа через Google
-    "profile": {"name": "", "birth_day": 0, "birth_month": 0, "birth_year": 0, "city": "", "pets": [], "google": {}, "last_greeted": "", "share_with_llm": True},
+    "profile": {"name": "", "full_name": "", "gender": "", "birth_day": 0, "birth_month": 0, "birth_year": 0, "country": "", "city": "", "timezone": "",
+                "partner": {"kind": "none", "name": "", "birth_day": 0, "birth_month": 0}, "occupation": "", "interests": "", "about": "",
+                "pets": [], "google": {}, "last_greeted": "", "share_with_llm": True},
     "google": {"client_id": "", "client_secret": ""},
+    # синхронизация между компьютерами (karina/sync.py): enabled, code — персональный код (шифрует данные в скрытой папке Google Drive), refresh_token — доступ к ней,
+    # device_id / device_name — этот компьютер, remote_updated / changed — отметки времени для «побеждает более новое»
+    "sync": {"enabled": False, "code": "", "refresh_token": "", "device_id": "", "device_name": "", "remote_updated": 0, "changed": 0, "last_sync": 0, "error": "", "pending": False, "devices": []},
     "apps": [],       # свои программы: {"name","aliases":[],"path","args","proc":[]}
     "commands": [],   # свои команды: {"phrases":[],"do":{"type","value"},"reply"}
 }
