@@ -36,7 +36,9 @@
     $$('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'apps') loadApps();
     if (b.dataset.tab === 'commands') loadCommands();
-    if (b.dataset.tab === 'models') { loadModels(); loadBrain(); loadCloud(); loadImg(); }
+    if (b.dataset.tab === 'models') { loadModels(); loadBrain(); loadImg(); }
+    if (b.dataset.tab === 'cloud') { loadBrain(); loadCloud(); }
+    if (b.dataset.tab === 'profile') loadProfile();
     if (b.dataset.tab === 'chat') openChatTab();
     if (b.dataset.tab === 'sound') loadOut(false);
     if (b.dataset.tab === 'widget') loadWidget();
@@ -218,6 +220,8 @@
       else if (ev.type === 'cloud_test') { const r = $(`.cloud-row[data-pid="${ev.pid}"]`); if (r) { const o = $('.note', r); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Работает (${ev.sec} с): ${ev.text}` : ev.text; $$('button', r).forEach(b => b.disabled = false); } loadCloud(); loadBrain(); }
       else if (ev.type === 'brain_test') { const o = $('#brainTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `Claude отвечает: «${ev.text}» (${ev.sec} с)` : ev.text; $('#brainTest').disabled = false; }
       else if (ev.type === 'google_done') googleDone(ev);
+      else if (ev.type === 'sync_done') syncDone(ev);
+      else if (ev.type === 'sync_applied') { loadProfile(); loadCloud(); loadBrain(); refresh(); }
       else if (ev.type === 'components') compEvent(ev);
       else if (ev.type === 'silero_dl') silProgress(ev);
       else if (ev.type === 'silero_dl_done') silDone(ev);
@@ -226,9 +230,9 @@
       else if (ev.type === 'model_progress') modelProgress(ev);
       else if (ev.type === 'model_done') { if (ev.error && ev.error !== 'cancelled') flash($('#mdMsg'), ev.error, true); loadModels(); }
       else if (ev.type === 'engine') renderEngine(ev);
-      else if (ev.type === 'update_progress') { const pb = $('#updPbar'); pb.hidden = false; $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%'; updStatus(ev.total ? `Скачано ${fmtGb(ev.done)} из ${fmtGb(ev.total)}` : 'Скачиваю…'); }
-      else if (ev.type === 'update_ready') { updStatus('Скачано. Запускаю установку: Карина закроется и откроется заново.'); }
-      else if (ev.type === 'update_done') { $('#updInstall').disabled = false; $('#updLater').disabled = false; $('#updPbar').hidden = true; if (ev.error && ev.error !== 'cancelled') updStatus(ev.error, true); else updStatus(''); }
+      else if (ev.type === 'update_progress') updProgress(ev);
+      else if (ev.type === 'update_ready') { updProgress({ done: 1, total: 1, final: true }); updStatus('Скачано и проверено. Запускаю установку: Карина закроется и откроется заново.'); }
+      else if (ev.type === 'update_done') { updBusy(false); if (ev.error && ev.error !== 'cancelled') updStatus(ev.error, true); else updStatus(ev.error === 'cancelled' ? 'Загрузка отменена.' : ''); }
       else if (ev.type === 'model_test') { const o = $('#mdTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `${ev.text}\n(${ev.sec} с)` : ev.text; $('#mdTest').disabled = false; }
       else if (ev.type === 'state') { status.state = ev.state; status.sleeping = ev.sleeping; status.listening = ev.listening; renderState(ev.state, ev.detail, ev.sleeping, ev.listening); }
     },
@@ -796,20 +800,21 @@
     const box = $('#limgList'); if (!box) return; box.textContent = '';
     (st.local || []).forEach(m => {
       const it = el('div', 'item model ' + (m.installed && m.selected ? 'ok' : '')); it.dataset.lid = m.id;
-      const t = el('div', 't'); t.append(el('b', '', `${m.title} · ${m.size_gb} ГБ`), el('span', 'wrap', m.desc), el('span', 'wrap', `На вашем компьютере: ${m.fit_label} — ${m.eta}. Рисует так: ${m.plan}.`));
       const dl = st.dl && st.dl.id === m.id;
+      const t = el('div', 't');
+      t.append(mHead(m.title, [m.recommended && ['Рекомендуется'], (m.fit === 'slow' || m.fit === 'heavy') && ['Медленно', true], m.installed && m.selected && ['Выбрана']]),
+        mChips([`${m.size_gb} ГБ`, m.fit_label, m.eta]), el('span', 'wrap desc', m.desc), el('span', 'wrap desc', `Рисует так: ${m.plan}.`));
       if (dl) { const pb = el('div', 'pbar'); pb.append(el('i')); t.append(pb, el('span', 'plab', 'Подготовка…')); }
       it.append(t);
-      if (m.recommended) it.append(el('span', 'tag', 'Рекомендуется'));
-      if (m.fit === 'slow' || m.fit === 'heavy') it.append(el('span', 'tag warn', 'Медленно'));
-      if (m.installed && m.selected) it.append(el('span', 'tag', 'Выбрана'));
-      if (dl) { const b = el('button', 'btn', 'Отмена'); b.onclick = () => call('localimg_cancel'); it.append(b); }
+      let btns = [];
+      if (dl) { const x = el('button', 'btn', 'Отмена'); x.onclick = () => call('localimg_cancel'); btns = [x]; }
       else if (m.installed) {
-        if (!m.selected) { const b = el('button', 'btn primary', 'Выбрать'); b.onclick = async () => renderImg(await call('localimg_select', m.id)); it.append(b); }
-        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (await ask('Удалить модель с диска?', { ok: 'Удалить', danger: true })) { await call('localimg_delete', m.id); loadImg(); } }; it.append(d);
+        if (!m.selected) { const x = el('button', 'btn primary', 'Выбрать'); x.onclick = async () => renderImg(await call('localimg_select', m.id)); btns.push(x); }
+        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (await ask('Удалить модель с диска?', { ok: 'Удалить', danger: true })) { await call('localimg_delete', m.id); loadImg(); } }; btns.push(d);
       } else {
-        const b = el('button', 'btn primary', 'Скачать'); b.onclick = async () => { b.disabled = true; await call('localimg_download', m.id); loadImg(); }; it.append(b);
+        const x = el('button', 'btn primary', 'Скачать'); x.onclick = async () => { x.disabled = true; await call('localimg_download', m.id); loadImg(); }; btns = [x];
       }
+      it.append(mActs(...btns));
       box.append(it);
     });
   }
@@ -819,7 +824,7 @@
     if (ev.stage === 'search') { lab.textContent = 'Ищу файлы…'; return; }
     const pct = ev.total ? Math.min(100, ev.done / ev.total * 100) : 0;
     bar.style.width = pct.toFixed(1) + '%';
-    lab.textContent = (ev.stage === 'engine' ? 'Движок: ' : 'Модель: ') + (ev.total ? `${fmtGb(ev.done)} из ${fmtGb(ev.total)} · ${pct.toFixed(0)}%` : fmtGb(ev.done));
+    lab.textContent = (ev.stage === 'engine' ? 'Движок: ' : 'Модель: ') + dlLine('i:' + ev.id + ev.stage, ev);
   }
   async function loadImg() { renderImg(await call('images_state')); }
   $('#imgSave').onclick = async () => { const st = await call('images_set', $('#imgProvider').value, $('#imgUrl').value, $('#imgModel').value, $('#imgKey').value, $('#imgDirector').checked, +$('#imgVariants').value, $('#imgAsk').checked, $('#imgPower').value, $('#imgQuality').value, +$('#imgVramGb').value, +$('#imgThreads').value || 0, $('#imgUnload').value); renderImg(st); flash($('#imgMsg'), 'Сохранено'); };
@@ -850,13 +855,30 @@
     upd = u; const bar = $('#updBar');
     if (!u || !u.available) { bar.hidden = true; $('#updLabel').textContent = 'Проверить обновления'; return; }
     $('#updLabel').textContent = 'Доступно обновление ●';
-    $('#updStatus').hidden = true; $('#updStatus').classList.remove('err'); $('#updPbar').hidden = true;
-    $('#updInstall').disabled = false; $('#updLater').disabled = false;
+    $('#updStatus').hidden = true; $('#updStatus').classList.remove('err'); updBusy(false);
     $('#updTitle').textContent = `Доступна новая версия ${u.latest}`;
-    $('#updVerLine').innerHTML = `У вас <b>${u.current}</b> → будет <b>${u.latest}</b>` + (u.size ? ` · ${u.size < 2 ** 30 ? Math.round(u.size / 2 ** 20) + ' МБ' : fmtGb(u.size)}` : '');
+    $('#updVerLine').innerHTML = `У вас <b>${u.current}</b> → будет <b>${u.latest}</b>` + (u.size ? ` · ${dlSize(u.size)}` : '');
     $('#updNotes').innerHTML = renderNotes(u.notes) || '<p class="muted">Подробный список изменений — на странице релиза.</p>';
     $('#updInstall').textContent = u.can_install ? 'Обновить сейчас' : 'Открыть страницу загрузки';
     if (popup) { bar.hidden = false; $('#updNotes').scrollTop = 0; }
+  }
+  let updGot = false;
+  function updBusy(on) {                 // идёт загрузка: «Позже» превращается в «Отменить», кнопка установки блокируется
+    $('#updInstall').disabled = on; $('#updLater').disabled = false; $('#updLater').textContent = on ? 'Отменить загрузку' : 'Позже';
+    $('#updProg').hidden = !on; $('#updCard').classList.toggle('busy', on);
+    if (on) { updGot = false; delete dlRates.upd; $('#updPct').textContent = '0%'; $('#updPbar i').style.width = '0%'; $('#updSize').textContent = 'Подключаюсь…'; $('#updSpeed').textContent = '—'; $('#updEta').textContent = '—'; }
+  }
+  function updProgress(ev) {
+    $('#updProg').hidden = false;
+    const pct = ev.total ? Math.min(100, ev.done / ev.total * 100) : 0, bar = $('#updPbar');
+    bar.classList.toggle('busy', !ev.total);
+    $('i', bar).style.width = pct.toFixed(1) + '%'; $('#updPct').textContent = ev.total ? Math.floor(pct) + '%' : '…';
+    if (ev.final) { $('#updSpeed').textContent = '—'; $('#updEta').textContent = 'готово'; return; }
+    const v = dlRate('upd', ev.done);
+    $('#updSize').textContent = ev.total ? dlPair(ev.done, ev.total) : dlSize(ev.done);
+    $('#updSpeed').textContent = v ? dlSpeed(v) : 'считаю…';
+    $('#updEta').textContent = v && ev.total ? dlEta((ev.total - ev.done) / v) : '—';
+    if (!updGot) { updGot = true; updStatus(''); }
   }
   function updStatus(text, err) { const s = $('#updStatus'); s.hidden = !text; s.textContent = text || ''; s.classList.toggle('err', !!err); }
   async function checkUpdate(manual) {
@@ -870,17 +892,17 @@
   }
   $('#btnUpdate').onclick = () => checkUpdate(true);
   $('#btnUpdate2').onclick = () => checkUpdate(true);
-  $('#updLater').onclick = () => { $('#updBar').hidden = true; };
+  $('#updLater').onclick = () => { if (!$('#updProg').hidden && $('#updCard').classList.contains('busy')) { $('#updLater').disabled = true; call('cancel_update'); } else $('#updBar').hidden = true; };
   $('#updInstall').onclick = async () => {
-    $('#updInstall').disabled = true; $('#updLater').disabled = true; updStatus('Подготовка…');
+    updBusy(true); updStatus('Подготовка…');
     const r = await call('install_update');
-    if (r && r.opened) { $('#updInstall').disabled = false; $('#updLater').disabled = false; updStatus('Страница загрузки открыта в браузере.'); }
-    else if (!r || !r.ok) { $('#updInstall').disabled = false; $('#updLater').disabled = false; updStatus((r && r.error) || 'Не удалось', true); }
+    if (r && r.opened) { updBusy(false); updStatus('Страница загрузки открыта в браузере.'); }
+    else if (!r || !r.ok) { updBusy(false); updStatus((r && r.error) || 'Не удалось', true); }
   };
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#updBar').hidden && !$('#updLater').disabled) $('#updBar').hidden = true; });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#updBar').hidden && !$('#updCard').classList.contains('busy')) $('#updBar').hidden = true; });
 
   // ---------- бесплатные облачные модели ----------
-  const CLOUD_STATE_LABEL = { ok: 'Готов', cooldown: 'Лимит', error: 'Ошибка', nokey: 'Нет ключа', off: 'Выключен' };
+  const CLOUD_STATE_LABEL = { ok: 'Готов', cooldown: 'Лимит', error: 'Сбой', nokey: 'Нет ключа', off: 'Выключен' };
   let cloudLast = null;
   function cloudRow(p, idx, total) {
     const row = el('div', 'cloud-row ' + p.state); row.dataset.pid = p.id;
@@ -889,7 +911,7 @@
     const sw = el('label', 'switch'), cb = el('input'); cb.type = 'checkbox'; cb.checked = p.enabled; cb.disabled = !(p.has_key || p.nokey); cb.title = (p.has_key || p.nokey) ? '' : 'Сначала введите ключ';
     sw.append(cb, el('span', 'sw'), el('span', '', 'Использовать'));
     cb.onchange = async () => { renderCloud(await call('cloud_save', p.id, { enabled: cb.checked })); loadBrain(); };
-    const mv = el('div', 'cloud-move');
+    const mv = el('div', 'cloud-move'); mv.append(el('span', 'cloud-pos', '№ ' + (idx + 1)));
     const up = el('button', 'btn', '↑'), dn = el('button', 'btn', '↓'); up.type = dn.type = 'button'; up.disabled = idx === 0; dn.disabled = idx === total - 1;
     up.title = 'Выше в очереди'; dn.title = 'Ниже в очереди';
     up.onclick = async () => renderCloud(await call('cloud_move', p.id, -1)); dn.onclick = async () => renderCloud(await call('cloud_move', p.id, 1));
@@ -897,15 +919,15 @@
     head.append(title, sw, mv);
     const body = el('div', 'cloud-body');
     body.append(el('div', 'muted small', p.note));
-    const stat = el('div', 'small cloud-stat', p.text + (p.used_today ? ` · ответов сегодня: ${p.used_today}` : '')); body.append(stat);
-    const f = el('div', 'form');
+    const stat = el('div', 'cloud-stat ' + p.state); stat.append(el('i'), el('span', '', p.text + (p.used_today ? ` · ответов сегодня: ${p.used_today}` : ''))); body.append(stat);
+    const f = el('div', 'form cloud-form');
     let nameI, urlI;
     if (p.id === 'custom') {
       nameI = el('input'); nameI.placeholder = 'Название (любое)'; nameI.value = p.name === 'Свой сервер' ? '' : p.name;
       urlI = el('input'); urlI.placeholder = 'Адрес API, например https://api.example.com/v1'; urlI.value = p.url || '';
       f.append(nameI, urlI);
     }
-    const keyI = el('input'); keyI.type = 'password'; keyI.autocomplete = 'off'; keyI.placeholder = p.has_key ? 'ключ сохранён (введите новый, чтобы заменить)' : p.nokey ? 'Ключ не нужен (если есть — можно вставить, лимиты выше)' : 'Вставьте ключ API';
+    const keyI = el('input'); keyI.type = 'password'; keyI.autocomplete = 'off'; keyI.placeholder = p.has_key ? 'Ключ сохранён · введите новый для замены' : p.nokey ? 'Ключ не нужен (если есть — можно вставить, лимиты выше)' : 'Вставьте ключ API';
     const modI = el('input'); modI.placeholder = p.model_auto ? `Модель: ${p.model_auto} (подобрана сама)` : 'Модель (можно оставить пустой — подберётся сама)'; modI.value = p.model || '';
     const dl = el('datalist'); dl.id = 'cm-' + p.id; modI.setAttribute('list', dl.id);
     f.append(keyI, modI, dl);
@@ -913,7 +935,7 @@
     const save = el('button', 'btn primary', 'Сохранить'), test = el('button', 'btn', 'Проверить'), lst = el('button', 'btn', 'Список моделей');
     save.type = test.type = lst.type = 'button';
     acts.append(save, test, lst);
-    if (p.signup) { const a = el('button', 'btn', 'Получить бесплатный ключ ↗'); a.type = 'button'; a.onclick = () => call('open_url', p.signup); acts.append(a); }
+    if (p.signup) { const a = el('button', 'btn', 'Получить ключ ↗'); a.type = 'button'; a.onclick = () => call('open_url', p.signup); acts.append(a); }
     if (p.has_key) { const d = el('button', 'btn danger', 'Удалить ключ'); d.type = 'button'; d.onclick = async () => { renderCloud(await call('cloud_clear_key', p.id)); loadBrain(); }; acts.append(d); }
     const msg = el('span', 'msg'); acts.append(msg);
     const out = el('div', 'note', ''); out.hidden = true;
@@ -944,15 +966,20 @@
   $('#cloudStrategy').onchange = async e => renderCloud(await call('cloud_strategy', e.target.value));
   // фоновое обновление статусов («лимит исчерпан, вернусь через…»), пока не печатают в полях
   setInterval(() => {
-    const act = $('#tab-models.on'); if (!act || !api || $('#cloudList').contains(document.activeElement)) return;
+    const act = $('#tab-cloud.on'); if (!act || !api || $('#cloudList').contains(document.activeElement)) return;
     call('cloud_state').then(st => { if (st && JSON.stringify(st) !== JSON.stringify(cloudLast) && !$('#cloudList').contains(document.activeElement)) renderCloud(st); });
   }, 5000);
+
+  // общие кирпичики карточек в «Моделях»: заголовок с метками, чипы-характеристики, блок кнопок
+  const mHead = (title, tags = []) => { const h = el('div', 'mh'); h.append(el('b', '', title)); tags.filter(Boolean).forEach(([txt, warn]) => h.append(el('span', 'tag' + (warn ? ' warn' : ''), txt))); return h; };
+  const mChips = list => { const c = el('div', 'mchips'); list.filter(Boolean).forEach(x => c.append(el('span', 'mchip', x))); return c; };
+  const mActs = (...btns) => { const a = el('div', 'act'); btns.filter(Boolean).forEach(b => a.append(b)); return a; };
 
   // ---------- мозг ----------
   const BRAIN = {
     local: ['Локальная модель', 'Встроенная модель на этом компьютере: бесплатно и без интернета. На слабом компьютере отвечает медленнее.'],
     claude: ['Claude', 'Отвечает Claude по вашему ключу: быстрее и умнее, но нужен интернет, и запросы оплачиваются у Anthropic.'],
-    cloud: ['Бесплатные облака', 'Отвечают бесплатные облачные модели (Gemini или свой сервер) по вашим ключам — быстро даже на слабом компьютере. Когда у одной кончается лимит, подхватывает следующая. Нужен интернет.'],
+    cloud: ['Облачные модели', 'Отвечают облачные модели (Gemini, DeepSeek или свой сервер) по вашим ключам — быстро даже на слабом компьютере. Когда у одной кончается лимит, подхватывает следующая. Нужен интернет.'],
     auto: ['Авто', 'Простые вопросы — локальная модель, сложные (отчёты, код, файлы, глубокий поиск) — Claude или бесплатное облако. Если одного нет, отвечает другой, и в ответе это видно.'],
   };
   const BRAIN_SHORT = { local: 'локальный', claude: 'Claude', cloud: 'облако', auto: 'авто' };
@@ -965,16 +992,15 @@
     const sig = JSON.stringify(b); if (renderBrain.sig === sig) return; renderBrain.sig = sig;     // не перерисовываем без изменений (иначе закрывается открытый список)
     $('#chBrain').textContent = '🧠 Мозг: ' + BRAIN_SHORT[b.mode];
     setDot('kvBrain', b.mode === 'local' && b.local && !b.local.ok ? 'warn' : 'ok');
-    $('#kvBrain').textContent = b.mode === 'claude' ? b.claude.label : b.mode === 'cloud' ? 'Бесплатные облака' : b.mode === 'auto' ? 'Авто (локально + облако + Claude)' : 'Локальная модель';
+    $('#kvBrain').textContent = b.mode === 'claude' ? b.claude.label : b.mode === 'cloud' ? 'Облачные модели' : b.mode === 'auto' ? 'Авто (локально + облако + Claude)' : 'Локальная модель';
     const box = $('#brainList'); if (!box) return; box.textContent = '';
     for (const m of ['local', 'cloud', 'claude', 'auto']) {
       const ok = m === 'auto' ? (b.local.ok || b.claude.ok || b.cloud.ok) : m === 'local' ? b.local.ok : m === 'cloud' ? b.cloud.ok : b.claude.ok;
-      const it = el('div', 'item model ' + (b.mode === m ? 'ok' : ''));
-      const t = el('div', 't'); t.append(el('b', '', m === 'claude' ? b.claude.label : BRAIN[m][0]), el('span', 'wrap', BRAIN[m][1]));
-      const st = el('span', 'wrap', (ok ? '✔ ' : '✖ ') + brainWhy(b, m)); st.style.color = ok ? 'var(--ok)' : 'var(--warn)'; t.append(st);
+      const it = el('div', 'item model brain ' + (b.mode === m ? 'ok sel' : ''));
+      const t = el('div', 't'); t.append(mHead(m === 'claude' ? b.claude.label : BRAIN[m][0], [b.mode === m && ['Выбран']]), el('span', 'wrap desc', BRAIN[m][1]));
+      t.append(el('span', 'wrap stat ' + (ok ? 'ok' : 'warn'), (ok ? '✔ ' : '✖ ') + brainWhy(b, m)));
       it.append(t);
-      if (b.mode === m) it.append(el('span', 'tag', 'Выбран'));
-      else { const x = el('button', 'btn primary', 'Выбрать'); x.onclick = async () => { renderBrain(await call('brain_set', m)); }; it.append(x); }
+      if (b.mode !== m) { const x = el('button', 'btn primary', 'Выбрать'); x.onclick = async () => { renderBrain(await call('brain_set', m)); }; it.append(mActs(x)); }
       box.append(it);
     }
     const sel = $('#brainModel'); sel.textContent = '';
@@ -983,7 +1009,16 @@
   }
   async function loadBrain() { renderBrain(await call('brain_state')); }
   $('#brainModel').onchange = async e => renderBrain(await call('brain_set', '', e.target.value));
-  $('#brainKey').onclick = () => { const b = $('#tabs [data-tab="settings"]'); if (b) b.click(); setTimeout(() => $('#apiKey').focus(), 60); };
+  const goTab = t => { const b = $(`#tabs [data-tab="${t}"]`); if (b) b.click(); };
+  $('#claudeSave').onclick = async () => {
+    const k = $('#apiKey').value.trim(); if (!k) { flash($('#brainMsg'), 'Вставьте ключ в поле выше', true); return; }
+    const c = await call('save_claude_key', k); $('#apiKey').value = '';
+    if (c) { fillSettings(c, null); flash($('#brainMsg'), 'Ключ сохранён'); loadBrain(); } else flash($('#brainMsg'), 'Не удалось сохранить', true);
+  };
+  $('#claudeGet').onclick = () => call('open_url', 'https://console.anthropic.com/settings/keys');
+  $('#brainToCloud').onclick = () => goTab('cloud');
+  $('#cloudToProfile').onclick = () => goTab('profile');
+  $('#setToCloud').onclick = () => goTab('cloud');
   $('#brainTest').onclick = async () => { $('#brainTest').disabled = true; const o = $('#brainTestOut'); o.hidden = false; o.className = 'note'; o.textContent = 'Проверяю…'; await call('brain_test_claude'); };
   $('#chBrain').onclick = async () => {
     if (!brain) await loadBrain(); if (!brain) return;
@@ -994,7 +1029,27 @@
   };
 
   // ---------- модели ----------
-  const fmtGb = b => (b / 2 ** 30).toFixed(1) + ' ГБ';
+  // размеры и скорость скачивания: сами выбирают КБ / МБ / ГБ
+  const dlNum = (v, d) => v.toFixed(d).replace('.', ',');
+  const dlUnit = ref => ref >= 2 ** 30 ? 2 ** 30 : ref >= 2 ** 20 ? 2 ** 20 : 1024;           // единица берётся по общему размеру, чтобы «412,5 из 980,0 МБ» было в одних единицах
+  const dlName = u => u === 2 ** 30 ? 'ГБ' : u === 2 ** 20 ? 'МБ' : 'КБ';
+  const dlSize = (b, ref) => { const u = dlUnit(ref == null ? b : ref); return dlNum(b / u, u === 2 ** 30 ? 2 : u === 2 ** 20 ? 1 : 0) + ' ' + dlName(u); };
+  const dlPair = (done, total) => { const u = dlUnit(total || done), d = u === 2 ** 30 ? 2 : u === 2 ** 20 ? 1 : 0; return `${dlNum(done / u, d)} из ${dlNum(total / u, d)} ${dlName(u)}`; };
+  const dlSpeed = v => v >= 2 ** 20 ? dlNum(v / 2 ** 20, 1) + ' МБ/с' : Math.max(1, Math.round(v / 1024)) + ' КБ/с';
+  const dlEta = sec => !isFinite(sec) || sec <= 0 ? '—' : sec < 5 ? 'пара секунд' : sec < 60 ? `~${Math.round(sec)} с` : sec < 3600 ? `~${Math.floor(sec / 60)} мин ${String(Math.round(sec % 60)).padStart(2, '0')} с` : `~${Math.floor(sec / 3600)} ч ${Math.round(sec % 3600 / 60)} мин`;
+  const dlRates = {};
+  function dlRate(key, done) {          // скорость сглаживается: мгновенные скачки не прыгают в глаза
+    const now = performance.now(), r = dlRates[key];
+    if (!r || done < r.b) return (dlRates[key] = { t: now, b: done, v: 0 }).v;
+    if (now - r.t >= 700) { const inst = (done - r.b) / ((now - r.t) / 1000); r.v = r.v ? r.v * .75 + inst * .25 : inst; r.t = now; r.b = done; }
+    return r.v;
+  }
+  const dlLine = (key, ev) => {          // «412,5 из 980,0 МБ · 42% · 8,4 МБ/с · ~1 мин 05 с»
+    if (!ev.total) return dlSize(ev.done);
+    const v = dlRate(key, ev.done), pct = Math.min(100, ev.done / ev.total * 100);
+    return `${dlPair(ev.done, ev.total)} · ${pct.toFixed(0)}%` + (v ? ` · ${dlSpeed(v)} · ${dlEta((ev.total - ev.done) / v)}` : '');
+  };
+  const fmtGb = b => dlSize(b);
   const ENG = { stopped: 'остановлен (запустится при первом вопросе)', starting: 'запускается…', ready: 'работает', error: 'ошибка' };
   function renderEngine(e) {
     let t = ENG[e.state] || e.state;
@@ -1009,7 +1064,7 @@
     if (ev.stage === 'search') { lab.textContent = 'Ищу файл…'; return; }
     const pct = ev.total ? Math.min(100, ev.done / ev.total * 100) : 0;
     bar.style.width = pct.toFixed(1) + '%';
-    lab.textContent = ev.total ? `${fmtGb(ev.done)} из ${fmtGb(ev.total)} · ${pct.toFixed(0)}%` : fmtGb(ev.done);
+    lab.textContent = dlLine('m:' + ev.id, ev);
   }
   async function loadModels() {
     const s = await call('models_state'); if (!s) return;
@@ -1020,19 +1075,18 @@
     for (const m of s.models) {
       const it = el('div', 'item model ' + (m.active ? 'ok' : m.too_big ? 'miss' : '')); it.dataset.mid = m.id;
       const t = el('div', 't');
-      const head = el('b', '', m.title);
-      t.append(head, el('span', 'wrap', `${m.tier_label} · ${m.size_gb} ГБ · русский: ${m.ru} · память от ${m.ram} ГБ`), el('span', 'wrap', m.desc));
+      t.append(mHead(m.title, [m.id === s.recommended && ['Рекомендуется'], m.active && ['Выбрана']]), mChips([m.tier_label, `${m.size_gb} ГБ`, `русский: ${m.ru}`, `память от ${m.ram} ГБ`]), el('span', 'wrap desc', m.desc));
       if (m.dl) { const pb = el('div', 'pbar'); pb.append(el('i')); t.append(pb, el('span', 'plab', 'Подготовка…')); }
       it.append(t);
-      if (m.id === s.recommended) it.append(el('span', 'tag', 'Рекомендуется'));
-      if (m.active) it.append(el('span', 'tag', 'Выбрана'));
-      if (m.dl) { const b = el('button', 'btn', 'Отмена'); b.onclick = () => call('model_cancel', m.id); it.append(b); }
+      let btns = [];
+      if (m.dl) { const x = el('button', 'btn', 'Отмена'); x.onclick = () => call('model_cancel', m.id); btns = [x]; }
       else if (m.installed) {
-        if (!m.active) { const b = el('button', 'btn primary', 'Выбрать'); b.onclick = async () => { await call('model_select', m.id); loadModels(); }; it.append(b); }
-        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (await ask('Удалить модель с диска?', { ok: 'Удалить', danger: true })) { await call('model_delete', m.id); loadModels(); } }; it.append(d);
+        if (!m.active) { const x = el('button', 'btn primary', 'Выбрать'); x.onclick = async () => { await call('model_select', m.id); loadModels(); }; btns.push(x); }
+        const d = el('button', 'btn danger', 'Удалить'); d.onclick = async () => { if (await ask('Удалить модель с диска?', { ok: 'Удалить', danger: true })) { await call('model_delete', m.id); loadModels(); } }; btns.push(d);
       } else {
-        const b = el('button', 'btn primary', 'Скачать'); b.onclick = async () => { b.disabled = true; await call('model_download', m.id); loadModels(); }; it.append(b);
+        const x = el('button', 'btn primary', 'Скачать'); x.onclick = async () => { x.disabled = true; await call('model_download', m.id); loadModels(); }; btns = [x];
       }
+      it.append(mActs(...btns));
       box.append(it);
     }
   }
@@ -1066,6 +1120,22 @@
   // ---------- профиль ----------
   let kinds = {};
   const pf = () => $('#profForm');
+  const TZ = [['Europe/Kaliningrad', 'Калининград (UTC+2)'], ['Europe/Moscow', 'Москва, Санкт-Петербург (UTC+3)'], ['Europe/Samara', 'Самара (UTC+4)'], ['Asia/Yekaterinburg', 'Екатеринбург (UTC+5)'],
+    ['Asia/Omsk', 'Омск (UTC+6)'], ['Asia/Novosibirsk', 'Новосибирск (UTC+7)'], ['Asia/Krasnoyarsk', 'Красноярск (UTC+7)'], ['Asia/Irkutsk', 'Иркутск (UTC+8)'], ['Asia/Yakutsk', 'Якутск (UTC+9)'],
+    ['Asia/Vladivostok', 'Владивосток (UTC+10)'], ['Asia/Magadan', 'Магадан (UTC+11)'], ['Asia/Kamchatka', 'Камчатка (UTC+12)'],
+    ['Europe/Kyiv', 'Киев (UTC+2/+3)'], ['Europe/Minsk', 'Минск (UTC+3)'], ['Asia/Tbilisi', 'Тбилиси (UTC+4)'], ['Asia/Yerevan', 'Ереван (UTC+4)'], ['Asia/Baku', 'Баку (UTC+4)'],
+    ['Asia/Tashkent', 'Ташкент (UTC+5)'], ['Asia/Almaty', 'Алматы (UTC+5)'], ['Asia/Bishkek', 'Бишкек (UTC+6)'], ['Europe/Istanbul', 'Стамбул (UTC+3)'], ['Asia/Dubai', 'Дубай (UTC+4)'],
+    ['Asia/Kolkata', 'Индия (UTC+5:30)'], ['Asia/Bangkok', 'Бангкок (UTC+7)'], ['Asia/Shanghai', 'Китай (UTC+8)'], ['Asia/Tokyo', 'Токио (UTC+9)'], ['Asia/Seoul', 'Сеул (UTC+9)'],
+    ['Australia/Sydney', 'Сидней (UTC+10/+11)'], ['Pacific/Auckland', 'Окленд (UTC+12/+13)'], ['Europe/London', 'Лондон (UTC+0/+1)'], ['Europe/Berlin', 'Берлин, Париж, Рим (UTC+1/+2)'],
+    ['Europe/Warsaw', 'Варшава (UTC+1/+2)'], ['Africa/Cairo', 'Каир (UTC+2)'], ['America/Sao_Paulo', 'Сан-Паулу (UTC−3)'], ['America/New_York', 'Нью-Йорк (UTC−5/−4)'],
+    ['America/Chicago', 'Чикаго (UTC−6/−5)'], ['America/Denver', 'Денвер (UTC−7/−6)'], ['America/Los_Angeles', 'Лос-Анджелес (UTC−8/−7)']];
+  const browserTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) { return ''; } };
+  function fillSelect(sel, pairs, val) { sel.textContent = ''; pairs.forEach(([k, v]) => { const o = el('option', '', v); o.value = k; sel.append(o); }); sel.value = val; }
+  function fillTz(val) {
+    const sel = pf().timezone, list = [['', 'Как на этом компьютере']].concat(TZ);
+    if (val && !TZ.some(x => x[0] === val)) list.push([val, val]);
+    fillSelect(sel, list, val || '');
+  }
   function petRow(p) {
     const r = document.createElement('div'); r.className = 'row pet'; r.style.alignItems = 'center';
     const opts = Object.entries(kinds).map(([k, v]) => `<option value="${k}"${k === (p.kind || 'dog') ? ' selected' : ''}>${v}</option>`).join('');
@@ -1074,32 +1144,100 @@
     $('.pr', r).onclick = () => r.remove();
     return r;
   }
+  let profBusy = false;
   function fillProfile(d) {
     kinds = d.kinds; const p = d.profile, f = pf();
-    f.name.value = p.name; f.birth_day.value = p.birth_day || ''; f.birth_month.value = p.birth_month || 0; f.birth_year.value = p.birth_year || '';
-    f.city.value = p.city; f.share_with_llm.checked = p.share_with_llm !== false;
-    const l = $('#petList'); l.innerHTML = ''; (p.pets || []).forEach(x => l.appendChild(petRow(x)));
+    // не затираем то, что человек сейчас печатает в форме
+    if (!pf().contains(document.activeElement) || !profBusy) {
+      fillSelect(f.gender, Object.entries(d.genders || {}), p.gender || '');
+      fillSelect(f.partner_kind, Object.entries(d.partner_kinds || {}), (p.partner || {}).kind || 'none');
+      f.name.value = p.name; f.full_name.value = p.full_name || ''; f.birth_day.value = p.birth_day || ''; f.birth_month.value = p.birth_month || 0; f.birth_year.value = p.birth_year || '';
+      f.country.value = p.country || ''; f.city.value = p.city; fillTz(p.timezone || ''); f.occupation.value = p.occupation || ''; f.interests.value = p.interests || ''; f.about.value = p.about || '';
+      const pr = p.partner || {}; f.partner_name.value = pr.name || ''; f.partner_day.value = pr.birth_day || ''; f.partner_month.value = pr.birth_month || 0;
+      f.share_with_llm.checked = p.share_with_llm !== false;
+      const l = $('#petList'); l.innerHTML = ''; (p.pets || []).forEach(x => l.appendChild(petRow(x)));
+      partnerToggle();
+    }
     const g = p.google || {}, signed = !!g.email;
     $('#gSigned').hidden = !signed; $('#gUnsigned').hidden = signed;
     $('#gName').textContent = g.name || ''; $('#gMail').textContent = g.email || ''; if (g.picture) $('#gPic').src = g.picture; else $('#gPic').removeAttribute('src');
     $('#gClient').value = d.google.client_id || ''; $('#gSecret').placeholder = d.google.has_secret ? 'сохранён (введите новый, чтобы заменить)' : 'оставьте пустым, если Google не выдал';
+    $('#gSetup').hidden = !!d.google.bundled && !d.google.client_id;
     $('#gIn').hidden = !!d.signing_in; $('#gCancel').hidden = !d.signing_in;
+    renderSync(d.sync);
   }
+  function partnerToggle() { const none = pf().partner_kind.value === 'none'; ['partner_name', 'partner_day', 'partner_month'].forEach(n => { pf()[n].disabled = none; }); }
   async function loadProfile() { const d = await call('get_profile'); if (d) fillProfile(d); }
   $('#petAdd').onclick = () => { if (!Object.keys(kinds).length) return; $('#petList').appendChild(petRow({ kind: 'dog' })); };
+  pf().addEventListener('input', () => { profBusy = true; });
+  pf().partner_kind.addEventListener('change', partnerToggle);
+  $('#tzAuto').onclick = () => { const z = browserTz(); if (z) { fillTz(z); flash($('#profMsg'), 'Часовой пояс: ' + z + '. Нажмите «Сохранить профиль».'); } else flash($('#profMsg'), 'Не удалось определить пояс', true); };
   pf().addEventListener('submit', async e => {
     e.preventDefault(); const f = e.target;
     const pets = $$('#petList .pet').map(r => ({ kind: $('.pk', r).value, name: $('.pn', r).value.trim(), birth_day: Number($('.pd', r).value) || 0, birth_month: Number($('.pm', r).value) || 0 })).filter(x => x.name);
-    const d = await call('save_profile', { name: f.name.value, birth_day: Number(f.birth_day.value) || 0, birth_month: Number(f.birth_month.value) || 0, birth_year: Number(f.birth_year.value) || 0,
-      city: f.city.value, share_with_llm: f.share_with_llm.checked, pets });
+    const d = await call('save_profile', { name: f.name.value, full_name: f.full_name.value, gender: f.gender.value, birth_day: Number(f.birth_day.value) || 0, birth_month: Number(f.birth_month.value) || 0, birth_year: Number(f.birth_year.value) || 0,
+      country: f.country.value, city: f.city.value, timezone: f.timezone.value, occupation: f.occupation.value, interests: f.interests.value, about: f.about.value,
+      partner: { kind: f.partner_kind.value, name: f.partner_name.value, birth_day: Number(f.partner_day.value) || 0, birth_month: Number(f.partner_month.value) || 0 },
+      share_with_llm: f.share_with_llm.checked, pets });
+    profBusy = false;
     if (d) { fillProfile(d); flash($('#profMsg'), 'Сохранено'); } else flash($('#profMsg'), 'Не удалось сохранить', true);
   });
   const gMsg = (t, bad) => { const o = $('#gMsg'); o.hidden = !t; o.className = 'note' + (bad ? ' bad' : ''); o.textContent = t || ''; if (t && bad) { flash($('#setMsg'), t, true); try { o.scrollIntoView({ block: 'center' }); } catch (e) {} } };
   $('#gSave').onclick = async () => { const d = await call('save_google_client', $('#gClient').value, $('#gSecret').value); if (d) { $('#gSecret').value = ''; fillProfile(d); gMsg('Сохранено. Теперь нажмите «Войти через Google».'); } };
-  $('#gIn').onclick = async () => { gMsg('Открываю браузер… выберите аккаунт Google.'); $('#gIn').hidden = true; $('#gCancel').hidden = false; if (!(await call('google_login'))) loadProfile(); };
+  $('#gIn').onclick = async () => { gMsg('Открываю браузер… выберите аккаунт Google и разрешите доступ к данным приложения.'); $('#gIn').hidden = true; $('#gCancel').hidden = false; if (!(await call('google_login'))) loadProfile(); };
   $('#gCancel').onclick = () => call('google_cancel');
-  $('#gOut').onclick = async () => { const d = await call('google_logout'); if (d) { fillProfile(d); gMsg(''); } };
-  function googleDone(ev) { gMsg(ev.error || 'Готово: вы вошли.', !!ev.error); loadProfile(); }
+  $('#gOut').onclick = async () => { const d = await call('google_logout'); if (d) { profBusy = false; fillProfile(d); gMsg(''); } };
+  function googleDone(ev) {
+    profBusy = false;
+    gMsg(ev.error || 'Готово: вы вошли.', !!ev.error); loadProfile();
+    const k = ev.sync && ev.sync.kind;
+    if (!ev.error && k === 'new_code') { syShow = true; note('Ваш персональный код:\n\n' + ev.sync.code + '\n\nЗапишите его в надёжное место. Он понадобится, чтобы войти в Карину с другого компьютера: после входа через тот же аккаунт Google введите код — и профиль, ключи облачных моделей и ключ Claude подтянутся. Увидеть код снова можно здесь же, в «Профиле».', 'Синхронизация включена'); }
+    else if (!ev.error && k === 'need_code') { syMsg('В вашем Google Drive уже есть данные Карины. Введите персональный код ниже.'); }
+    else if (!ev.error && k === 'resumed') { syMsg('Синхронизация продолжена.', 'ok'); }
+  }
+
+  // ---------- синхронизация между компьютерами ----------
+  let syShow = false, syState = null;
+  const syMsg = (t, kind) => { const o = $('#syMsg'); o.hidden = !t; o.className = 'note' + (kind === 'bad' ? ' bad' : kind === 'ok' ? ' ok' : ''); o.textContent = t || ''; };
+  const syAgo = ts => { if (!ts) return 'ещё не было'; const s = Math.round(Date.now() / 1000 - ts); return s < 60 ? 'только что' : s < 3600 ? Math.round(s / 60) + ' мин назад' : s < 86400 ? Math.round(s / 3600) + ' ч назад' : new Date(ts * 1000).toLocaleString('ru-RU'); };
+  const OSN = { Windows: 'Windows', Darwin: 'macOS', Linux: 'Linux' };
+  function renderSync(st) {
+    if (!st) return; syState = st;
+    const act = st.enabled, pend = st.pending && st.signed && st.access;
+    $('#syOff').hidden = st.signed; $('#syNoAccess').hidden = !(st.signed && !st.access && !st.enabled);
+    $('#syPending').hidden = !pend; $('#syActive').hidden = !act;
+    $('#syCode').textContent = act ? (syShow ? st.code : st.code.replace(/[A-Z0-9]/g, '•').replace(/^•••/, 'KRN')) : '';
+    $('#syShow').textContent = syShow ? 'Скрыть' : 'Показать';
+    const box = $('#syDevices'); box.textContent = '';
+    const n = st.devices.length;
+    $('#syDevHead').textContent = n > 1 ? `Авторизовано на ${n} устройствах` : 'Устройства';
+    st.devices.forEach(d => {
+      const it = el('div', 'item sy-dev ' + (d.this ? 'ok' : '')); const t = el('div', 't');
+      t.append(el('b', '', d.name + (d.this ? ' · этот компьютер' : '')), el('span', '', (OSN[d.os] || d.os || '') + ' · синхронизация: ' + syAgo(d.seen)));
+      it.append(t);
+      if (!d.this) { const x = el('button', 'btn danger', 'Отключить'); x.type = 'button'; x.onclick = async () => { if (await ask(`Отключить «${d.name}»? Этот компьютер потеряет доступ к синхронизации, пока в нём снова не введут код.`, { title: 'Отключить устройство' })) { syMsg('Отключаю…'); await call('sync_remove_device', d.id); } }; it.append(x); }
+      box.append(it);
+    });
+    $('#syLast').textContent = 'Последняя синхронизация: ' + syAgo(st.last_sync) + (st.busy ? ' · идёт…' : '');
+    if (st.error && !$('#syMsg').textContent) syMsg(st.error, 'bad');
+  }
+  function syncDone(ev) {
+    loadProfile();
+    if (ev.error) { syMsg(ev.error, 'bad'); return; }
+    if (ev.quiet) return;
+    if (ev.label === 'code') syMsg('Готово: этот компьютер подключён, профиль и ключи загружены.', 'ok');
+    else if (ev.label === 'reset') { syShow = true; syMsg(''); note('Новый персональный код:\n\n' + (ev.result || '') + '\n\nЗапишите его. Другие компьютеры теперь нужно подключить заново этим кодом.', 'Начато заново'); }
+    else if (ev.label === 'now') syMsg('Синхронизировано.', 'ok');
+    else if (ev.label === 'off') syMsg('Этот компьютер отключён от синхронизации.', 'ok');
+    else if (ev.label === 'remove') syMsg('Устройство отключено.', 'ok');
+  }
+  $('#syShow').onclick = () => { syShow = !syShow; if (syState) renderSync(syState); };
+  $('#syCopy').onclick = async () => { const c = syState && syState.code; if (!c) return; try { await navigator.clipboard.writeText(c); syMsg('Код скопирован.', 'ok'); } catch (_) { syShow = true; renderSync(syState); syMsg('Не удалось скопировать: код показан выше, скопируйте его вручную.', 'bad'); } };
+  $('#syCodeOk').onclick = async () => { syMsg('Проверяю код…'); if (!(await call('sync_enter_code', $('#syCodeIn').value))) syMsg('Подождите: синхронизация уже идёт.', 'bad'); };
+  $('#syCodeIn').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#syCodeOk').click(); } });
+  $('#syReset').onclick = async () => { if (await ask('Старые данные в Google Drive будут заменены данными этого компьютера, а прежний код перестанет работать. Остальные компьютеры придётся подключить заново.', { title: 'Начать заново?' })) { syMsg('Создаю…'); await call('sync_reset'); } };
+  $('#syNow').onclick = async () => { syMsg('Синхронизирую…'); if (!(await call('sync_now'))) syMsg('Синхронизация уже идёт.', 'bad'); };
+  $('#syOffBtn').onclick = async () => { if (await ask('Этот компьютер перестанет обмениваться данными. Профиль и ключи на нём останутся. Подключиться снова можно по персональному коду.', { title: 'Отключить синхронизацию?' })) { syMsg('Отключаю…'); await call('sync_disconnect'); } };
 
   // ---------- первый запуск: докачка компонентов ----------
   const fmtEta = sec => !sec ? 'Считаю скорость…' : sec < 60 ? 'Осталось меньше минуты' : sec < 3600 ? `Осталось около ${Math.round(sec / 60)} мин` : `Осталось около ${Math.floor(sec / 3600)} ч ${Math.round(sec % 3600 / 60)} мин`;

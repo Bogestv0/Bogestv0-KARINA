@@ -93,8 +93,8 @@ main{flex:1;min-height:0;overflow:auto;padding:var(--pad);display:flex;flex-dire
 .btn.primary:active{transform:none}
 .btn.danger{color:var(--bad)}
 .link{color:var(--accent);font-size:13px}
-input:not([type=checkbox]):not([type=range]),select{width:100%;padding:9px 12px;border-radius:11px;background:var(--surface-2);border:1px solid var(--line);outline:none}
-input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+input:not([type=checkbox]):not([type=range]),select,textarea{width:100%;padding:9px 12px;border-radius:11px;background:var(--surface-2);border:1px solid var(--line);outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 input[type=range]{width:100%;accent-color:var(--accent)}
 .form{display:flex;flex-direction:column;gap:14px;margin-top:12px}
 .form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);font-weight:500}
@@ -529,7 +529,7 @@ main{padding:28px 32px 32px;align-items:stretch}
 .btn.ghost{background:none;border-color:transparent;color:var(--muted)}
 .btn.ghost:hover{color:var(--fg);background:var(--surface-2)}
 .btn.danger{color:var(--bad)}
-input:not([type=checkbox]):not([type=range]),select{min-height:44px;padding:9px 14px;border-radius:13px;background:var(--input-bg);border-color:var(--input-line)}
+input:not([type=checkbox]):not([type=range]),select,textarea{min-height:44px;padding:9px 14px;border-radius:13px;background:var(--input-bg);border-color:var(--input-line)}
 select{padding-right:10px}
 .note{border-radius:13px}
 .sw{width:42px;height:24px}.sw::after{width:18px;height:18px}.switch input:checked+.sw::after{left:21px}
@@ -704,3 +704,69 @@ kbd{font:500 12px var(--f-mono);padding:4px 9px;border-radius:8px;background:var
 .un-row small{grid-column:2/4;opacity:.72;font-size:12.5px;line-height:1.4}
 .un-sum{margin-top:12px;font-size:13px;opacity:.85}
 .btn.danger-solid{background:var(--bad);color:#fff;border-color:var(--bad)}
+
+/* ===== «Модели»: единый вид карточек ===== */
+.item.model{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px 18px;padding:14px 16px;border-radius:14px;border:1px solid var(--line);border-left:3px solid var(--line);transition:border-color .15s,background .15s}
+.item.model.ok{border-left-color:var(--ok)} .item.model.miss{border-left-color:var(--warn)}
+.item.model.sel{background:color-mix(in srgb,var(--ok) 7%,var(--surface-2))}
+.item.model .t{display:flex;flex-direction:column;gap:7px;min-width:0}
+.item.model .t span,.item.model .t span.wrap{display:block;white-space:normal;font-size:13px;line-height:1.5;color:var(--muted)}
+.item.model .t span.desc{color:var(--muted)}
+.mh{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.mh b{font-size:15px;font-weight:600;margin-right:2px}
+.mchips{display:flex;flex-wrap:wrap;gap:6px}
+.item.model .t span.mchip{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;line-height:1.5;background:color-mix(in srgb,var(--fg) 7%,transparent);color:var(--muted);border:1px solid var(--line)}
+.item.model .t span.stat{font-size:12.5px;font-weight:500}
+.item.model .t span.stat.ok{color:var(--ok)} .item.model .t span.stat.warn{color:var(--warn)}
+.item.model .act{display:flex;flex-direction:column;gap:8px;align-items:stretch;min-width:112px}
+.item.model .act .btn{min-height:38px;padding:8px 16px;white-space:nowrap;text-align:center}
+.item.model .tag{align-self:center}
+.item.model .pbar,.item.model .plab{grid-column:auto}
+.item.model .t span.plab{color:var(--accent);font-family:var(--f-mono,monospace);font-size:12px !important;font-variant-numeric:tabular-nums}
+@media (max-width:640px){.item.model{grid-template-columns:1fr}.item.model .act{flex-direction:row;min-width:0}.item.model .act .btn{flex:1}}
+
+/* облачные провайдеры */
+.cloud-list{gap:12px}
+.cloud-row{padding:14px 16px;border-radius:14px}
+.cloud-row.cooldown,.cloud-row.error{border-left-color:var(--warn)} .cloud-row.nokey,.cloud-row.off{border-left-color:var(--line);opacity:.92}
+.cloud-title b{font-size:15px;font-weight:600}
+.cloud-move{align-items:center} .cloud-pos{font:500 12px var(--f-mono,monospace);color:var(--muted);margin-right:2px}
+.cloud-move .btn{padding:0;width:32px;height:32px;min-height:32px;display:grid;place-items:center;border-radius:9px;font-size:15px}
+.cloud-body{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.cloud-body .form{margin-top:2px}
+.cloud-form{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cloud-form input{min-width:0;width:100%}
+@media (max-width:760px){.cloud-form{grid-template-columns:1fr}}
+.cloud-body .muted.small{margin:0}
+.cloud-stat{display:flex;align-items:center;gap:8px;margin:0;padding:6px 10px;border-radius:9px;width:fit-content;max-width:100%;font-size:12.5px;font-weight:500;background:color-mix(in srgb,var(--muted) 12%,transparent);color:var(--muted)}
+.cloud-stat i{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.cloud-stat.ok{background:var(--ok-soft);color:var(--ok)}
+.cloud-stat.cooldown,.cloud-stat.error{background:var(--warn-soft);color:var(--warn)}
+.cloud-body .form-actions{gap:8px}
+.cloud-body .form-actions .btn{min-height:38px;padding:8px 14px;font-size:13.5px}
+.cloud-body .form-actions .btn.danger{margin-left:auto}
+.cloud-body .note{margin:0}
+
+/* ===== окно обновления: прогресс загрузки ===== */
+.upd-card .upd-prog{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line)}
+.upd-prog-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.upd-prog-top b{font:600 26px var(--f-head,inherit);letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--accent)}
+.upd-prog-top span{font:500 13px var(--f-mono,monospace);color:var(--muted);font-variant-numeric:tabular-nums}
+.pbar.big{height:10px;margin:0;background:color-mix(in srgb,var(--muted) 22%,transparent)}
+.pbar.big i{border-radius:99px;background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 60%,#fff));transition:width .25s linear}
+.pbar.busy i{width:35% !important;animation:pbarSlide 1.2s ease-in-out infinite}
+@keyframes pbarSlide{0%{margin-left:-35%}100%{margin-left:100%}}
+.upd-prog-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.upd-prog-stats div{display:flex;flex-direction:column;gap:2px}
+.upd-prog-stats span{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.upd-prog-stats b{font:600 15px var(--f-mono,monospace);font-variant-numeric:tabular-nums}
+.upd-card.busy .upd-body{max-height:120px;flex:none}
+
+/* профиль: textarea, синхронизация между компьютерами */
+#profForm textarea{resize:vertical;font:inherit;line-height:1.4;box-sizing:border-box}
+#profForm .row{flex-wrap:wrap}
+.sy-codebox{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 14px;border-radius:13px;background:var(--surface-2);border:1px dashed var(--line)}
+.sy-code{font-family:var(--f-mono);font-size:18px;letter-spacing:.08em;color:var(--accent);user-select:all;flex:1;min-width:230px}
+.sy-dev .t span{white-space:normal}
+.note.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--ok)}
+.dlg p{user-select:text}

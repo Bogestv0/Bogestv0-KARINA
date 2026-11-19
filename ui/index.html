@@ -26,6 +26,7 @@
     <button data-tab="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.5A8 8 0 1 1 21 12z"/></svg><span>Чат</span></button>
     <button data-tab="commands"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Команды</span></button>
     <button data-tab="models"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/></svg><span>Модели</span></button>
+    <button data-tab="cloud"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.6-7.96A5.5 5.5 0 0 1 17 8.5a4.75 4.75 0 0 1 .5 9.5z"/></svg><span>Облако</span></button>
     <button data-tab="apps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span>Программы</span></button>
     <button data-tab="sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10zM17 9a4 4 0 0 1 0 6"/></svg><span>Звук</span></button>
     <button data-tab="widget"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Виджет</span></button>
@@ -44,14 +45,21 @@
 </div>
 
 <div class="upd-modal" id="updBar" hidden role="dialog" aria-modal="true" aria-labelledby="updTitle">
-  <div class="upd-card">
+  <div class="upd-card" id="updCard">
     <div class="upd-head">
       <img src="logo.png" alt="">
       <div><div class="eyebrow">Обновление</div><h2 id="updTitle"></h2><div class="upd-ver" id="updVerLine"></div></div>
     </div>
     <div class="upd-body" id="updNotes"></div>
     <div class="upd-status" id="updStatus" hidden></div>
-    <div class="pbar" id="updPbar" hidden><i></i></div>
+    <div class="upd-prog" id="updProg" hidden>
+      <div class="upd-prog-top"><b id="updPct">0%</b><span id="updSize"></span></div>
+      <div class="pbar big" id="updPbar"><i></i></div>
+      <div class="upd-prog-stats">
+        <div><span>Скорость</span><b id="updSpeed">—</b></div>
+        <div><span>Осталось</span><b id="updEta">—</b></div>
+      </div>
+    </div>
     <div class="upd-actions">
       <button class="btn" id="updLater">Позже</button>
       <button class="btn primary" id="updInstall">Обновить сейчас</button>
@@ -238,32 +246,11 @@
 
 <!-- ============ МОДЕЛИ ============ -->
 <section id="tab-models" class="tab">
-  <header class="page-head"><div class="eyebrow">Модели</div><h1>Мозг и картинки</h1><p class="muted">Кто отвечает в чате и на свободные вопросы голосом. Команды управления компьютером («открой блокнот», «громкость…») всегда выполняются на этом компьютере.</p></header>
+  <header class="page-head"><div class="eyebrow">Модели</div><h1>Мозг и картинки</h1><p class="muted">Кто отвечает в чате и на свободные вопросы голосом. Облачные модели (Claude, Gemini, DeepSeek) и их ключи — во вкладке «Облако». Команды управления компьютером («открой блокнот», «громкость…») всегда выполняются на этом компьютере.</p></header>
   <div class="card" id="brainCard">
     <div class="eyebrow">Мозг Карины</div>
-    <p class="muted small">Кто отвечает в чате и на свободные вопросы голосом. Команды управления компьютером («открой блокнот», «громкость…») всегда выполняются на этом компьютере.</p>
     <div class="list" id="brainList"></div>
-    <div class="form">
-      <label>Какой Claude использовать <select id="brainModel"></select></label>
-      <div class="form-actions">
-        <button class="btn" type="button" id="brainKey">Ввести ключ Claude…</button>
-        <button class="btn" type="button" id="brainTest">Проверить Claude</button>
-        <span class="msg" id="brainMsg"></span>
-      </div>
-      <div class="note" id="brainTestOut" hidden></div>
-    </div>
-    <p class="muted small">В режиме Claude текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы отправляются в Anthropic по вашему ключу и оплачиваются у вас. Файлы с компьютера не отправляются. Ключ хранится только на этом компьютере.</p>
-  </div>
-  <div class="card" id="cloudCard">
-    <div class="eyebrow">Бесплатные облачные модели</div>
-    <p class="muted small">Быстрый «мозг» для слабых компьютеров. Зарегистрируйтесь у провайдера (карта обычно не нужна), нажмите «Получить бесплатный ключ», вставьте ключ и включите. Можно подключить несколько: у каждого свои бесплатные лимиты, и когда у одного они кончаются, Карина сразу переходит к следующему в очереди (порядок меняется стрелками). Затем выберите режим «Бесплатные облака» или «Авто» выше.</p>
-    <div class="form"><label>Как чередовать
-      <select id="cloudStrategy">
-        <option value="failover">По очереди: пока лимит не кончится — первый, потом следующий</option>
-        <option value="spread">По кругу: каждый новый вопрос — следующему (лимиты тратятся равномерно)</option>
-      </select></label></div>
-    <div class="cloud-list" id="cloudList"></div>
-    <p class="muted small">Текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы уходят выбранному провайдеру по вашему ключу. Файлы с компьютера не отправляются. Ключи хранятся только на этом компьютере. Условия и лимиты бесплатных тарифов провайдеры меняют сами, а доступность из некоторых стран может быть ограничена.</p>
+    <div class="form-actions"><button class="btn" type="button" id="brainToCloud">Ключи и облачные модели: вкладка «Облако» →</button></div>
   </div>
   <div class="card" id="imgCard">
     <div class="eyebrow">Картинки</div>
@@ -361,6 +348,44 @@
       </div>
       <div class="note" id="mdTestOut" hidden></div>
     </div>
+  </div>
+</section>
+
+<!-- ============ ОБЛАКО ============ -->
+<section id="tab-cloud" class="tab">
+  <header class="page-head"><div class="eyebrow">Облако</div><h1>Облачные модели</h1><p class="muted">Все модели, которые работают через интернет: Claude, Google Gemini, DeepSeek и любой свой сервер. Кто из них отвечает в чате — выбирается во вкладке «Модели» → «Мозг Карины».</p></header>
+  <div class="card" id="claudeCard">
+    <div class="eyebrow">Claude (Anthropic)</div>
+    <p class="muted small">Самый умный вариант для чата, кода и сложных вопросов: отвечает по вашему ключу API. Ключ один: он же позволяет Карине понимать фразы, которых нет в списке команд (галочка в «Настройках»). Получить ключ: console.anthropic.com.</p>
+    <div class="form">
+      <label>Какой Claude использовать <select id="brainModel"></select></label>
+      <label>Ключ API <input type="password" name="api_key" id="apiKey" autocomplete="off" placeholder="sk-ant-…"></label>
+      <div class="form-actions">
+        <button class="btn primary" type="button" id="claudeSave">Сохранить ключ</button>
+        <button class="btn" type="button" id="brainTest">Проверить Claude</button>
+        <button class="btn" type="button" id="claudeGet">Получить ключ ↗</button>
+        <button class="btn danger" type="button" id="btnClearKey">Удалить сохранённый ключ</button>
+        <span class="msg" id="brainMsg"></span><span class="msg" id="keyMsg"></span>
+      </div>
+      <div class="note" id="brainTestOut" hidden></div>
+    </div>
+    <p class="muted small">В режиме Claude текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы отправляются в Anthropic по вашему ключу и оплачиваются у вас. Файлы с компьютера не отправляются.</p>
+  </div>
+  <div class="card" id="cloudCard">
+    <div class="eyebrow">Gemini, DeepSeek и другие облачные модели</div>
+    <p class="muted small">Быстрый «мозг» для слабых компьютеров. Зарегистрируйтесь у провайдера, нажмите «Получить ключ», вставьте ключ и включите. Gemini даёт бесплатный тариф (карта не нужна), DeepSeek — платный, но очень дешёвый. Можно подключить несколько: у каждого свои лимиты, и когда у одного они кончаются, Карина сразу переходит к следующему в очереди (порядок меняется стрелками). Затем выберите режим «Облачные модели» или «Авто» во вкладке «Модели» → «Мозг Карины».</p>
+    <div class="form"><label>Как чередовать
+      <select id="cloudStrategy">
+        <option value="failover">По очереди: пока лимит не кончится — первый, потом следующий</option>
+        <option value="spread">По кругу: каждый новый вопрос — следующему (лимиты тратятся равномерно)</option>
+      </select></label></div>
+    <div class="cloud-list" id="cloudList"></div>
+    <p class="muted small">Текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы уходят выбранному провайдеру по вашему ключу. Файлы с компьютера не отправляются. Ключи хранятся на этом компьютере (и, если включена синхронизация во вкладке «Профиль», в зашифрованном виде в скрытой папке вашего Google Drive). Условия и лимиты бесплатных тарифов провайдеры меняют сами, а доступность из некоторых стран может быть ограничена.</p>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Те же ключи на другом компьютере</div>
+    <p class="muted small">Войдите через Google во вкладке «Профиль»: Карина выдаст персональный код, и ключи облачных моделей, ключ Claude и профиль появятся на другом компьютере после ввода этого кода.</p>
+    <div class="form-actions"><button class="btn" type="button" id="cloudToProfile">Открыть «Профиль» →</button></div>
   </div>
 </section>
 
@@ -475,7 +500,7 @@
   </div>
 </section>
 <section id="tab-profile" class="tab">
-  <header class="page-head"><div class="eyebrow">Профиль</div><h1>О вас</h1><p class="muted">Карина поздравит с днём рождения (вас и питомца), назовёт по имени, скажет погоду в вашем городе и будет знать клички.</p></header>
+  <header class="page-head"><div class="eyebrow">Профиль</div><h1>О вас</h1><p class="muted">Карина поздравит с днём рождения (вас, партнёра и питомца), назовёт по имени, скажет погоду и время в вашем поясе и будет знать, кто вам дорог.</p></header>
   <div class="card">
     <div class="eyebrow">Вход через Google</div>
     <div id="gSigned" hidden>
@@ -483,41 +508,88 @@
         <button type="button" class="btn danger" id="gOut" style="margin-left:auto">Выйти</button></div>
     </div>
     <div id="gUnsigned">
-      <p class="muted small">Откроется браузер, вы выберете аккаунт Google, и Карина узнает ваше имя и почту. Пароль она не видит. Дату рождения и город Google не передаёт — их впишите ниже.</p>
+      <p class="muted small">Откроется браузер, вы выберете аккаунт Google, и Карина узнает ваше имя и почту. Пароль она не видит. Заодно появится <b>персональный код</b> для переноса профиля и ключей на другие компьютеры (см. «Синхронизация» ниже).</p>
       <div class="row"><button type="button" class="btn" id="gIn">Войти через Google</button><button type="button" class="btn" id="gCancel" hidden>Отменить</button></div>
     </div>
     <div class="note" id="gMsg" hidden></div>
-    <details style="margin-top:10px"><summary class="muted small">Настройка входа (один раз): Client ID</summary>
+    <details style="margin-top:10px" id="gSetup"><summary class="muted small">Настройка входа (один раз): Client ID</summary>
       <div class="form" style="margin-top:8px">
         <label>Client ID<input id="gClient" placeholder="123456-abc.apps.googleusercontent.com" autocomplete="off"></label>
         <label>Client secret (если Google его выдал)<input id="gSecret" type="password" autocomplete="off" placeholder="оставьте пустым, чтобы не менять"></label>
         <div class="row"><button type="button" class="btn" id="gSave">Сохранить</button></div>
         <ol class="muted small" style="margin:6px 0 0 18px;padding:0">
           <li>Откройте console.cloud.google.com, создайте проект.</li>
+          <li>«API и сервисы» → «Библиотека» → найдите <b>Google Drive API</b> → «Включить» (нужно для синхронизации между компьютерами).</li>
           <li>«API и сервисы» → «Экран согласия OAuth»: тип «Внешний», добавьте себя в «Тестовые пользователи».</li>
           <li>«Учётные данные» → «Создать» → «Идентификатор клиента OAuth» → тип <b>«Приложение для компьютера»</b>.</li>
-          <li>Скопируйте Client ID (и Client secret) сюда.</li>
+          <li>Скопируйте Client ID (и Client secret) сюда. На других компьютерах впишите те же.</li>
         </ol>
       </div>
     </details>
   </div>
+  <div class="card" id="syncCard">
+    <div class="eyebrow">Синхронизация между компьютерами</div>
+    <p class="muted small">Профиль, ключи облачных моделей (Gemini, DeepSeek, свой сервер), ключ Claude и очередь провайдеров переносятся на другие ваши компьютеры. Всё хранится в скрытой папке <b>вашего</b> Google Drive и зашифровано персональным кодом: без кода прочитать данные не сможет никто, включая Google.</p>
+    <div class="note" id="syOff">Сначала войдите через Google (выше).</div>
+    <div class="note bad" id="syNoAccess" hidden>Вход выполнен без доступа к скрытой папке Drive. Нажмите «Выйти» и войдите снова, разрешив доступ к данным приложения.</div>
+    <div id="syPending" hidden>
+      <div class="note">В вашем Google Drive уже есть данные Карины с другого компьютера. Введите персональный код, который Карина показала при первом входе, — и профиль с ключами подтянутся сюда.</div>
+      <div class="form"><label>Персональный код<input id="syCodeIn" placeholder="KRN-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" style="font-family:var(--mono,monospace);letter-spacing:.06em;text-transform:uppercase"></label>
+        <div class="form-actions"><button type="button" class="btn primary" id="syCodeOk">Подключить этот компьютер</button><button type="button" class="btn danger" id="syReset">Забыл код — начать заново</button></div></div>
+      <p class="muted small">«Начать заново» заменит данные в Drive данными этого компьютера и выдаст новый код. Остальные компьютеры придётся подключить заново.</p>
+    </div>
+    <div id="syActive" hidden>
+      <div class="sy-codebox"><div class="muted small">Ваш персональный код</div><code id="syCode" class="sy-code">••••</code>
+        <div class="row"><button type="button" class="btn" id="syShow">Показать</button><button type="button" class="btn" id="syCopy">Копировать</button></div></div>
+      <p class="muted small">Запишите код в надёжное место: он понадобится при входе с нового компьютера. Восстановить его нельзя (только «начать заново»).</p>
+      <div class="eyebrow" style="margin-top:8px" id="syDevHead">Устройства</div>
+      <div class="list" id="syDevices"></div>
+      <div class="row" style="margin-top:8px"><button type="button" class="btn" id="syNow">Синхронизировать сейчас</button><button type="button" class="btn danger" id="syOffBtn">Отключить этот компьютер</button><span class="muted small" id="syLast"></span></div>
+    </div>
+    <div class="note" id="syMsg" hidden></div>
+  </div>
   <form class="card" id="profForm">
     <div class="eyebrow">О вас</div>
     <div class="form">
-      <label>Как к вам обращаться<input name="name" maxlength="40" placeholder="Михаил"></label>
+      <div class="row">
+        <label style="flex:1;min-width:180px">Как к вам обращаться<input name="name" maxlength="40" placeholder="Михаил"></label>
+        <label style="flex:1;min-width:180px">Полное имя (необязательно)<input name="full_name" maxlength="80" placeholder="Михаил Иванов"></label>
+        <label style="flex:1;min-width:140px">Пол<select name="gender"></select></label>
+      </div>
       <div class="row">
         <label style="flex:1">День рождения<input name="birth_day" type="number" min="1" max="31" placeholder="день"></label>
         <label style="flex:1">Месяц<select name="birth_month"><option value="0">—</option><option value="1">январь</option><option value="2">февраль</option><option value="3">март</option><option value="4">апрель</option><option value="5">май</option><option value="6">июнь</option><option value="7">июль</option><option value="8">август</option><option value="9">сентябрь</option><option value="10">октябрь</option><option value="11">ноябрь</option><option value="12">декабрь</option></select></label>
         <label style="flex:1">Год<input name="birth_year" type="number" min="1900" max="2100" placeholder="год"></label>
       </div>
-      <label>Город (для погоды)<input name="city" maxlength="60" placeholder="Красноярск"></label>
+      <div class="row">
+        <label style="flex:1;min-width:160px">Страна<input name="country" maxlength="60" placeholder="Россия"></label>
+        <label style="flex:1;min-width:160px">Город (для погоды)<input name="city" maxlength="60" placeholder="Красноярск"></label>
+      </div>
+      <div class="row" style="align-items:flex-end">
+        <label style="flex:1;min-width:240px">Часовой пояс<select name="timezone"></select></label>
+        <button type="button" class="btn" id="tzAuto" title="Взять часовой пояс этого компьютера">Определить</button>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:180px">Чем занимаетесь<input name="occupation" maxlength="80" placeholder="разработчик, студент, врач…"></label>
+        <label style="flex:2;min-width:220px">Интересы<input name="interests" maxlength="300" placeholder="музыка, игры, велосипед, кино"></label>
+      </div>
+      <label>О себе (что Карине полезно знать)<textarea name="about" maxlength="600" rows="3" placeholder="Например: живу один, люблю короткие ответы, по утрам кофе без сахара"></textarea></label>
+    </div>
+    <div class="eyebrow" style="margin-top:14px">Партнёр</div>
+    <div class="form">
+      <div class="row">
+        <label style="flex:1;min-width:160px">Кто<select name="partner_kind"></select></label>
+        <label style="flex:2;min-width:160px">Имя<input name="partner_name" maxlength="40" placeholder="Катя"></label>
+        <label style="flex:1;min-width:90px">День р.<input name="partner_day" type="number" min="1" max="31" placeholder="день"></label>
+        <label style="flex:1;min-width:120px">Месяц<select name="partner_month"><option value="0">—</option><option value="1">январь</option><option value="2">февраль</option><option value="3">март</option><option value="4">апрель</option><option value="5">май</option><option value="6">июнь</option><option value="7">июль</option><option value="8">август</option><option value="9">сентябрь</option><option value="10">октябрь</option><option value="11">ноябрь</option><option value="12">декабрь</option></select></label>
+      </div>
       <label class="switch"><input type="checkbox" name="share_with_llm"><span class="sw"></span><span>Учитывать профиль в ответах нейросети (при включённом Claude/облаке эти данные передаются в запросе)</span></label>
     </div>
     <div class="eyebrow" style="margin-top:14px">Домашние животные</div>
     <div class="list" id="petList"></div>
     <div class="row"><button type="button" class="btn" id="petAdd">Добавить питомца</button></div>
     <div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Сохранить профиль</button><span class="muted small" id="profMsg"></span></div>
-    <p class="muted small">Карина поздравит с днём рождения (вас и питомца), назовёт по имени, скажет погоду в вашем городе и будет знать клички: «как зовут мою собаку», «скажи погоду».</p>
+    <p class="muted small">Карина поздравит с днём рождения (вас, партнёра и питомца), назовёт по имени, скажет погоду в вашем городе и будет знать клички: «как зовут мою собаку», «как зовут мою девушку», «скажи погоду».</p>
   </form>
 </section>
 
@@ -628,11 +700,10 @@
     </div>
     <div class="card">
       <div class="eyebrow">Claude (ключ API, необязательно)</div>
-      <p class="muted small">Один ключ нужен для двух вещей: чтобы Claude отвечал в чате («Модели» → «Мозг Карины») и чтобы Карина понимала фразы, которых нет в списке команд (галочка ниже). Без ключа всё работает офлайн на встроенной модели.</p>
+      <p class="muted small">Ключ вводится во вкладке «Облако». Он нужен для двух вещей: чтобы Claude отвечал в чате и чтобы Карина понимала фразы, которых нет в списке команд (галочка ниже). Без ключа всё работает офлайн на встроенной модели.</p>
       <div class="form">
         <label class="switch"><input type="checkbox" name="llm_enabled"><span class="sw"></span><span>Понимать свободные фразы через Claude, когда есть интернет</span></label>
-        <label>Ключ API <input type="password" name="api_key" id="apiKey" autocomplete="off" placeholder="sk-ant-…"></label>
-        <div class="form-actions"><button class="btn" type="button" id="btnClearKey">Удалить сохранённый ключ</button><span class="msg" id="keyMsg"></span></div>
+        <div class="form-actions"><button class="btn" type="button" id="setToCloud">Ввести ключ: вкладка «Облако» →</button></div>
       </div>
     </div>
     <div class="card">
@@ -662,7 +733,7 @@
         <label>Приложения (имена exe через запятую, например chrome.exe, Discord.exe)
           <input type="text" id="tnApps" placeholder="chrome.exe, Discord.exe" spellcheck="false" autocomplete="off"></label>
         <label class="switch"><input type="checkbox" id="tnConfirm"><span class="sw"></span><span>Переспрашивать «да или нет» перед включением голосом</span></label>
-        <label class="switch"><input type="checkbox" id="tnCloud"><span class="sw"></span><span>Облачные модели (Gemini, Claude, свой сервер) сами идут через VPN-сервер. VPN на компьютере при этом не включается и права администратора не нужны</span></label>
+        <label class="switch"><input type="checkbox" id="tnCloud"><span class="sw"></span><span>Облачные модели (Gemini, DeepSeek, Claude, свой сервер) сами идут через VPN-сервер. VPN на компьютере при этом не включается и права администратора не нужны</span></label>
         <label class="switch"><input type="checkbox" id="tnDirectRu"><span class="sw"></span><span>Сайты .ru, .su и .рф открывать напрямую, мимо сервера</span></label>
         <div class="row"><button type="button" class="btn" id="tnStart">Включить</button><button type="button" class="btn" id="tnStop">Выключить</button></div>
         <div class="note" id="tnStatus"></div>
