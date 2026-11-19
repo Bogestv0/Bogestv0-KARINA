@@ -44,11 +44,11 @@ class TestPrep(unittest.TestCase):
     def test_pronounce_whole_words_ignore_case(self):
         t = {"pronounce": {"discord": "дискорд", "steam": "стим"}}
         self.assertEqual(tts.prep_text("Открываю «Discord» и Steam.", t), "Открываю дискорд и стим.")
-        self.assertEqual(tts.prep_text("Steamer остаётся", t), "Steamer остаётся")
+        self.assertEqual(tts.prep_text("Steamer остаётся", t), "стеамер остаётся")      # слово целиком, не «стимer»; остаток латиницы читается по-русски
         self.assertEqual(tts.prep_text("  привет ", {}), "привет")
 
     def test_replacement_with_backslash_is_literal(self):
-        self.assertEqual(tts.prep_text("ab", {"pronounce": {"ab": r"a\1b"}}), r"a\1b")
+        self.assertEqual(tts.prep_text("ab", {"pronounce": {"ab": r"а\1б"}}), r"а\1б")
 
 
 class TestSpeakFlow(unittest.TestCase):

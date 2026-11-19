@@ -60,9 +60,17 @@ class InstallerScript(unittest.TestCase):
             self.assertTrue((ROOT / "build" / name).exists(), name)
 
     def test_options_and_upgrade_flow_present(self):
-        for needle in ("Запускать Карину с правами администратора", "движок для VPN", "вместе с Windows", "виджет-остров", "Добавить Карину на рабочий стол",
+        for needle in ("Запускать Карину с правами администратора", "движок для VPN", "вместе с Windows", "Добавить Карину на рабочий стол",
                        "Запустить Карину", "Обновление Карины", "IsUpd", "install_options.json", "--install-admin-task"):
             self.assertIn(needle, self.src)
+
+    def test_installer_does_not_enable_or_launch_widget(self):
+        for needle in ("cbIsland", "fbWidget", "Запустить виджет-остров", "Включить виджет-остров", "--background', '', SW_SHOWNORMAL"):
+            self.assertNotIn(needle, self.src)
+
+    def test_profile_fields_are_karina_styled(self):
+        self.assertIn("BorderStyle := bsNone", self.src)
+        self.assertIn("'День рождения'", self.src)
 
     def test_begin_end_balanced(self):
         import re

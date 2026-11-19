@@ -74,3 +74,18 @@ class T(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReleaseNotesTest(unittest.TestCase):
+    def test_long_notes_are_kept_for_the_update_window(self):
+        body = "## Новое\n" + "* пункт\n" * 500
+        r = updater.parse_release({"tag_name": "v9.9.9", "body": body, "assets": []}, "1.0.0")
+        self.assertTrue(r["available"])
+        self.assertGreater(len(r["notes"]), 1500)
+
+    def test_release_notes_script_takes_changelog_section(self):
+        import subprocess
+        root = Path(__file__).resolve().parent.parent
+        out = subprocess.run([sys.executable, str(root / "build" / "release_notes.py"), "v1.22.2"], capture_output=True, text=True, encoding="utf-8").stdout
+        self.assertIn("Исправлено", out)
+        self.assertNotIn("## 1.22.1", out)
