@@ -68,7 +68,7 @@
     $('#stateTitle').textContent = sleeping && key === 'idle' ? 'Я сплю' : (title || `Скажите «${cfg ? cfg.name : 'Карина'}, …»`);
     $('#stateHint').textContent = sleeping && key === 'idle' ? `Скажите «${cfg ? cfg.name : 'Карина'}, проснись».` : (detail || hint);
     $('#btnListen').textContent = listening === false ? 'Включить микрофон' : 'Выключить микрофон';
-    $('#kvMode').textContent = sleeping ? 'Сон' : listening === false ? 'Пауза' : key === 'confirm' ? 'Жду ответ' : 'Жду имя';
+    $('#kvMode').textContent = sleeping ? 'Сон' : listening === false ? 'Пауза' : key === 'confirm' ? 'Жду ответ' : (key === 'idle' && /^Слушаю дальше/.test(detail || '')) ? 'Слушаю дальше' : 'Жду имя';
     if (typeof renderPills === 'function') renderPills();
   }
 
@@ -226,9 +226,9 @@
       else if (ev.type === 'model_progress') modelProgress(ev);
       else if (ev.type === 'model_done') { if (ev.error && ev.error !== 'cancelled') flash($('#mdMsg'), ev.error, true); loadModels(); }
       else if (ev.type === 'engine') renderEngine(ev);
-      else if (ev.type === 'update_progress') { const pb = $('#updPbar'); pb.hidden = false; $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%'; $('#updNotes').textContent = ev.total ? `Скачано ${fmtGb(ev.done)} из ${fmtGb(ev.total)}` : 'Скачиваю…'; }
-      else if (ev.type === 'update_ready') { $('#updNotes').textContent = 'Скачано. Запускаю установку — Карина закроется и откроется заново.'; }
-      else if (ev.type === 'update_done') { $('#updInstall').disabled = false; $('#updPbar').hidden = true; if (ev.error && ev.error !== 'cancelled') { $('#updNotes').textContent = ev.error; $('#updNotes').classList.add('err'); } }
+      else if (ev.type === 'update_progress') { const pb = $('#updPbar'); pb.hidden = false; $('i', pb).style.width = (ev.total ? ev.done / ev.total * 100 : 0).toFixed(1) + '%'; updStatus(ev.total ? `Скачано ${fmtGb(ev.done)} из ${fmtGb(ev.total)}` : 'Скачиваю…'); }
+      else if (ev.type === 'update_ready') { updStatus('Скачано. Запускаю установку: Карина закроется и откроется заново.'); }
+      else if (ev.type === 'update_done') { $('#updInstall').disabled = false; $('#updLater').disabled = false; $('#updPbar').hidden = true; if (ev.error && ev.error !== 'cancelled') updStatus(ev.error, true); else updStatus(''); }
       else if (ev.type === 'model_test') { const o = $('#mdTestOut'); o.hidden = false; o.className = 'note ' + (ev.ok ? '' : 'bad'); o.textContent = ev.ok ? `${ev.text}\n(${ev.sec} с)` : ev.text; $('#mdTest').disabled = false; }
       else if (ev.type === 'state') { status.state = ev.state; status.sleeping = ev.sleeping; status.listening = ev.listening; renderState(ev.state, ev.detail, ev.sleeping, ev.listening); }
     },
@@ -829,34 +829,55 @@
   $('#imgTest').onclick = async () => { await $('#imgSave').onclick(); $('#imgTest').disabled = true; $('#imgMsg').classList.remove('err'); $('#imgMsg').textContent = 'Рисую пробную картинку…'; call('images_test'); };
 
   // ---------- обновления ----------
-  function showUpdate(u) {
-    upd = u; const bar = $('#updBar');
-    if (!u || !u.available) { bar.hidden = true; return; }
-    bar.hidden = false; $('#updNotes').classList.remove('err'); $('#updPbar').hidden = true; $('#updInstall').disabled = false;
-    $('#updTitle').textContent = `Доступна новая версия ${u.latest} (у вас ${u.current})`;
-    const notes = (u.notes || '').replace(/[#*`]/g, '').split('\n').map(x => x.trim()).filter(Boolean).slice(0, 4).join(' · ');
-    $('#updNotes').textContent = notes || 'Список изменений — на странице релиза.';
-    $('#updInstall').textContent = u.can_install ? 'Скачать и установить' : 'Открыть страницу загрузки';
-    $('#updLabel').textContent = 'Доступно обновление ●';
+  // заметки к релизу (Markdown из CHANGELOG): заголовки, пункты, **жирное** и `код`; весь текст экранируется
+  function mdInline(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'); }
+  function renderNotes(md) {
+    const out = []; let list = false;
+    const close = () => { if (list) { out.push('</ul>'); list = false; } };
+    String(md || '').split('\n').forEach(raw => {
+      const l = raw.trim(); if (!l) return;
+      let m;
+      if ((m = l.match(/^#{1,6}\s+(.*)$/))) { close(); out.push('<h4>' + mdInline(m[1]) + '</h4>'); }
+      else if ((m = l.match(/^[*\-•]\s+(.*)$/))) {
+        if (!list) { out.push('<ul>'); list = true; }
+        const cls = /^\*{0,2}\s*(исправлено|исправлен|fix)/i.test(m[1]) ? 'fix' : /^\*{0,2}\s*(новое|добавлен|new)/i.test(m[1]) ? 'new' : '';
+        out.push(`<li class="${cls}">` + mdInline(m[1]) + '</li>');
+      } else { close(); out.push('<p>' + mdInline(l) + '</p>'); }
+    });
+    close(); return out.join('');
   }
+  function showUpdate(u, popup = true) {
+    upd = u; const bar = $('#updBar');
+    if (!u || !u.available) { bar.hidden = true; $('#updLabel').textContent = 'Проверить обновления'; return; }
+    $('#updLabel').textContent = 'Доступно обновление ●';
+    $('#updStatus').hidden = true; $('#updStatus').classList.remove('err'); $('#updPbar').hidden = true;
+    $('#updInstall').disabled = false; $('#updLater').disabled = false;
+    $('#updTitle').textContent = `Доступна новая версия ${u.latest}`;
+    $('#updVerLine').innerHTML = `У вас <b>${u.current}</b> → будет <b>${u.latest}</b>` + (u.size ? ` · ${u.size < 2 ** 30 ? Math.round(u.size / 2 ** 20) + ' МБ' : fmtGb(u.size)}` : '');
+    $('#updNotes').innerHTML = renderNotes(u.notes) || '<p class="muted">Подробный список изменений — на странице релиза.</p>';
+    $('#updInstall').textContent = u.can_install ? 'Обновить сейчас' : 'Открыть страницу загрузки';
+    if (popup) { bar.hidden = false; $('#updNotes').scrollTop = 0; }
+  }
+  function updStatus(text, err) { const s = $('#updStatus'); s.hidden = !text; s.textContent = text || ''; s.classList.toggle('err', !!err); }
   async function checkUpdate(manual) {
     const lab = $('#updLabel'); if (manual) lab.textContent = 'Проверяю…';
     const u = await call('check_update', manual);
     lab.textContent = 'Проверить обновления';
     if (!u) return;
     if (u.error) { if (manual) { flash($('#updMsg'), u.error, true); note(u.error); } return; }
-    if (u.available) showUpdate(u);
+    if (u.available) showUpdate(u);              // окно со списком изменений и кнопками «Обновить сейчас» / «Позже»
     else if (manual) { showUpdate(null); flash($('#updMsg'), `Установлена последняя версия (${u.current})`); note(`У вас последняя версия: ${u.current}`); }
   }
   $('#btnUpdate').onclick = () => checkUpdate(true);
   $('#btnUpdate2').onclick = () => checkUpdate(true);
   $('#updLater').onclick = () => { $('#updBar').hidden = true; };
   $('#updInstall').onclick = async () => {
-    $('#updInstall').disabled = true; $('#updNotes').classList.remove('err'); $('#updNotes').textContent = 'Подготовка…';
+    $('#updInstall').disabled = true; $('#updLater').disabled = true; updStatus('Подготовка…');
     const r = await call('install_update');
-    if (r && r.opened) $('#updInstall').disabled = false;
-    else if (!r || !r.ok) { $('#updInstall').disabled = false; $('#updNotes').textContent = (r && r.error) || 'Не удалось'; }
+    if (r && r.opened) { $('#updInstall').disabled = false; $('#updLater').disabled = false; updStatus('Страница загрузки открыта в браузере.'); }
+    else if (!r || !r.ok) { $('#updInstall').disabled = false; $('#updLater').disabled = false; updStatus((r && r.error) || 'Не удалось', true); }
   };
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#updBar').hidden && !$('#updLater').disabled) $('#updBar').hidden = true; });
 
   // ---------- бесплатные облачные модели ----------
   const CLOUD_STATE_LABEL = { ok: 'Готов', cooldown: 'Лимит', error: 'Ошибка', nokey: 'Нет ключа', off: 'Выключен' };
@@ -1398,8 +1419,8 @@
     $$('#sIdle button').forEach(b => b.classList.toggle('on', !!s[b.dataset.k])); wgIdlePreview(s);
     $$('#chars button').forEach(b => b.classList.toggle('on', b.dataset.c === s.character));
     $$('#sHol button').forEach(b => b.classList.toggle('on', b.dataset.v === s.holiday));
+    $$('#sNotify button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.notify === false ? '0' : '1')));
     $$('#sSnow button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.snow ? '1' : '0')));
-    $$('#sGar button').forEach(b => b.classList.toggle('on', b.dataset.v === s.garland));
     $('#wgCity').value = s.city || '';
     wgKeys((d.hotkeys || {}).keys || {}, (d.hotkeys || {}).errors || []);
     wgPlace();
@@ -1421,7 +1442,7 @@
   $('#sIdle').onclick = async e => { const b = e.target.closest('button'); if (!b) return; b.classList.toggle('on'); const s = {}; $$('#sIdle button').forEach(x => s[x.dataset.k] = x.classList.contains('on')); wgIdlePreview(s); wgSave({ [b.dataset.k]: s[b.dataset.k] }); };
   $('#chars').onclick = e => { const b = e.target.closest('button'); if (!b) return; $$('#chars button').forEach(x => x.classList.toggle('on', x === b)); wgSave({ character: b.dataset.c }); };
   const wgSeg = (id, key, conv) => $(id).onclick = e => { const b = e.target.closest('button'); if (!b) return; $$(id + ' button').forEach(x => x.classList.toggle('on', x === b)); wgSave({ [key]: conv ? conv(b.dataset.v) : b.dataset.v }); };
-  wgSeg('#sHol', 'holiday'); wgSeg('#sSnow', 'snow', v => v === '1'); wgSeg('#sGar', 'garland');
+  wgSeg('#sHol', 'holiday'); wgSeg('#sSnow', 'snow', v => v === '1'); wgSeg('#sNotify', 'notify', v => v === '1');
   $('#wgCity').onchange = e => wgSave({ city: e.target.value.trim() });
   // горячие клавиши: нажать на сочетание и ввести новое
   const KEYNAME = { ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift', win: 'Win' };

@@ -555,9 +555,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     paused:   ['Пауза', '#9a9cae'], error: ['Ошибка', '#ff8a80'], sleep: ['Сплю', '#9a9cae'],
   };
   const st = { state: 'loading', sleeping: false, listening: true, detail: '', name: 'Карина', you: '', reply: '', err: '' };
-  let set = { character: 'logo', holiday: 'dates', snow: true, city: '', idle_time: true, idle_battery: true, idle_temp: true, idle_music: true, tools: [], links: [] };
+  let set = { character: 'logo', holiday: 'dates', snow: true, notify: true, city: '', idle_time: true, idle_battery: true, idle_temp: true, idle_music: true, tools: [], links: [] };
   const info = { bat: null, temp: null, media: null, lastPlay: 0, tw: 0 };      // данные для свёрнутой плашки
-  let dragging = false, full = false, mode = '', errUntil = 0, toastUntil = 0, toastText = '', level = 0, foldTimer = 0, tab = 'home';
+  let dragging = false, full = false, mode = '', errUntil = 0, toastUntil = 0, toastText = '', note = null, level = 0, foldTimer = 0, tab = 'home';
   let dock = 'top', pinned = false, sideDock = false, animT = 0, grabbing = false;       // положение острова: край экрана и «закреплён ли»
 
   const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -679,7 +679,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     const k = key(), [lab, color] = STATES[k];
     root.style.setProperty('--c', color);
     let sub = '', head = lab;
-    if (Date.now() < toastUntil) { head = '🔔'; sub = clip(toastText, 52); }
+    if (Date.now() < toastUntil && note && toastText.startsWith(note.head)) { head = note.head; sub = note.sub; }        // сообщение из Telegram и др.: кто и что написал
+    else if (Date.now() < toastUntil) { head = '🔔'; sub = clip(toastText, 52); }
     else if (k === 'called') sub = st.you ? '«' + clip(st.you, 40) + '»' : '';
     else if (k === 'thinking') sub = st.you ? '«' + clip(st.you, 40) + '»' : '';
     else if (k === 'confirm') sub = 'да, нет или стоп';
@@ -775,6 +776,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         else if (ev.kind === 'info' && st.state === 'confirm') { st.heard = ev.text || ''; render(); }          // услышала, но это не ответ: покажем, что именно
         else if (ev.kind === 'error') { st.err = ev.text || ''; render(); }
       } else if (ev.type === 'settings') { set = ev.settings || set; applyLook(); paintLook(); render();
+      } else if (ev.type === 'notify') {
+        if (set.notify === false) return;
+        note = { head: '✉ ' + (ev.app || 'Сообщение') + (ev.title ? ' · ' + clip(ev.title, 22) : ''), sub: clip(ev.text || ev.title, 60) };
+        toast(note.head + (note.sub ? ': ' + note.sub : ''), 7000);
       } else if (ev.type === 'media') {
         info.media = ev.status === 'none' ? null : ev;
         if (ev.status === 'playing') { info.lastPlay = Date.now(); }

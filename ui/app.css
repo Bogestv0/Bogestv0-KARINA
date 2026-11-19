@@ -210,6 +210,22 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 /* обновление */
 .btn-chip{cursor:pointer;border:1px solid var(--line);background:var(--surface-2);color:var(--fg);font:inherit}
 .btn-chip:hover{border-color:var(--accent)}
+.upd-modal{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(8,9,13,.62);backdrop-filter:blur(3px)}
+.upd-modal[hidden]{display:none}
+.upd-card{width:min(560px,100%);max-height:min(640px,calc(100vh - 48px));display:flex;flex-direction:column;gap:14px;padding:24px;border-radius:22px;background:var(--surface);border:1px solid var(--line);box-shadow:0 24px 70px rgba(0,0,0,.45)}
+.upd-head{display:flex;align-items:center;gap:16px}
+.upd-head img{width:52px;height:52px;border-radius:14px;flex:none}
+.upd-head h2{margin:2px 0 0;font-size:20px}
+.upd-ver{font-size:13px;color:var(--muted);margin-top:2px}.upd-ver b{color:var(--accent);font-weight:600}
+.upd-body{flex:1;min-height:80px;overflow:auto;padding:14px 16px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line);font-size:13.5px;line-height:1.5}
+.upd-body h4{margin:14px 0 6px;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)} .upd-body h4:first-child{margin-top:0}
+.upd-body ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.upd-body li{position:relative;padding-left:16px} .upd-body li::before{content:'';position:absolute;left:2px;top:.62em;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.upd-body li.fix::before{background:#46c28a} .upd-body li.new::before{background:var(--accent)}
+.upd-body code{font-size:12px;padding:1px 5px;border-radius:6px;background:var(--line)}
+.upd-body p{margin:0 0 8px}.upd-body p.muted{color:var(--muted)}
+.upd-status{font-size:13px;color:var(--muted)} .upd-status.err{color:var(--bad)}
+.upd-actions{display:flex;gap:10px;justify-content:flex-end}
 .updbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:12px var(--pad) 0;padding:14px 18px;border-radius:16px;background:var(--accent-soft);border:1px solid var(--accent)}
 .updbar[hidden]{display:none}
 .upd-text{flex:1;min-width:240px;display:flex;flex-direction:column;gap:4px}
@@ -644,7 +660,7 @@ select{padding-right:10px}
 .wg-idle .mus{color:var(--accent)} .wg-idle .idle{background:var(--accent);box-shadow:none}
 .wg-chars{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
 .wg-chars button{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 6px;border-radius:14px;border:1px solid var(--input-line);background:var(--input-bg);color:var(--muted);font-size:12.5px;cursor:pointer}
-.wg-chars button svg{width:40px;height:40px} .wg-chars button.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.wg-chars button svg{width:40px;height:40px} .wg-chars button img{width:40px;height:40px;object-fit:contain} .wg-chars button.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
 .wg-sets{display:flex;flex-direction:column;gap:12px;padding-top:14px;border-top:1px solid var(--line)}
 .wg-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:28px;margin-top:12px}
 .field{display:flex;flex-direction:column;gap:8px;font-size:14px}

@@ -45,7 +45,6 @@
     { k: "admin", ic: "admin", t: "Запускать Карину с правами администратора", d: "Нужно для окон программ от администратора и VPN на весь компьютер. Windows спросит разрешение один раз.", on: false },
     { k: "vpn", ic: "vpn", t: "Сразу установить движок для VPN (sing-box)", d: "Около 12 МБ. Серверы или подписку добавите потом в настройках VPN.", on: true, only: "has_vpn" },
     { k: "background", ic: "auto", t: "Запускать Карину вместе с Windows", d: "Стартует тихо, в трее, окно не открывается: Карина просто ждёт своё имя.", on: false },
-    { k: "island", ic: "island", t: "Включить виджет-остров", d: "Плашка у верхнего края экрана: время, музыка, погода, заметки.", on: true },
   ];
   function drawOptions() {
     const list = OPTIONS.filter(o => !o.only || S.st[o.only]);
@@ -64,7 +63,7 @@
     if (!p) { er.hidden = false; er.textContent = "Проверьте дату рождения: день от 1 до 31, месяц от 1 до 12, год четырьмя цифрами. Или оставьте поля пустыми."; return; }
     er.hidden = true;
     startProgress(S.mode === "update" ? "Обновляю…" : "Устанавливаю…");
-    const r = await call("setup_install", { ui: { admin: !!S.opts.admin, background: !!S.opts.background, island: S.opts.island !== false }, vpn: !!S.opts.vpn, profile: p });
+    const r = await call("setup_install", { ui: { admin: !!S.opts.admin, background: !!S.opts.background, island: false }, vpn: !!S.opts.vpn, profile: p });
     if (!r || r.ok === false) return finish({ ok: false, error: (r && r.error) || "Не удалось запустить установку." });
     poll();
   }
