@@ -12,7 +12,7 @@
 где встроенной модели нет; пока её нет, Карина говорит обычным голосом.
 """
 from __future__ import annotations
-import http.client, importlib.util, os, re, ssl, sys, threading, time, urllib.error, urllib.request, wave
+import http.client, importlib.util, io, os, re, ssl, sys, threading, time, urllib.error, urllib.request, wave
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -312,13 +312,20 @@ def unload():
         _loaded.update(key=None, model=None)
 
 
+def model_stream(path) -> io.BytesIO:
+    """Файл модели в памяти. torch открывает путь сам через C-функцию fopen, а в Windows она не понимает кириллицу в пути
+    (C:\\Users\\Алексей\\AppData…): «open file failed because of errno 2», хотя файл на месте. Читаем средствами Python и отдаём torch поток."""
+    with open(path, "rb") as f:
+        return io.BytesIO(f.read())
+
+
 def _load(base: Path):
     import torch
     path = str(model_path(base))
     if _loaded["key"] != path:
         apply_pending(base)
         torch.set_num_threads(max(1, min(4, (os.cpu_count() or 2) // 2)))
-        imp = torch.package.PackageImporter(path)
+        imp = torch.package.PackageImporter(model_stream(path))
         model = imp.load_pickle("tts_models", "model")
         model.to("cpu")
         _loaded.update(key=path, model=model)

@@ -2,7 +2,7 @@
 Запуск из корня репозитория: python build/fetch_voice.py   (потом pyinstaller build/karina.spec подхватит voices/ сам).
 
 Без этого шага сборка падает: установщик без голоса заставил бы человека скачивать его в настройках."""
-import sys as _sys
+import io, sys as _sys
 for _s in (_sys.stdout, _sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="replace")
@@ -46,6 +46,6 @@ else:
 
 # проверка, что модель действительно открывается (нужен torch, он в requirements.txt)
 import torch
-imp = torch.package.PackageImporter(str(dest))
+imp = torch.package.PackageImporter(io.BytesIO(dest.read_bytes()))
 model = imp.load_pickle("tts_models", "model")
 print("голос готов:", dest, dest.stat().st_size // 1_000_000, "МБ;", type(model).__name__)
