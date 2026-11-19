@@ -242,7 +242,7 @@ class Api:
         return self._components_state()
 
     # ---- вкладка «Виджет»: все настройки динамического острова в одном месте ----
-    WIDGET_KEYS = ("character", "holiday", "snow", "garland", "city", "idle_time", "idle_battery", "idle_temp", "idle_music")
+    WIDGET_KEYS = ("character", "holiday", "snow", "notify", "city", "idle_time", "idle_battery", "idle_temp", "idle_music")
 
     def _iapi(self):
         """Методы острова, которые нужны и вкладке (автозапуск, горячие клавиши): создаются один раз."""
@@ -265,7 +265,7 @@ class Api:
                 "hotkeys": ia.hotkeys_get() if ia else {"keys": {}, "errors": []}}
 
     def widget_set(self, patch):
-        """Вид острова: персонаж, праздник, снег, гирлянда, город, что показывать на свёрнутой плашке. Страница острова узнаёт сразу."""
+        """Вид острова: персонаж, праздник, снег, город, что показывать на свёрнутой плашке. Страница острова узнаёт сразу."""
         if self.island is None or not isinstance(patch, dict):
             return None
         new = self.island.settings_set({k: v for k, v in patch.items() if k in self.WIDGET_KEYS})

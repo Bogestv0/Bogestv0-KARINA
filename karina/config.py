@@ -19,6 +19,8 @@ DEFAULTS: dict = {
     "wake_required": True,        # откликаться только на имя
     "wake_strict": True,          # строго: каждая команда начинается с имени «Карина». Окна «слушаю дальше без имени» нет (кроме ответа «да/нет/стоп» на её вопрос и горячей клавиши разговора)
     "confirm_model": True,        # перед обращением к нейросети или поиском в интернете голосом спрашивать: «да», «нет» или «стоп»
+    "followup_after_reply": True, # после ответа Карина ещё followup_window секунд слушает следующую фразу без имени (как после «Карина, привет»)
+    "followup_window": 12,
     "followup_seconds": 8,        # при wake_strict=False: после имени слушаем без повторного обращения
     "followup_max_words": 10,     # в этом окне без имени принимаем только короткие фразы (команды); длинная речь из фона игнорируется
     "wake_tail_words": 7,         # имя в КОНЦЕ фразы («открой хром, Карина») считается обращением только в фразе до стольких слов
@@ -41,8 +43,10 @@ DEFAULTS: dict = {
     "tts": {"enabled": True, "voice": "karina", "rate": 0, "auto_silero": True, "barge_in": True,
             "pronounce": {"discord": "дискорд", "vpn": "вэ пэ эн", "впн": "вэ пэ эн", "youtube": "ютуб", "steam": "стим", "telegram": "телеграм", "chrome": "хром",
                           "карина": "Кари́на", "карины": "Кари́ны", "карине": "Кари́не", "карину": "Кари́ну", "кариной": "Кари́ной"}},
-    # динамический остров (karina/island.py): character — logo|eyes|spark|bot|cat|blob|pixel; holiday — dates|always|off; garland — off|blink|wave
-    "island": {"character": "logo", "holiday": "dates", "snow": True, "garland": "off", "city": ""},
+    # динамический остров (karina/island.py): character — logo|eyes|spark|bot|cat|blob|pixel; holiday — dates|always|off
+    # уведомления на острове (karina/notify.py): enabled — следить; mode — messengers | all; apps — свои слова из имени программы; show_text — показывать текст сообщения
+    "notify": {"enabled": True, "mode": "messengers", "apps": [], "show_text": True},
+    "island": {"character": "logo", "holiday": "dates", "snow": True, "city": ""},
     "search_engine": "google",    # google | yandex
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-5-5"},
     # встроенные модели (llama.cpp): active — id выбранной модели; gpu: auto | cpu; ctx/threads: 0 = по умолчанию

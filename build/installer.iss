@@ -1,6 +1,6 @@
 ﻿; Inno Setup: iscc /DAppVersion=1.0.0 build\installer.iss  ->  dist\Bogestv0-KARINA-Setup-1.0.0.exe
-; Мастер в тёмном стиле Карины: что поставить (права администратора, движок VPN, автозапуск, виджет-остров), профиль по желанию,
-; на последней странице выбор: виджет, ярлык на рабочий стол, запуск. Если Карина уже стоит, мастер работает как обновление:
+; Мастер в тёмном стиле Карины: что поставить (права администратора, движок VPN, автозапуск), профиль по желанию,
+; на последней странице выбор: ярлык на рабочий стол, запуск. Виджет-остров мастер не включает и не запускает: его включают в самой Карине (вкладка «Виджет»). Если Карина уже стоит, мастер работает как обновление:
 ; только короткая страница «Обновление» без вопросов, настройки, профиль, модели и голос сохраняются.
 ; Файл сохранён в UTF-8 с BOM: без него Inno Setup читает русский текст в кодировке ANSI и портит его.
 #ifndef AppVersion
@@ -80,9 +80,9 @@ var
   IsUpd: Boolean;
   OldVer: String;
   OptPage, ProfPage: TWizardPage;
-  cbAdmin, cbVpn, cbAuto, cbIsland: TNewCheckBox;
+  cbAdmin, cbVpn, cbAuto: TNewCheckBox;
   edName, edCity, edDay, edMonth, edYear: TNewEdit;
-  fbWidget, fbDesktop, fbLaunch: TNewCheckBox;
+  fbDesktop, fbLaunch: TNewCheckBox;
   FinishBuilt, AdminOk: Boolean;
   ChkList: array[0..9] of TNewCheckBox;
   ChkCount: Integer;
@@ -116,6 +116,11 @@ end;
 function ClMuted: Integer;
 begin
   Result := Rgb(154, 156, 174);
+end;
+
+function ClLine: Integer;
+begin
+  Result := Rgb(58, 58, 70);
 end;
 
 function ClAccent: Integer;
@@ -248,12 +253,24 @@ begin
   T.Height := ScaleY(30);
   T.Caption := Desc;
   T.Font.Color := ClMuted;
-  Top := Top + ScaleY(56);
+  Top := Top + ScaleY(60);
+end;
+
+{ Поле ввода в стиле Карины: тёмная карточка без белой системной рамки и подпись над полем. Рамка тонкая серая, при вводе голубая. }
+procedure EditFocus(Sender: TObject);
+begin
+  TPanel(TNewEdit(Sender).Parent.Parent).Color := ClAccent;
+end;
+
+procedure EditBlur(Sender: TObject);
+begin
+  TPanel(TNewEdit(Sender).Parent.Parent).Color := ClLine;
 end;
 
 function AddField(Page: TWizardPage; ALeft, ATop, AWidth: Integer; const Cap: String): TNewEdit;
 var
   L: TNewStaticText;
+  Box, Fill: TPanel;
 begin
   L := TNewStaticText.Create(Page);
   L.Parent := Page.Surface;
@@ -261,13 +278,35 @@ begin
   L.Left := ALeft;
   L.Top := ATop;
   L.Font.Color := ClMuted;
+  Box := TPanel.Create(Page);
+  Box.Parent := Page.Surface;
+  Box.BevelOuter := bvNone;
+  Box.ParentBackground := False;
+  Box.Color := ClLine;
+  Box.Left := ALeft;
+  Box.Top := ATop + ScaleY(20);
+  Box.Width := AWidth;
+  Box.Height := ScaleY(32);
+  Fill := TPanel.Create(Page);
+  Fill.Parent := Box;
+  Fill.BevelOuter := bvNone;
+  Fill.ParentBackground := False;
+  Fill.Color := ClCard;
+  Fill.Left := 1;
+  Fill.Top := 1;
+  Fill.Width := AWidth - 2;
+  Fill.Height := ScaleY(32) - 2;
   Result := TNewEdit.Create(Page);
-  Result.Parent := Page.Surface;
-  Result.Left := ALeft;
-  Result.Top := ATop + ScaleY(18);
-  Result.Width := AWidth;
+  Result.Parent := Fill;
+  Result.BorderStyle := bsNone;
   Result.Color := ClCard;
   Result.Font.Color := ClFg;
+  Result.Font.Size := 10;
+  Result.Left := ScaleX(10);
+  Result.Width := AWidth - 2 - ScaleX(20);
+  Result.Top := ScaleY(6);
+  Result.OnEnter := @EditFocus;
+  Result.OnExit := @EditBlur;
 end;
 
 { ---------- страницы ---------- }
@@ -288,23 +327,31 @@ begin
     cbVpn := nil;
   cbAuto := AddOption(OptPage, Top, 'Запускать Карину вместе с Windows',
     'Стартует тихо, в трее, окно не открывается: Карина просто ждёт своё имя.', False);
-  cbIsland := AddOption(OptPage, Top, 'Включить виджет-остров',
-    'Плашка у верхнего края экрана: время, музыка, погода, заметки и быстрые кнопки. Появляется, когда запущена Карина.', True);
 end;
 
 procedure BuildProfilePage;
 var
-  W: Integer;
+  W, Gap, Cell: Integer;
+  H: TNewStaticText;
 begin
   ProfPage := CreateCustomPage(OptPage.ID, 'Немного о вас',
-    'Необязательно. Карина будет называть вас по имени, брать город для погоды и поздравит с днём рождения.');
+    'Необязательно. Для обращения по имени, погоды и поздравлений.');
   ProfPage.Surface.Color := ClBg;
   W := ProfPage.SurfaceWidth;
   edName := AddField(ProfPage, 0, 0, W, 'Как к вам обращаться');
-  edCity := AddField(ProfPage, 0, ScaleY(62), W, 'Город (для погоды)');
-  edDay := AddField(ProfPage, 0, ScaleY(124), ScaleX(60), 'День рождения: день');
-  edMonth := AddField(ProfPage, ScaleX(110), ScaleY(124), ScaleX(60), 'месяц');
-  edYear := AddField(ProfPage, ScaleX(210), ScaleY(124), ScaleX(80), 'год');
+  edCity := AddField(ProfPage, 0, ScaleY(66), W, 'Город (для погоды)');
+  { день рождения: общая подпись, а под ней три поля со своими короткими подписями — ничего не налезает друг на друга }
+  H := TNewStaticText.Create(ProfPage);
+  H.Parent := ProfPage.Surface;
+  H.Caption := 'День рождения';
+  H.Left := 0;
+  H.Top := ScaleY(132);
+  H.Font.Color := ClMuted;
+  Gap := ScaleX(12);
+  Cell := ScaleX(78);
+  edDay := AddField(ProfPage, 0, ScaleY(152), Cell, 'день');
+  edMonth := AddField(ProfPage, Cell + Gap, ScaleY(152), Cell, 'месяц');
+  edYear := AddField(ProfPage, (Cell + Gap) * 2, ScaleY(152), ScaleX(96), 'год');
   edDay.MaxLength := 2;
   edMonth.MaxLength := 2;
   edYear.MaxLength := 4;
@@ -339,17 +386,6 @@ begin
   Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(14);
   if not IsUpd then
   begin
-    fbWidget := TNewCheckBox.Create(WizardForm);
-    fbWidget.Parent := WizardForm.FinishedPage;
-    fbWidget.Left := WizardForm.FinishedLabel.Left;
-    fbWidget.Top := Top;
-    fbWidget.Width := WizardForm.FinishedLabel.Width;
-    fbWidget.Height := ScaleY(20);
-    fbWidget.Caption := 'Запустить виджет-остров';
-    fbWidget.Checked := cbIsland.Checked;
-    SkinCheck(fbWidget, False);
-    Top := Top + ScaleY(26);
-
     fbDesktop := TNewCheckBox.Create(WizardForm);
     fbDesktop.Parent := WizardForm.FinishedPage;
     fbDesktop.Left := WizardForm.FinishedLabel.Left;
@@ -447,8 +483,6 @@ begin
     S := S + NewLine + Indent(Space, 'Движок VPN (sing-box)');
   if cbAuto.Checked then
     S := S + NewLine + Indent(Space, 'Автозапуск Карины вместе с Windows');
-  if cbIsland.Checked then
-    S := S + NewLine + Indent(Space, 'Виджет-остров включён');
   if Trim(edName.Text) <> '' then
     S := S + NewLine + NewLine + 'Профиль: ' + Trim(edName.Text) + ' ' + Trim(edCity.Text);
   Result := S;
@@ -474,12 +508,12 @@ begin
 end;
 
 { Карина при первом запуске переносит этот файл в свои настройки и удаляет его (karina/install_options.py). }
-procedure WriteOptions(Island: Boolean);
+procedure WriteOptions;
 var
   S, Dir: String;
   A: TArrayOfString;
 begin
-  S := '{"ui":{"island":' + BoolText(Island);
+  S := '{"ui":{"island":false';
   if AdminOk then
     S := S + ',"admin":true';
   S := S + '},"profile":{"name":"' + JsonText(Trim(edName.Text)) + '","city":"' + JsonText(Trim(edCity.Text)) + '"' +
@@ -524,7 +558,7 @@ end;
 procedure FinishUp;
 var
   Exe: String;
-  Island, Launch, Desktop: Boolean;
+  Launch, Desktop: Boolean;
   Code: Integer;
 begin
   Exe := ExpandConstant('{app}\{#AppExe}');
@@ -534,22 +568,19 @@ begin
       ExecAsOriginalUser(Exe, '', '', SW_SHOWNORMAL, ewNoWait, Code);
     Exit;
   end;
-  Island := cbIsland.Checked;
   Launch := False;
   Desktop := False;
   if (not WizardSilent) and FinishBuilt then
   begin
-    Island := fbWidget.Checked;
     Desktop := fbDesktop.Checked;
     Launch := fbLaunch.Checked;
   end;
-  WriteOptions(Island);
+  WriteOptions;
   if Desktop then
     MakeDesktopLink(Exe);
+  { виджет-остров мастер не включает и сам не запускает: его включают в Карине (вкладка «Виджет») }
   if Launch then
-    ExecAsOriginalUser(Exe, '', '', SW_SHOWNORMAL, ewNoWait, Code)
-  else if Island and (not WizardSilent) then
-    ExecAsOriginalUser(Exe, '--background', '', SW_SHOWNORMAL, ewNoWait, Code);
+    ExecAsOriginalUser(Exe, '', '', SW_SHOWNORMAL, ewNoWait, Code);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

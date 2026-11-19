@@ -23,6 +23,7 @@ from . import shelf as shf
 from .halo import Halo
 from .snow import Snow
 from .media import Media
+from .notify import Notifier
 
 IS_WIN = sys.platform == "win32"
 TITLE = "Остров Карины"
@@ -900,6 +901,7 @@ class Island:
         self._halo: Halo | None = None       # сглаженный контур под островом (karina/halo.py)
         self._snow: Snow | None = None       # снег, идущий из-под острова (karina/snow.py)
         self.media = Media(self._on_media, trace)    # что играет сейчас (karina/media.py)
+        self.notifier = Notifier(self._on_notify, lambda: {**(self.cfg.get("notify") or {}), "enabled": bool((self.cfg.get("notify") or {}).get("enabled", True)) and bool(self.settings().get("notify", True))}, trace)    # сообщения из Telegram и др. (karina/notify.py)
         self.rec = st.Recorder()                     # запись экрана (karina/screen_tools.py)
         self.focus = st.Focus()                      # последнее чужое окно: для вставки и раскладки
         self._rec_shown = False                      # страница уже знает, что запись идёт
@@ -966,6 +968,7 @@ class Island:
             threading.Thread(target=self._guard, args=(w, self._stop_tick), daemon=True, name="karina-island-guard").start()
             self.clip.start()
             self._sync_media()
+            self.notifier.start()
             try:
                 w.events.shown += self._on_shown
                 w.events.loaded += self._on_loaded
@@ -1172,6 +1175,7 @@ class Island:
             self.rec.stop()
         self.clip.stop()
         self.media.stop()
+        self.notifier.stop()
         halo, self._halo = self._halo, None
         if halo is not None:
             halo.stop()
@@ -1267,6 +1271,10 @@ class Island:
         else:
             self.media.stop()
             self.push({"type": "media", "status": "none"})
+
+    def _on_notify(self, n: dict):
+        """Пришло уведомление (Telegram и т. п.): показываем на плашке."""
+        self.push({"type": "notify", **n})
 
     def _on_media(self, info):
         self.push({"type": "media", **(info or {"status": "none"})})

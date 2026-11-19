@@ -235,6 +235,8 @@ class Assistant:
         """Состояние покоя: «Жду ответ», пока висит вопрос, иначе «Жду имя». Так по виджету и острову видно, что Карина слушает и ждёт подтверждения."""
         if self._awaiting():
             self._set_state("confirm", "Жду ответ: скажите «да», «нет» или «стоп»")
+        elif time.time() < self.ptt_until:
+            self._set_state("idle", "Слушаю дальше: можно без имени")
         else:
             self._set_state("idle")
 
@@ -551,7 +553,20 @@ class Assistant:
         if self._pending or self._choice:
             self.followup_until = max(self.followup_until, now + DIALOG_WAIT)
 
+    def _arm_followup(self):
+        """После любого ответа на просьбу человека Карина ещё немного слушает без имени (как после «Карина, привет»): можно сразу сказать следующее.
+        Окно одноразовое на фразу и открывается заново после каждого ответа, так что разговор продолжается, пока человек не замолчит.
+        Только если с ней говорили только что: самопроизвольные реплики (поздравления, напоминания) окно не открывают."""
+        if not self.cfg.get("followup_after_reply", True) or not self.cfg["wake_required"] or self.sleeping or not self.listening:
+            return
+        now = time.time()
+        if now - self._last_talk > 45:
+            return
+        self.ptt_until = max(self.ptt_until, now + float(self.cfg.get("followup_window", 12)))
+
     def _expire_dialogs(self):
+        if self.state == "idle" and self._last_state and str(self._last_state[1]).startswith("Слушаю дальше") and time.time() >= self.ptt_until:
+            self._set_state("idle")                          # окно «без имени» закрылось — снова ждём имя
         """Не дождались ответа: забываем вопрос и говорим об этом, чтобы человек не гадал, что происходит."""
         if self.state == "called" and time.time() - self._called_at > 12 and not getattr(getattr(self, "tts", None), "speaking", False):
             self._set_state("idle")                          # позвали, но команды не последовало — снова ждём имя
@@ -857,6 +872,7 @@ class Assistant:
                 if not self.cfg.get("wake_strict", True):
                     self.followup_until = max(self.followup_until, time.time() + float(self.cfg["followup_seconds"]))
                 self._arm_dialogs()              # ответ на вопрос ждём ОТ ЭТОГО момента, а не от начала речи
+                self._arm_followup()
                 self._rest_state()
 
     # ---------- «замолчи» и «говорить без имени» ----------

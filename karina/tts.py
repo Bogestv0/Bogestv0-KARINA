@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os, queue, re, sys, tempfile, threading, time
 from . import silero_voice
+from .speechnorm import numbers_to_words, latin_to_words
 
 IS_WIN = sys.platform == "win32"
 
@@ -14,9 +15,11 @@ def prep_text(text: str, tcfg: dict, stress: bool = False) -> str:
     """Что читать: без кавычек-ёлочек, слова из словаря произношений («discord» → «дискорд») заменяются на «как слышится».
     Знак ударения (U+0301) нужен только Silero; системный голос его не понимает и коверкает слово («Кареена»), поэтому без stress=True он убирается."""
     text = re.sub(r"[«»]", "", text).strip()
+    text = numbers_to_words(text)                 # цифры, «%», «°», «м/с» словами: иначе голос их пропускает («минус 8 градусов» → «мис градусов»)
     for word, say in (tcfg.get("pronounce") or {}).items():
         if word:
             text = re.sub(r"(?<!\w)" + re.escape(word) + r"(?!\w)", lambda m, say=say: say, text, flags=re.I)
+    text = latin_to_words(text)                   # что осталось латиницей и не попало в словарь, читаем по-русски: голос пропускает латинские буквы
     return text if stress else text.replace("\u0301", "")
 
 

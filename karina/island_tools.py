@@ -19,10 +19,9 @@ NO_WINDOW = 0x08000000
 
 CHARACTERS = ("logo", "eyes", "pixel", "anime")                    # Карина (логотип), Глазки, Пиксель, Аниме (своя картинка ui/chr_anime.png)
 HOLIDAY_MODES = ("dates", "always", "off")
-GARLANDS = ("off", "blink", "wave")
 IDLE_KEYS = ("idle_time", "idle_battery", "idle_temp", "idle_music")       # что показывать на свёрнутой плашке
 DOCKS = ("top", "bottom", "left", "right")                                  # к какому краю экрана прилип остров
-ISLAND_DEFAULTS = {"character": "logo", "holiday": "dates", "snow": True, "garland": "off", "city": "", "tools": [], "links": [],
+ISLAND_DEFAULTS = {"character": "logo", "holiday": "dates", "snow": True, "notify": True, "city": "", "tools": [], "links": [],
                    "mixer_strip": "", "pinned": False, "placed": False, "dock": "top", "pos": 0.5, "mon": None,   # положение: край, место вдоль края (0..1), монитор; помним только если «закреплён»
                    **{k: True for k in IDLE_KEYS}}
 
@@ -39,10 +38,10 @@ def clean_settings(patch: dict, old: dict | None = None) -> dict:
         out["character"] = p["character"]
     if p.get("holiday") in HOLIDAY_MODES:
         out["holiday"] = p["holiday"]
-    if p.get("garland") in GARLANDS:
-        out["garland"] = p["garland"]
     if "snow" in p:
         out["snow"] = bool(p["snow"])
+    if "notify" in p:
+        out["notify"] = bool(p["notify"])
     for k in IDLE_KEYS:
         if k in p:
             out[k] = bool(p[k])

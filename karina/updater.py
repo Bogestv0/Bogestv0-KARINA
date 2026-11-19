@@ -45,7 +45,7 @@ def installed_via_setup() -> bool:
 
 def parse_release(rel: dict, current: str = __version__) -> dict:
     tag = rel.get("tag_name", "")
-    out = {"available": False, "current": current, "latest": tag.lstrip("vV"), "tag": tag, "notes": (rel.get("body") or "").strip()[:1500],
+    out = {"available": False, "current": current, "latest": tag.lstrip("vV"), "tag": tag, "notes": (rel.get("body") or "").strip()[:6000],
            "page": rel.get("html_url") or PAGE, "url": "", "sha_url": "", "name": "", "can_install": False}
     if not is_newer(tag, current):
         return out
