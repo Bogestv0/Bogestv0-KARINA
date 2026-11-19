@@ -91,6 +91,9 @@ class Base(unittest.TestCase):
         def restore():
             cloud.PRESETS.clear(); cloud.PRESETS.update(self.saved); cloud.DEFAULT_ORDER[:] = self.saved_order
         self.addCleanup(restore)
+        self._rd = cloud.RETRY_DELAYS
+        cloud.RETRY_DELAYS = (0.0, 0.0)                          # в тестах не ждём паузы между повторами
+        self.addCleanup(lambda: setattr(cloud, "RETRY_DELAYS", self._rd))
         self.cfg = Config(Path(tempfile.mkdtemp()) / "c.json")
         self.pool = cloud.CloudPool(self.cfg)
 
@@ -208,6 +211,56 @@ class TestRotation(Base):
         self.fake.models["openrouter"] = ["x/y:free"]
         self.assertEqual(self.ask(), "ответ openrouter")
 
+    def test_overload_503_is_retried_on_same_model(self):
+        self.enable(gemini=K2)
+        busy = ("http", (503, json.dumps({"error": {"message": "This model is currently experiencing high demand."}}), {}))
+        self.fake.script["gemini"] = [busy, busy, ("ok", "ответ после повтора")]
+        self.assertEqual(self.ask(), "ответ после повтора")
+        self.assertEqual(self.fake.hits["gemini"], 3)
+        self.assertEqual({b["model"] for b in self.fake.bodies["gemini"]}, {"gemini-3.8-flash"})
+
+    def test_overload_503_switches_to_backup_model(self):
+        self.enable(gemini=K2)
+        busy = ("http", (503, "{}", {}))
+        self.fake.script["gemini"] = [busy, busy, busy, ("ok", "ответ запасной")]       # 3 попытки основной модели, затем запасная
+        self.assertEqual(self.ask(), "ответ запасной")
+        models = [b["model"] for b in self.fake.bodies["gemini"]]
+        self.assertEqual(models[:3], ["gemini-3.8-flash"] * 3)
+        self.assertNotEqual(models[3], "gemini-3.8-flash")
+        self.assertIn("flash", models[3])
+        self.assertEqual(self.pool.last_label, "Google Gemini · " + models[3])
+        d = {x["id"]: x for x in self.pool.describe()}
+        self.assertEqual(d["gemini"]["state"], "ok")
+
+    def test_pinned_model_is_not_replaced_on_overload(self):
+        self.cfg.update({"cloud": {"providers": {"gemini": {"enabled": True, "key": K2, "model": "gemini-3.8-flash"}}}})
+        self.fake.script["gemini"] = [("http", (503, "{}", {}))]
+        with self.assertRaises(cloud.CloudError):
+            self.ask()
+        self.assertEqual({b["model"] for b in self.fake.bodies["gemini"]}, {"gemini-3.8-flash"})
+
+    def test_all_overloaded_gives_friendly_russian_message(self):
+        self.enable(gemini=K2)
+        self.fake.script["gemini"] = [("http", (503, json.dumps({"error": {"message": "This model is currently experiencing high demand. Spikes in demand are usually temporary."}}), {}))]
+        with self.assertRaises(cloud.CloudError) as cm:
+            self.ask()
+        msg = str(cm.exception)
+        self.assertIn("перегружены", msg)
+        self.assertIn("сервер перегружен (503)", msg)
+        self.assertNotIn("high demand", msg)
+        self.assertNotIn("Ни одна бесплатная модель не ответила", msg)
+
+    def test_stop_interrupts_retry_pause(self):
+        self.enable(gemini=K2)
+        cloud.RETRY_DELAYS = (30.0,)
+        self.fake.script["gemini"] = [("http", (503, "{}", {}))]
+        stop = threading.Event()
+        threading.Timer(0.3, stop.set).start()
+        import time
+        t0 = time.time()
+        self.assertEqual(self.ask(stop=stop), "")
+        self.assertLess(time.time() - t0, 5)
+
     def test_empty_answer_falls_through(self):
         self.enable(groq=K1, gemini=K2)
         self.fake.script["groq"] = [("empty", None)]
@@ -314,10 +367,10 @@ class TestRetriesAndModels(Base):
         self.assertEqual(self.pool.describe()[2]["model_auto"], "b/other:free")
         self.assertIn("openrouter · b/other:free".replace("openrouter", "OpenRouter"), self.pool.last_label)
 
-    def test_only_google_and_custom_remain(self):
-        """Остальные бесплатные облака убраны: в программе только Google Gemini и «свой сервер»."""
+    def test_only_google_deepseek_and_custom_remain(self):
+        """Остальные бесплатные облака убраны: в программе Google Gemini, DeepSeek и «свой сервер»."""
         real = {k for k in self.saved if k not in ("groq", "openrouter")}
-        self.assertEqual(real, {"gemini", "custom"})
+        self.assertEqual(real, {"gemini", "deepseek", "custom"})
 
     def test_all_presets_are_consistent(self):
         for pid, p in self.saved.items():
@@ -387,7 +440,7 @@ class TestBrainModes(Base):
     def test_cloud_mode(self):
         self.enable(groq=K1)
         c = self.brain("cloud").choose("привет")
-        self.assertEqual((c.name, c.label), ("cloud", "Бесплатное облако"))
+        self.assertEqual((c.name, c.label), ("cloud", "Облако"))
         self.assertIs(c.backend, self.pool)
 
     def test_cloud_mode_without_keys_says_why(self):
@@ -414,7 +467,7 @@ class TestBrainModes(Base):
         self.assertEqual(b.choose("привет").name, "local")
         c = b.choose("напиши подробный отчёт о Байкале")
         self.assertEqual(c.name, "cloud")
-        self.assertIn("Бесплатное облако", c.note)
+        self.assertIn("Облако", c.note)
 
     def test_auto_weak_pc_without_local_uses_cloud(self):
         self.enable(groq=K1)
@@ -428,7 +481,7 @@ class TestBrainModes(Base):
     def test_auto_nobody_message_unchanged_without_cloud(self):
         with self.assertRaises(BrainUnavailable) as cm:
             self.brain("auto", local_ok=False).choose("привет")
-        self.assertNotIn("Облако", str(cm.exception))
+        self.assertNotIn("Облако", str(cm.exception).replace("вкладке «Облако»", ""))
 
     def test_describe_has_cloud(self):
         self.enable(groq=K1, gemini=K2)
