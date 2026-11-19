@@ -5,7 +5,9 @@
   • режим «прокси»: sing-box слушает 127.0.0.1:порт, а Карина прописывает этот адрес системным прокси Windows (права администратора не нужны);
     при выключении прежние настройки прокси возвращаются;
   • режим «VPN» (TUN): создаётся виртуальный сетевой адаптер, через него идёт весь трафик (нужны права администратора);
-  • «только для приложений»: тоже TUN, но через сервер идёт трафик лишь выбранных программ (по имени exe), всё остальное — напрямую.
+  • «только для приложений»: тоже TUN, но через сервер идёт трафик лишь выбранных программ (по имени exe), всё остальное — напрямую;
+  • «облачный прокси» (cloud_*): отдельный sing-box, который Карина сама поднимает перед запросом к облачной модели; через него идёт только этот запрос,
+    сетевые настройки компьютера не меняются и права администратора не нужны (см. cloudnet.py).
 Ссылки лежат в config.json (в них пароли), в окно они не отдаются: там только названия серверов.
 """
 from __future__ import annotations
@@ -23,6 +25,7 @@ SINGBOX_ZIP = f"sing-box-{SINGBOX_VERSION}-windows-amd64.zip"
 SINGBOX_URL = f"https://github.com/SagerNet/sing-box/releases/download/v{SINGBOX_VERSION}/{SINGBOX_ZIP}"
 SINGBOX_SHA256 = "9acbda81d7a9a93d8d0616990cf8b804523adfcd0215d11a2dd9370746d2be28"
 UA = {"User-Agent": "Bogestv0-KARINA"}
+CLOUD_IDLE = 600            # через сколько секунд без облачных запросов облачный прокси выключается сам
 
 DEFAULTS = {
     "servers": [],          # [{"id","name","link","kind"}]
@@ -34,6 +37,7 @@ DEFAULTS = {
     "confirm": True,        # переспрашивать «да/нет» перед включением голосом
     "direct_ru": False,     # сайты .ru / .su / .рф открывать напрямую, мимо сервера
     "port": 10808,          # порт локального прокси в режиме «прокси»
+    "cloud": True,          # запросы к облачным моделям сами идут через сервер (отдельный прокси, VPN на компьютере не включается)
     "hwid": "",             # идентификатор этого компьютера для подписок с лимитом устройств (создаётся сам)
 }
 MODES = ("vpn", "proxy")
@@ -495,6 +499,10 @@ class Tunnel:
         self._lock = threading.RLock()
         self._proc: subprocess.Popen | None = None
         self._info: dict = {}
+        self._cproc: subprocess.Popen | None = None       # облачный прокси: свой процесс sing-box, независимый от основного
+        self._cinfo: dict = {}
+        self._cidle: threading.Timer | None = None
+        self.cloud_problem = ""                           # почему облачный запрос пошёл без сервера (для текста ошибки), пусто — всё в порядке
 
     # ---------- настройки ----------
     def settings(self) -> dict:
@@ -629,6 +637,7 @@ class Tunnel:
                 shutil.copyfileobj(src, dst)
         part.unlink(missing_ok=True)
         self.stop()
+        self.stop_cloud()
         tmp.replace(self.exe)
         (self.dir / "VERSION.txt").write_text(SINGBOX_VERSION + "\n", "utf-8")
         prog(total, total, "done")
@@ -636,6 +645,7 @@ class Tunnel:
 
     def delete_engine(self) -> None:
         self.stop()
+        self.stop_cloud()
         shutil.rmtree(self.dir, ignore_errors=True)
 
     # ---------- запуск и остановка ----------
@@ -762,6 +772,118 @@ class Tunnel:
                 self._log("Туннель выключен")
             return was
 
+    # ---------- облачный прокси ----------
+    @property
+    def _cpidfile(self) -> Path:
+        return self.dir / "sing-box-cloud.pid"
+
+    def cloud_running(self) -> bool:
+        p = self._cproc
+        return bool(p and p.poll() is None)
+
+    def cloud_route(self) -> str | None:
+        """Куда отправлять запрос к облачной модели: None — обычным путём, «127.0.0.1:порт» — через облачный прокси. Не бросает исключений."""
+        self.cloud_problem = ""
+        try:
+            s = self.settings()
+            if not s["cloud"] or not IS_WIN:
+                return None
+            st = self.status()
+            if st["running"] and st.get("scope") != "apps":
+                return None                    # VPN или прокси на весь компьютер включён: запрос и так под ним
+            if not s["servers"]:
+                self.cloud_problem = "Облачным моделям нужен VPN из этой страны: добавьте ссылку на сервер или подписку в «Настройки → VPN и прокси» — дальше Карина сама будет его включать для облака."
+                return None
+            if not self.engine_ready():
+                self.cloud_problem = "Для облачных моделей нужен движок VPN: скачайте его в «Настройки → VPN и прокси» («Скачать движок»)."
+                return None
+            return self.cloud_start()
+        except TunnelError as e:
+            self.cloud_problem = f"VPN для облачных моделей не включился: {e}"
+        except Exception as e:
+            self.cloud_problem = f"VPN для облачных моделей не включился: {e.__class__.__name__}"
+        return None
+
+    def cloud_start(self) -> str:
+        """Поднимает (или оставляет работать) облачный прокси, возвращает его адрес. Ошибки — TunnelError."""
+        with self._lock:
+            srv = self.active_server()
+            if not srv:
+                raise TunnelError("не выбран сервер")
+            if self.cloud_running() and self._cinfo.get("sid") == srv["id"]:
+                self._cloud_touch()
+                return f"127.0.0.1:{self._cinfo['port']}"
+            self.stop_cloud()
+            try:
+                _, outbound = parse_link(srv["link"])
+            except LinkError as e:
+                raise TunnelError(f"сервер «{srv['name']}» не получилось прочитать: {e}") from None
+            s = self.settings()
+            port = _free_port(int(s["port"] or 10808) + 100)
+            conf = build_config(outbound, "proxy", "all", [], port, False)
+            cdir = self.dir / "cloud"
+            cdir.mkdir(parents=True, exist_ok=True)
+            cfile, logf = cdir / "config.json", cdir / "sing-box.log"
+            cfile.write_text(json.dumps(conf, ensure_ascii=False, indent=1), "utf-8")
+            chk = subprocess.run([str(self.exe), "check", "-c", str(cfile)], capture_output=True, text=True, timeout=20, creationflags=NO_WINDOW)
+            if chk.returncode != 0:
+                raise TunnelError("движок не принял настройки: " + _last_line(chk.stderr or chk.stdout))
+            out = open(logf, "wb")
+            try:
+                proc = subprocess.Popen([str(self.exe), "run", "-c", str(cfile), "-D", str(cdir)], stdout=out, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+            finally:
+                out.close()
+            self._cproc = proc
+            self._cpidfile.write_text(str(proc.pid), "utf-8")
+            end = time.time() + 8
+            while time.time() < end and proc.poll() is None:
+                try:
+                    socket.create_connection(("127.0.0.1", port), timeout=0.3).close()
+                    break
+                except OSError:
+                    time.sleep(0.2)
+            else:
+                tail = ""
+                if proc.poll() is not None:
+                    try:
+                        tail = _last_line(logf.read_text("utf-8", "replace"))
+                    except OSError:
+                        pass
+                self.stop_cloud()
+                raise TunnelError("облачный прокси не запустился" + (f": {tail}" if tail else ""))
+            self._cinfo = {"sid": srv["id"], "port": port, "server": srv["name"], "since": time.time()}
+            self._log(f"Облачный прокси: включён, сервер «{srv['name']}»")
+            self._cloud_touch()
+            return f"127.0.0.1:{port}"
+
+    def _cloud_touch(self) -> None:
+        """Продлевает работу облачного прокси: он выключится сам, если им CLOUD_IDLE секунд не пользовались."""
+        if self._cidle:
+            self._cidle.cancel()
+        t = threading.Timer(CLOUD_IDLE, self.stop_cloud)
+        t.daemon = True
+        t.start()
+        self._cidle = t
+
+    def stop_cloud(self) -> bool:
+        with self._lock:
+            if self._cidle:
+                self._cidle.cancel()
+                self._cidle = None
+            was = self.cloud_running()
+            p, self._cproc = self._cproc, None
+            if p and p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(4)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+            self._cpidfile.unlink(missing_ok=True)
+            self._cinfo = {}
+            if was:
+                self._log("Облачный прокси: выключен")
+            return was
+
     def recover(self) -> None:
         """При старте Карины: после аварийного выхода мог остаться чужой sing-box и наш адрес в системном прокси."""
         if not IS_WIN:
@@ -774,6 +896,13 @@ class Tunnel:
                     if "sing-box" in t.lower():
                         subprocess.run(["taskkill", "/PID", pid, "/F", "/T"], capture_output=True, creationflags=NO_WINDOW)
                 self._pidfile.unlink(missing_ok=True)
+            if self._cpidfile.exists():
+                pid = self._cpidfile.read_text("utf-8").strip()
+                if pid.isdigit():
+                    t = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True, creationflags=NO_WINDOW).stdout
+                    if "sing-box" in t.lower():
+                        subprocess.run(["taskkill", "/PID", pid, "/F", "/T"], capture_output=True, creationflags=NO_WINDOW)
+                self._cpidfile.unlink(missing_ok=True)
             if restore_system_proxy(self._backup):
                 self._log("Туннель: после прошлого запуска вернула настройки прокси Windows")
         except Exception as e:

@@ -23,7 +23,7 @@ GARLANDS = ("off", "blink", "wave")
 IDLE_KEYS = ("idle_time", "idle_battery", "idle_temp", "idle_music")       # что показывать на свёрнутой плашке
 DOCKS = ("top", "bottom", "left", "right")                                  # к какому краю экрана прилип остров
 ISLAND_DEFAULTS = {"character": "logo", "holiday": "dates", "snow": True, "garland": "off", "city": "", "tools": [], "links": [],
-                   "mixer_strip": "", "pinned": False, "dock": "top", "pos": 0.5, "mon": None,   # положение: край, место вдоль края (0..1), монитор; помним только если «закреплён»
+                   "mixer_strip": "", "pinned": False, "placed": False, "dock": "top", "pos": 0.5, "mon": None,   # положение: край, место вдоль края (0..1), монитор; помним только если «закреплён»
                    **{k: True for k in IDLE_KEYS}}
 
 
@@ -58,6 +58,8 @@ def clean_settings(patch: dict, old: dict | None = None) -> dict:
         out["mixer_strip"] = " ".join(str(p["mixer_strip"] or "").split())[:60]
     if "pinned" in p:
         out["pinned"] = bool(p["pinned"])
+    if "placed" in p:                                           # место выбрано во вкладке «Виджет»: помним его и без закрепления
+        out["placed"] = bool(p["placed"])
     if p.get("dock") in DOCKS:
         out["dock"] = p["dock"]
     if "pos" in p:

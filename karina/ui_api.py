@@ -241,6 +241,70 @@ class Api:
         (components.PAUSED.set if on else components.PAUSED.clear)()
         return self._components_state()
 
+    # ---- вкладка «Виджет»: все настройки динамического острова в одном месте ----
+    WIDGET_KEYS = ("character", "holiday", "snow", "garland", "city", "idle_time", "idle_battery", "idle_temp", "idle_music")
+
+    def _iapi(self):
+        """Методы острова, которые нужны и вкладке (автозапуск, горячие клавиши): создаются один раз."""
+        if getattr(self, "_island_api", None) is None:
+            from .island import IslandApi
+            self._island_api = IslandApi(self.island, self, lambda: None)
+        return self._island_api
+
+    def widget_get(self):
+        from . import island_tools
+        isl = self.island
+        s = island_tools.clean_settings({}, self.cfg.get("island"))
+        where = isl.where() if isl is not None else {"dock": "top", "pos": 0.5, "mon": 0, "pinned": False, "running": False}
+        ia = self._iapi() if isl is not None else None
+        mons = isl.monitors() if isl is not None else []
+        return {"enabled": bool(self.cfg["ui"].get("island")), "where": where,
+                "monitors": [{"w": m["w"], "h": m["h"], "primary": m["primary"]} for m in mons],
+                "settings": {k: s.get(k) for k in self.WIDGET_KEYS},
+                "autostart": bool(ia.autostart_get()["on"]) if ia else False,
+                "hotkeys": ia.hotkeys_get() if ia else {"keys": {}, "errors": []}}
+
+    def widget_set(self, patch):
+        """Вид острова: персонаж, праздник, снег, гирлянда, город, что показывать на свёрнутой плашке. Страница острова узнаёт сразу."""
+        if self.island is None or not isinstance(patch, dict):
+            return None
+        new = self.island.settings_set({k: v for k, v in patch.items() if k in self.WIDGET_KEYS})
+        self.island.push({"type": "settings", "settings": new})
+        return {k: new.get(k) for k in self.WIDGET_KEYS}
+
+    def widget_enable(self, on):
+        on = bool(on)
+        self.cfg.update({"ui": {"island": on}})
+        if self.island is not None:
+            threading.Thread(target=self.island.apply, args=(on,), daemon=True, name="karina-island-toggle").start()
+        return on
+
+    def widget_place(self, dock, pos, mon=0):
+        if self.island is None:
+            return None
+        return self.island.place(str(dock), pos, mon)
+
+    def widget_pin(self, on):
+        if self.island is None:
+            return None
+        self.island.set_pinned(bool(on))
+        return self.island.where()
+
+    def widget_reset(self):
+        if self.island is None:
+            return None
+        self.island.dock_reset()
+        return self.island.where()
+
+    def widget_autostart(self, on):
+        r = self._iapi().autostart_set(bool(on))
+        if r.get("ok") and on:
+            self.cfg.update({"ui": {"island": True}})
+        return r
+
+    def widget_hotkey(self, name, combo):
+        return self._iapi().hotkey_set(name, combo)
+
     def components_retry(self):
         return bool(self.assistant and self.assistant.retry_components())
 
@@ -287,7 +351,7 @@ class Api:
         return {"win": sys.platform == "win32", "admin": elevate.is_admin(), "version": tn.SINGBOX_VERSION,
                 "engine": t.engine_ready(), "downloading": "tunnel" in self._downloads,
                 "servers": [{"id": x["id"], "name": x["name"], "kind": x.get("kind", "")} for x in s["servers"]], "active": s["active"],
-                "mode": s["mode"], "scope": s["scope"], "apps": s["apps"], "confirm": bool(s["confirm"]), "direct_ru": bool(s["direct_ru"]),
+                "mode": s["mode"], "scope": s["scope"], "apps": s["apps"], "confirm": bool(s["confirm"]), "direct_ru": bool(s["direct_ru"]), "cloud": bool(s["cloud"]), "cloud_on": t.cloud_running(),
                 "has_sub": bool(s["sub_url"]), "status": t.status(), "text": t.describe()}
 
     def _tunnel_do(self, fn):
@@ -328,7 +392,7 @@ class Api:
             if isinstance(apps, str):
                 apps = [a for a in re.split(r"[,;\n]+", apps)]
             out["apps"] = tn.clean_apps(apps if isinstance(apps, list) else [])
-        for k in ("confirm", "direct_ru"):
+        for k in ("confirm", "direct_ru", "cloud"):
             if k in patch:
                 out[k] = bool(patch[k])
         if out:
@@ -1085,6 +1149,83 @@ class Api:
             self.cfg.data["commands"] = cmds
             self.cfg.save()
         return True
+
+    # ---- удаление по частям (karina/uninstall.py) ----
+    def uninstall_list(self):
+        from . import uninstall as un
+        return {"items": un.describe(self.cfg.path.parent), "path": str(self.cfg.path.parent)}
+
+    def uninstall_run(self, ids):
+        """Стирает выбранное. Что занято (настройки, диалоги, torch…), стирает вторая копия после выхода: тогда Карина закрывается."""
+        from . import uninstall as un, silero_voice
+        base = self.cfg.path.parent
+        cat = {i["id"]: i for i in un.catalog(base)}
+        ids = [i for i in (ids if isinstance(ids, list) else []) if isinstance(i, str) and i in cat]
+        if not ids:
+            return {"ok": False, "error": "Ничего не выбрано."}
+        for d in list(self._downloads.values()):                    # идущие загрузки не должны дописывать файлы поверх удалённого
+            try:
+                d["cancel"].set()
+            except Exception:
+                pass
+        a = self.assistant
+        try:
+            a.chat.stop()
+        except Exception:
+            pass
+        if {"llm", "engine"} & set(ids) or any(not cat[i]["now"] for i in ids):
+            try:
+                a.engine.stop()                                      # llama-server держит модели и свою папку
+            except Exception:
+                pass
+        if "vpn" in ids or "program" in ids or "settings" in ids:
+            try:
+                a.tunnel.stop()
+                a.tunnel.stop_cloud()
+            except Exception:
+                pass
+        if "voice" in ids:
+            try:
+                silero_voice.unload()
+            except Exception:
+                pass
+        done, problems, failed = [], [], []
+        for iid in ids:
+            it = cat[iid]
+            if it["kind"] == "system":
+                bad = un.remove_system(base)
+                problems += bad
+                if not bad:
+                    done.append(iid)
+            elif it["kind"] == "files" and it["now"]:
+                errs = [e for e in (un.remove_path(p) for p in it["paths"]) if e]
+                if errs:
+                    failed.append(iid)
+                else:
+                    done.append(iid)
+        pl = un.plan(base, ids, failed)
+        later = bool(pl["paths"] or pl["program"])
+        if later and not un.spawn_cleanup(pl):
+            problems.append("Не удалось запустить завершающую очистку: закройте Карину и повторите удаление.")
+            later = False
+        if later:
+            done += [i for i in ids if i not in done and cat[i]["kind"] == "files"] + (["program"] if pl["program"] else [])
+
+            def bye():
+                try:
+                    a.stop()
+                except Exception:
+                    pass
+                self.quitting = True
+                w = self._win()
+                if w:
+                    try:
+                        w.destroy()
+                    except Exception:
+                        pass
+                os._exit(0)
+            threading.Timer(2.5, bye).start()
+        return {"ok": True, "done": done, "problems": problems, "quit": later}
 
     def open_data_folder(self):
         DATA.mkdir(parents=True, exist_ok=True)

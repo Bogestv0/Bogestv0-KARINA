@@ -5,6 +5,7 @@
 Он не пишется в журнал и не попадает в тексты ошибок (см. _scrub)."""
 from __future__ import annotations
 import json, os, threading, time, urllib.error, urllib.request
+from . import cloudnet
 from .engine import EngineError
 
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -60,7 +61,7 @@ class ClaudeClient:
         if code == 401:
             return "Claude не принял ключ API. Проверьте ключ в «Настройки»."
         if code == 403:
-            return "У этого ключа нет доступа к Claude (ошибка 403)."
+            return "У этого ключа нет доступа к Claude (ошибка 403): сервис мог не пустить из вашей страны." + cloudnet.note()
         if code == 404:
             return f"Модель «{self.model_id}» недоступна для вашего ключа. Выберите другую в «Модели → Мозг»."
         if code == 429:
@@ -109,7 +110,7 @@ class ClaudeClient:
             body["temperature"] = temperature
         out: list[str] = []
         try:
-            with urllib.request.urlopen(self._request(body), timeout=90) as r:
+            with cloudnet.open(self._request(body), timeout=90) as r:
                 for raw in r:
                     if stop is not None and stop.is_set():
                         break
@@ -138,7 +139,7 @@ class ClaudeClient:
         except ClaudeError:
             raise
         except (OSError, ValueError) as e:
-            raise ClaudeError("Нет связи с Claude: проверьте интернет." + (f" ({e.__class__.__name__})" if not isinstance(e, urllib.error.URLError) else ""))
+            raise ClaudeError("Нет связи с Claude: проверьте интернет." + (f" ({e.__class__.__name__})" if not isinstance(e, urllib.error.URLError) else "") + cloudnet.note())
         return "".join(out).strip()
 
     def ping(self) -> tuple[bool, str, float]:

@@ -7,7 +7,7 @@
 Ключ уходит только в заголовок запроса к выбранному провайдеру и не попадает в журнал и тексты ошибок (см. _scrub)."""
 from __future__ import annotations
 import json, re, threading, time, urllib.error, urllib.request
-from . import prompts
+from . import cloudnet, prompts
 from .engine import EngineError
 
 CHARS_PER_TOKEN = 2.6          # русский текст: оценка токенов по числу символов (с запасом)
@@ -224,12 +224,12 @@ class CloudPool:
             raise CloudError("Сначала введите ключ" + (" и адрес" if pid == "custom" else "") + ".")
         req = urllib.request.Request(p["url"] + "/models", headers=self._headers(p, False))
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with cloudnet.open(req, timeout=30) as r:
                 data = json.loads(r.read().decode("utf-8", "replace"))
         except urllib.error.HTTPError as e:
             raise CloudError(self._scrub(p, f"{p['name']}: {self._explain(e.code, e.read().decode('utf-8', 'replace'))}"))
         except (OSError, ValueError) as e:
-            raise CloudError(f"{p['name']}: нет связи ({e.__class__.__name__}).")
+            raise CloudError(f"{p['name']}: нет связи ({e.__class__.__name__}).{cloudnet.note()}")
         ids = [re.sub(r"^models/", "", str(m.get("id") or "")) for m in (data.get("data") or data.get("models") or []) if isinstance(m, dict)]
         ids = [i for i in ids if i and not _NOT_CHAT.search(i)]
         free = [i for i in ids if i.endswith(":free")]
@@ -265,7 +265,7 @@ class CloudPool:
                 403: "доступ запрещён (403) — чаще всего сервис не пускает из вашей страны (нужен VPN/прокси) или ключ без прав",
                 402: "нужна оплата или закончились кредиты (402)", 404: "модель или адрес не найдены (404)",
                 429: "лимит исчерпан (429)"}.get(code, f"ошибка {code}")
-        return base + (f": {msg[:160]}" if msg and code not in (401,) else "")
+        return base + (f": {msg[:160]}" if msg and code not in (401,) else "") + (cloudnet.note() if code == 403 else "")
 
     def _call(self, p: dict, msgs: list[dict], max_tokens: int, temperature: float, on_delta, stop, json_mode: bool, plain: bool = False, _again: bool = True) -> str:
         if p["model"] and p["model"] in self._dead.get(p["id"], set()):
@@ -290,7 +290,7 @@ class CloudPool:
         req = urllib.request.Request(p["url"] + "/chat/completions", data=json.dumps(body, ensure_ascii=False).encode("utf-8"), headers=self._headers(p))
         out: list[str] = []
         try:
-            with urllib.request.urlopen(req, timeout=90) as r:
+            with cloudnet.open(req, timeout=90) as r:
                 for raw in r:
                     if stop is not None and stop.is_set():
                         break
@@ -342,7 +342,7 @@ class CloudPool:
         except _Fail:
             raise
         except (OSError, ValueError) as e:
-            raise _Fail(f"нет связи ({e.__class__.__name__})", 30, "down")
+            raise _Fail(f"нет связи ({e.__class__.__name__}){cloudnet.note()}", 30, "down")
         text = strip_think("".join(out))
         if not text and not (stop is not None and stop.is_set()):
             raise _Fail("пустой ответ", 15, "down")

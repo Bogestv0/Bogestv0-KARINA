@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, re, urllib.request
 from .actions import REGISTRY
-from . import profile, prompts
+from . import cloudnet, profile, prompts
 
 
 def ask(cfg, text: str, app_names: list[str]) -> dict | None:
@@ -19,7 +19,7 @@ def ask(cfg, text: str, app_names: list[str]) -> dict | None:
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
         "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     try:
-        out = json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8"))
+        out = json.loads(cloudnet.open(req, timeout=10).read().decode("utf-8"))
         raw = "".join(b.get("text", "") for b in out.get("content", []))
         m = re.search(r"\{.*\}", raw, re.S)
         return json.loads(m.group(0)) if m else None

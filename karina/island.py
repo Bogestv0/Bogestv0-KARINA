@@ -1089,8 +1089,8 @@ class Island:
     def _load_place(self):
         """Закреплённое положение берём из настроек; не закреплённый остров при каждом запуске стоит сверху по центру."""
         cfg = self.settings()
-        if cfg.get("pinned"):
-            self._pinned, self._dock, self._pos = True, cfg["dock"], cfg["pos"]
+        if cfg.get("pinned") or cfg.get("placed"):
+            self._pinned, self._dock, self._pos = bool(cfg.get("pinned")), cfg["dock"], cfg["pos"]
             self._mon = tuple(cfg["mon"]) if cfg.get("mon") else None
         else:
             self._pinned, self._dock, self._pos, self._mon = False, "top", 0.5, None
@@ -1926,6 +1926,76 @@ class Island:
         self._js("window.karina && window.karina.layout(" + json.dumps(lay) + ")")
         self._js("window.karina && window.karina.fly(false)")
 
+    # ---- вкладка «Виджет»: выбрать место острова из настроек ----
+    def monitors(self) -> list:
+        """Подключённые мониторы: [{"origin": [x, y], "w", "h", "primary"}], основной первым. Вне Windows — пусто."""
+        out: list = []
+        if not IS_WIN:
+            return out
+        try:
+            proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HANDLE, wintypes.HDC, ctypes.POINTER(_RECT), wintypes.LPARAM)
+
+            def cb(hm, hdc, rc, lp):
+                mi = _MONITORINFO()
+                mi.cbSize = ctypes.sizeof(_MONITORINFO)
+                if user32.GetMonitorInfoW(hm, ctypes.byref(mi)):
+                    r = mi.rcMonitor
+                    out.append({"origin": [r.left, r.top], "w": r.right - r.left, "h": r.bottom - r.top, "primary": bool(mi.dwFlags & 1)})
+                return True
+            user32.EnumDisplayMonitors(None, None, proc(cb), 0)
+        except Exception as e:
+            self.trace(f"Остров: список мониторов не получен ({e.__class__.__name__}: {e})")
+            return []
+        out.sort(key=lambda m: (not m["primary"], m["origin"][0], m["origin"][1]))
+        return out
+
+    def where(self) -> dict:
+        """Где остров сейчас (или где встанет при запуске): край, доля вдоль края, номер монитора, закреплён ли."""
+        cfg = self.settings()
+        if self.window is not None:
+            dock, pos, mon, pinned = self._dock, self._pos, self._mon, self._pinned
+        elif cfg.get("pinned") or cfg.get("placed"):
+            dock, pos, mon, pinned = cfg["dock"], cfg["pos"], (tuple(cfg["mon"]) if cfg.get("mon") else None), bool(cfg.get("pinned"))
+        else:
+            dock, pos, mon, pinned = "top", 0.5, None, False
+        idx = 0
+        if mon:
+            for i, m in enumerate(self.monitors()):
+                if tuple(m["origin"]) == tuple(mon):
+                    idx = i
+        return {"dock": dock, "pos": float(pos), "mon": idx, "pinned": bool(pinned), "running": self.window is not None}
+
+    def place(self, dock: str, pos, mon_index=0) -> dict:
+        """Поставить остров на край dock в долю pos (0..1) монитора №mon_index. Положение запоминается и после перезапуска."""
+        dock = dock if dock in tools.DOCKS else "top"
+        try:
+            pos = min(1.0, max(0.0, float(pos)))
+        except (TypeError, ValueError):
+            pos = 0.5
+        mons = self.monitors()
+        try:
+            m = mons[int(mon_index)]
+        except (IndexError, TypeError, ValueError):
+            m = mons[0] if mons else None
+        mon = None if (m is None or m["primary"]) else tuple(m["origin"])
+        patch = {"dock": dock, "pos": pos, "mon": list(mon) if mon else None, "placed": True}
+        live = IS_WIN and self.window is not None and self.ready
+        if live:
+            with self._lock:
+                if self._busy or self._mode in ("full", "drop") or self._rect_cur is None:
+                    live = False                                 # остров занят (панель открыта): положение сохраним, встанет при следующем показе
+                else:
+                    self._busy = True
+                    self._gen += 1
+            if live:
+                try:
+                    self._fly_to(dock, pos, mon)
+                finally:
+                    self._busy = False
+                    self._go()
+        self.settings_set(patch)
+        return {"ok": True, "live": bool(live), **self.where()}
+
     def set_pinned(self, on: bool):
         """Закрепить на этом месте: после перезапуска остров встанет сюда же, и перетащить его нельзя, пока не открепят."""
         self._pinned = bool(on)
@@ -1940,7 +2010,7 @@ class Island:
         if not IS_WIN or self.window is None:
             return None
         self._pinned = False
-        self.settings_set({"pinned": False})
+        self.settings_set({"pinned": False, "placed": False, "dock": "top", "pos": 0.5, "mon": None})
         with self._lock:
             if self._busy:
                 return self.layout_info()

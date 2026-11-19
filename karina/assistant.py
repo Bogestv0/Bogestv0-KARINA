@@ -10,6 +10,7 @@ from . import rude as rudemod
 from .mixer_remote import MixerRemote
 from .vpn_link import VpnLink
 from .tunnel import Tunnel
+from . import cloudnet
 from .brain import Brain
 from .coder import CoderService
 from .diag import trace
@@ -86,6 +87,7 @@ class Assistant:
         self.mixer = MixerRemote(cfg)                       # «сделай тише музыку»: связь с Bogestv0 MIXER
         self.vpn = VpnLink(cfg, log=lambda m: trace(m))     # «включи впн»: расширение Bogestv0 VPN подключается к нам
         self.tunnel = Tunnel(cfg, cfg.path.parent, log=lambda m: trace(m))     # свой VPN/прокси на sing-box: «включи впн», «включи прокси»
+        cloudnet.bind(self.tunnel)                          # облачные модели сами идут через сервер из настроек VPN (отдельный прокси, VPN на компьютере не включается)
         self.listener = Listener(cfg, self._on_audio, self._on_level, self._on_mics)
         self.listener.on_barge = self._on_barge
         self.memory = memorymod.get(cfg)                    # чему Карина научилась: выбранные приложения, узнаваемые сразу фразы
@@ -212,6 +214,7 @@ class Assistant:
         self.engine.stop()
         self.vpn.stop()
         self.tunnel.stop()
+        self.tunnel.stop_cloud()
         self.mixer.close()
 
     def _set_state(self, s: str, detail: str = ""):

@@ -64,8 +64,8 @@ DEFAULTS: dict = {
     "cloud": {"strategy": "failover", "order": [], "providers": {}},
     # persona.rude — дерзкая Карина 18+ (злится, матерится, шутит пошло) в обычном чате и в готовых ответах «как дела», «кто ты» (см. prompts.PERSONA_RUDE)
     "persona": {"rude": False},
-    # свой VPN/прокси (karina/tunnel.py): servers — ссылки на серверы (с паролями, в окно не отдаются), mode — vpn | proxy, scope — all | apps, apps — имена exe, confirm — спрашивать «да/нет» голосом
-    "tunnel": {"servers": [], "sub_url": "", "active": "", "mode": "vpn", "scope": "all", "apps": [], "confirm": True, "direct_ru": False, "port": 10808},
+    # свой VPN/прокси (karina/tunnel.py): servers — ссылки на серверы (с паролями, в окно не отдаются), mode — vpn | proxy, scope — all | apps, apps — имена exe, confirm — спрашивать «да/нет» голосом, cloud — запросы к облачным моделям сами идут через сервер (отдельный прокси, VPN на компьютере не включается)
+    "tunnel": {"servers": [], "sub_url": "", "active": "", "mode": "vpn", "scope": "all", "apps": [], "confirm": True, "direct_ru": False, "cloud": True, "port": 10808},
     "updates": {"auto": True},   # проверять новую версию при запуске
     "models": {"active": "", "gpu": "auto", "ctx": 0, "threads": 0},
     # Микшер Bogestv0 MIXER (удалённый пульт по WebSocket): host/port/pin пустые или 0 = взять из настроек самого микшера;
