@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="ru">
 <head>
+<script>document.documentElement.dataset.theme="dark"</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bogestv0 KARINA</title>
@@ -113,13 +114,9 @@
     <div class="card hero" id="hero" data-state="loading">
       <div class="stage" id="stage" aria-hidden="true">
         <div class="holo-wrap" id="holoWrap">
-          <img class="h-base" src="holo/f/1.webp" alt="" draggable="false">
-          <img class="h-lay" data-k="z0" src="holo/f/0.webp" alt="" draggable="false">
-          <img class="h-lay" data-k="k13" src="holo/mo/k13.webp" alt="" draggable="false">
-          <img class="h-lay" data-k="k15" src="holo/mo/k15.webp" alt="" draggable="false">
-          <canvas id="holoCv" class="h-cv"></canvas>
+          <img class="h-base" src="holo/f/base.webp" alt="" draggable="false">
         </div>
-        <img class="h-proj" src="holo/f/1.webp" alt="" draggable="false">
+        <img class="h-proj" src="holo/f/base.webp" alt="" draggable="false">
       </div>
       <div class="hero-text">
         <div class="eyebrow" id="stateLabel">Запуск</div>
@@ -765,7 +762,7 @@
           <div class="note" id="admNote"></div>
           <div class="form-actions" style="margin-top:8px"><button type="button" class="btn" id="admRestart" hidden>Перезапустить Карину сейчас</button><span class="msg" id="admMsg"></span></div>
         </div>
-        <label>Тема<select name="theme"><option value="auto">Как в Windows</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
+        <input type="hidden" name="theme" value="dark">
       </div>
     </div>
     <div class="card">

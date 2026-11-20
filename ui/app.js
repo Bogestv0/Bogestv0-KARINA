@@ -46,9 +46,9 @@
   });
 
   // ---------- тема ----------
-  function applyTheme(t) {
-    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
-  }
+  // Только тёмная тема (голограмма Карины рассчитана на тёмный фон)
+  function applyTheme() { document.documentElement.dataset.theme = 'dark'; }
+  applyTheme();
 
   // ---------- состояние ----------
   const STATES = {
