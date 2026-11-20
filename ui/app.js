@@ -66,6 +66,16 @@
     let key = s in STATES ? s : 'idle';
     const [label, title, hint] = STATES[key];
     hero.dataset.state = key;
+    // голограмма: режим по состоянию приложения (выход из сна Holo сам проигрывает как «просыпается»)
+    if (window.Holo) {
+      const asleep = !!sleeping || key === 'paused' || listening === false;
+      const prev = hero._holoPrev;
+      let mode = asleep ? 'sleep' : key === 'thinking' ? 'think' : key === 'speaking' ? 'speak' : (key === 'called' || key === 'confirm') ? 'called' : 'idle';
+      Holo.setState(mode);
+      // улыбка: первое появление после запуска (приветствие) и конец ответа без ошибки
+      if (!asleep && ((prev === 'loading' && key === 'idle') || (prev === 'speaking' && key === 'idle'))) Holo.smile();
+      hero._holoPrev = key;
+    }
     $('#stateLabel').textContent = sleeping && key === 'idle' ? 'Режим сна' : label;
     $('#stateTitle').textContent = sleeping && key === 'idle' ? 'Я сплю' : (title || `Скажите «${cfg ? cfg.name : 'Карина'}, …»`);
     $('#stateHint').textContent = sleeping && key === 'idle' ? `Скажите «${cfg ? cfg.name : 'Карина'}, проснись».` : (detail || hint);

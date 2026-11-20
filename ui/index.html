@@ -111,13 +111,21 @@
 
   <div class="grid-home" id="gridHome">
     <div class="card hero" id="hero" data-state="loading">
-      <div class="orb-wrap"><div class="orb" id="orb"><img src="logo.png" alt=""></div></div>
+      <div class="stage" id="stage" aria-hidden="true">
+        <div class="holo-wrap" id="holoWrap">
+          <img class="h-base" src="holo/f/1.webp" alt="" draggable="false">
+          <img class="h-lay" data-k="z0" src="holo/f/0.webp" alt="" draggable="false">
+          <img class="h-lay" data-k="k13" src="holo/mo/k13.webp" alt="" draggable="false">
+          <img class="h-lay" data-k="k15" src="holo/mo/k15.webp" alt="" draggable="false">
+          <canvas id="holoCv" class="h-cv"></canvas>
+        </div>
+        <img class="h-proj" src="holo/f/1.webp" alt="" draggable="false">
+      </div>
       <div class="hero-text">
         <div class="eyebrow" id="stateLabel">Запуск</div>
         <h2 id="stateTitle">Загружаюсь…</h2>
         <p class="muted" id="stateHint">Подождите немного.</p>
       </div>
-      <div class="wave" id="wave" role="img" aria-label="Уровень звука с микрофона"></div>
       <div class="hero-actions">
         <button class="btn primary" id="btnListen">Выключить микрофон</button>
         <button class="btn" id="btnVoice">Проверить голос</button>
@@ -777,6 +785,7 @@
 </main>
 </div>
 </div>
+<script src="holo.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

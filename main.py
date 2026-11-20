@@ -356,7 +356,7 @@ def selftest() -> int:
         except BaseException:
             logf.write("  ПРЕДУПРЕЖДЕНИЕ: " + traceback.format_exc().strip().splitlines()[-1] + "\n")
     step["now"] = "проверка ресурсов"
-    for rel in ("ui/index.html", "ui/app.js", "ui/app.css", "ui/fonts.css", "ui/logo.png"):
+    for rel in ("ui/index.html", "ui/app.js", "ui/app.css", "ui/fonts.css", "ui/logo.png", "ui/holo.js", "ui/holo/f/1.webp"):
         if not (ROOT / rel).exists():
             bad.append("нет ресурса " + rel)
     try:
