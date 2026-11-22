@@ -769,10 +769,19 @@ kbd{font:500 12px var(--f-mono);padding:4px 9px;border-radius:8px;background:var
 
 /* ---- голограмма Карина в герое (кадры holo/, управляет holo.js) ---- */
 /* чёрный фон кадров «растворяется» в карточке через screen: видна только светящаяся голограмма */
-#hero.hero{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);grid-template-rows:1fr auto;align-items:center;overflow:hidden;padding:14px 22px 22px 14px;gap:6px 10px}
-#hero .hero-text{min-width:0}
-#hero .hero-text h2{font-size:19px;overflow-wrap:break-word}
-.stage{position:relative;width:100%;max-width:640px;justify-self:center;aspect-ratio:1;pointer-events:none;user-select:none}
+#hero.hero{display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0;border-left:1px solid var(--line)}
+.stage{position:relative;width:100%;max-width:540px;margin:0 auto;aspect-ratio:1;pointer-events:none;user-select:none}
 .stage img,.stage canvas,.stage video{position:absolute;inset:0;width:100%;height:100%;display:block;filter:var(--hf,brightness(.9) saturate(.92))}
 .holo-wrap{position:absolute;inset:0;will-change:transform;transform-origin:50% 60%;mix-blend-mode:screen}
 .stage .h-proj{z-index:2;mix-blend-mode:plus-lighter}   /* основания проекторов: неподвижны, видны только в своих зонах (маска из holo.js) */
+
+/* статус и кнопки теперь в карточке «Разговор» */
+.talk-top{display:flex;align-items:center;justify-content:space-between;gap:16px 24px;flex-wrap:wrap;padding-bottom:14px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.talk-top .hero-text{min-width:0;flex:1 1 280px}
+.talk-top .hero-text h2{font:600 22px/1.2 var(--f-display);margin:4px 0 6px;overflow-wrap:break-word}
+.talk-top .hero-text p{margin:0;font-size:14px}
+.talk-top .hero-actions{grid-column:auto;flex:0 0 auto}
+.talk-top[data-state=speaking] .eyebrow,.talk-top[data-state=called] .eyebrow{color:var(--ok)}
+.talk-top[data-state=thinking] .eyebrow,.talk-top[data-state=confirm] .eyebrow,.talk-top[data-state=loading] .eyebrow{color:var(--warn)}
+.talk-top[data-state=error] .eyebrow{color:var(--bad)}
+.talk-top[data-state=paused] .eyebrow{color:var(--muted)}

@@ -65,7 +65,7 @@
     const hero = $('#hero');
     let key = s in STATES ? s : 'idle';
     const [label, title, hint] = STATES[key];
-    hero.dataset.state = key;
+    hero.dataset.state = key; { const tt = $('#talkTop'); if (tt) tt.dataset.state = key; }
     // голограмма: режим по состоянию приложения (выход из сна Holo сам проигрывает как «просыпается»)
     if (window.Holo) {
       const asleep = !!sleeping || key === 'paused' || listening === false;

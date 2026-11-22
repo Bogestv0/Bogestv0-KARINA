@@ -118,15 +118,6 @@
         </div>
         <img class="h-proj" src="holo/f/base.webp" alt="" draggable="false">
       </div>
-      <div class="hero-text">
-        <div class="eyebrow" id="stateLabel">Запуск</div>
-        <h2 id="stateTitle">Загружаюсь…</h2>
-        <p class="muted" id="stateHint">Подождите немного.</p>
-      </div>
-      <div class="hero-actions">
-        <button class="btn primary" id="btnListen">Выключить микрофон</button>
-        <button class="btn" id="btnVoice">Проверить голос</button>
-      </div>
     </div>
 
     <div class="card side">
@@ -161,6 +152,17 @@
     </div>
 
     <div class="card log-card">
+      <div class="talk-top" id="talkTop" data-state="loading">
+        <div class="hero-text">
+          <div class="eyebrow" id="stateLabel">Запуск</div>
+          <h2 id="stateTitle">Загружаюсь…</h2>
+          <p class="muted" id="stateHint">Подождите немного.</p>
+        </div>
+        <div class="hero-actions">
+          <button class="btn primary" id="btnListen">Выключить микрофон</button>
+          <button class="btn" id="btnVoice">Проверить голос</button>
+        </div>
+      </div>
       <div class="log-head"><div class="eyebrow">Разговор</div><button class="link" id="btnClear">Очистить</button></div>
       <div class="log" id="log"><div class="empty">Скажите «<span class="nm">Карина</span>, открой блокнот» или напишите команду ниже.</div></div>
       <form class="send" id="sendForm">

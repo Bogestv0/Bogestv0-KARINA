@@ -151,7 +151,7 @@
   // ---------------------------------------------------------------- запуск
   async function init() {
     const h = (location.hash || "").replace("#", "");
-    const st = (await call("setup_state")) || { mode: h || "install", version: "1.24.0", has_vpn: true };
+    const st = (await call("setup_state")) || { mode: h || "install", version: "1.24.1", has_vpn: true };
     S.st = st; S.mode = FLOWS[st.mode] ? st.mode : "install"; S.flow = FLOWS[S.mode];
     $("#ver").textContent = "v" + (st.version || "");
     if (S.mode === "update") {

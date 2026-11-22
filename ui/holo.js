@@ -76,7 +76,12 @@
     opt = opt || {};
     const v = VID[n]; if (!v) return false;
     const fi = opt.fadeIn != null ? opt.fadeIn : C.fadeIn;
-    try { v.pause(); v.currentTime = 0; await v.play(); } catch (_) { return false; }
+    try {
+      v.pause(); v.currentTime = 0; await v.play();
+      // ждём, пока на экране появится именно первый кадр ролика (иначе на миг виден старый последний кадр: «скачок»)
+      await new Promise(r => { let d = 0; const f = () => { if (!d) { d = 1; r(); } };
+        if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(f); setTimeout(f, 250); });
+    } catch (_) { return false; }
     if (e !== ep) { v.pause(); return false; }
     const prev = shown; shown = v; fade(v, fi, 1);
     if (prev && prev !== v) hide(prev, fi);
