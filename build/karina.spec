@@ -5,7 +5,7 @@ from PyInstaller.utils.hooks import collect_all
 
 ROOT = Path(SPECPATH).parent
 datas, binaries, hidden = [], [], ["pystray._win32", "pycaw.pycaw", "comtypes.client", "pyautogui", "pyperclip"]
-for pkg in ("numpy", "faster_whisper", "ctranslate2", "onnxruntime", "av", "webview", "sounddevice", "pycaw", "comtypes", "tokenizers", "huggingface_hub", "docx", "openpyxl", "reportlab", "lxml", "et_xmlfile", "pystray", "winrt", "zxingcpp", "segno", "imageio_ffmpeg"):
+for pkg in ("numpy", "faster_whisper", "ctranslate2", "onnxruntime", "av", "webview", "sounddevice", "pycaw", "comtypes", "tokenizers", "huggingface_hub", "docx", "openpyxl", "reportlab", "lxml", "et_xmlfile", "pystray", "winrt", "zxingcpp", "segno", "imageio_ffmpeg", "bleak"):
     d, b, h = collect_all(pkg)
     datas += d; binaries += b; hidden += h
 # torch лежит ВНЕ exe (докачиваемый архив компонентов) и тянет модули стандартной библиотеки (graphlib, unittest, pdb, ...),

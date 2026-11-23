@@ -8,6 +8,10 @@ from . import dialog
 from . import components
 from . import rude as rudemod
 from .mixer_remote import MixerRemote
+from .watchlock import WatchLock
+from .cabinet import CabinetClient
+from . import powersvc
+from .config import DATA
 from .vpn_link import VpnLink
 from .tunnel import Tunnel
 from . import cloudnet
@@ -85,6 +89,10 @@ class Assistant:
             cfg.update({"tts": {"voice": "karina"}})     # единственный голос — Карина (Silero «Байя»); старые значения вроде silero_xenia приводим к нему
         self.stt, self.tts = STT(cfg), Speaker(cfg)
         self.mixer = MixerRemote(cfg)                       # «сделай тише музыку»: связь с Bogestv0 MIXER
+        self.watch = WatchLock(cfg, emit, log=lambda m: trace(m))     # «часы как ключ»: ушли с часами — компьютер блокируется (karina/watchlock.py)
+        self.cabinet = CabinetClient(cfg, DATA, log=lambda m: trace(m), watch_info=self.watch.cabinet_info,
+                                     shared_dir=powersvc.shared_dir() if sys.platform == "win32" else None)     # события часов и пульс приложения в кабинет
+        self.watch.cabinet = self.cabinet
         self.vpn = VpnLink(cfg, log=lambda m: trace(m))     # «включи впн»: расширение Bogestv0 VPN подключается к нам
         self.tunnel = Tunnel(cfg, cfg.path.parent, log=lambda m: trace(m))     # свой VPN/прокси на sing-box: «включи впн», «включи прокси»
         cloudnet.bind(self.tunnel)                          # облачные модели сами идут через сервер из настроек VPN (отдельный прокси, VPN на компьютере не включается)
@@ -125,6 +133,8 @@ class Assistant:
             t.start()
         self.vpn.start()
         self.tunnel.recover()
+        self.watch.start()
+        self.cabinet.start()
         chatmod.PROFILE_PROVIDER = lambda: prof.prompt_section(self.cfg)
         chatmod.PERSONA_PROVIDER = lambda: (chatmod.prompts.PERSONA_RUDE if (self.cfg.get("persona") or {}).get("rude") else "")
         t = threading.Thread(target=self._birthday_loop, daemon=True, name="karina-birthday")
@@ -216,6 +226,8 @@ class Assistant:
         self.tunnel.stop()
         self.tunnel.stop_cloud()
         self.mixer.close()
+        self.watch.stop()
+        self.cabinet.stop()
 
     def _set_state(self, s: str, detail: str = ""):
         self.state = s

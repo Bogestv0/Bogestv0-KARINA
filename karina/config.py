@@ -47,6 +47,12 @@ DEFAULTS: dict = {
     # уведомления на острове (karina/notify.py): enabled — следить; mode — messengers | all; apps — свои слова из имени программы; show_text — показывать текст сообщения
     "notify": {"enabled": True, "mode": "messengers", "apps": [], "show_text": True},
     "island": {"character": "logo", "holiday": "dates", "snow": True, "city": ""},
+    # «Часы как ключ» (karina/watchlock.py): enabled — следить; targets — устройства рядом (ble | paired | ping); lock_after — секунд без связи до блокировки;
+    # notify — куда слать уведомление на телефон, чтобы оно дошло до часов (ntfy | telegram). Все значения проверяет watchlock.clean_settings
+    # Кабинет (karina/cabinet.py): ключ устройства после привязки по коду из раздела «Часы» на cabinet.bogestv0.ru. Пустой token — не подключено.
+    "cabinet": {"url": "https://cabinet.bogestv0.ru", "token": "", "id": "", "name": ""},
+    "watch": {"enabled": False, "targets": [], "lock": True, "lock_after": 30, "rssi_min": 0, "battery": True, "low_battery": 15,
+              "notify": {"kind": "none", "server": "https://ntfy.sh", "topic": "", "token": "", "chat_id": "", "on_lost": True, "on_back": True}},
     "search_engine": "google",    # google | yandex
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-5-5"},
     # встроенные модели (llama.cpp): active — id выбранной модели; gpu: auto | cpu; ctx/threads: 0 = по умолчанию

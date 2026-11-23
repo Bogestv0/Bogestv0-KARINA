@@ -287,6 +287,68 @@ class Api:
         self.island.push({"type": "settings", "settings": new})
         return {k: new.get(k) for k in self.WIDGET_KEYS}
 
+    # ---- вкладка «Часы»: часы как ключ от компьютера (karina/watchlock.py) ----
+    def watch_get(self):
+        from . import watchlock
+        w = self.assistant.watch
+        return {"conf": watchlock.public_view(w.conf()), "status": w.status()}
+
+    def watch_set(self, patch):
+        if not isinstance(patch, dict):
+            return None
+        return self.assistant.watch.set_conf(patch)
+
+    def watch_scan(self):
+        """Поиск устройств: Bluetooth в эфире и сопряжённые с Windows. Занимает несколько секунд."""
+        return self.assistant.watch.scan()
+
+    # ---- кабинет и служба питания (karina/cabinet.py, karina/powersvc.py) ----
+    def cabinet_get(self):
+        from . import powersvc
+        return {"cabinet": self.assistant.cabinet.status(), "power": powersvc.status()}
+
+    def cabinet_pair(self, code):
+        r = self.assistant.cabinet.pair(str(code or ""))
+        return {**r, **self.cabinet_get()}
+
+    def cabinet_unlink(self):
+        self.assistant.cabinet.unlink()
+        return self.cabinet_get()
+
+    def power_install(self):
+        """Устанавливает службу питания: Windows покажет окно UAC, установка идёт в отдельном процессе с правами администратора."""
+        from . import elevate, powersvc
+        if sys.platform != "win32":
+            return {"ok": False, "error": "Служба есть только в Windows.", **self.cabinet_get()}
+        if not self.assistant.cabinet.linked:
+            return {"ok": False, "error": powersvc.INSTALL_ERRORS[3], **self.cabinet_get()}
+        code = elevate.run_elevated(["--power-install"], wait=True)
+        if code is None:
+            return {"ok": False, "error": "Установка отменена: окно Windows закрыли или запуск не удался.", **self.cabinet_get()}
+        self.assistant.cabinet.sync_shared()
+        if code == 0:
+            return {"ok": True, **self.cabinet_get()}
+        return {"ok": False, "error": powersvc.INSTALL_ERRORS.get(int(code), f"Не получилось установить службу (код {code})."), **self.cabinet_get()}
+
+    def power_remove(self):
+        from . import elevate, powersvc
+        if sys.platform != "win32":
+            return {"ok": False, "error": "Служба есть только в Windows.", **self.cabinet_get()}
+        code = elevate.run_elevated(["--power-remove"], wait=True)
+        if code is None:
+            return {"ok": False, "error": "Удаление отменено: окно Windows закрыли или запуск не удался.", **self.cabinet_get()}
+        return {"ok": code == 0, **({} if code == 0 else {"error": f"Не получилось удалить службу (код {code})."}), **self.cabinet_get()}
+
+    def watch_topic(self):
+        from . import watchlock
+        return watchlock.new_topic()
+
+    def watch_test_push(self):
+        return self.assistant.watch.test_push()
+
+    def watch_battery(self):
+        return self.assistant.watch.refresh_battery()
+
     def widget_enable(self, on):
         on = bool(on)
         self.cfg.update({"ui": {"island": on}})
