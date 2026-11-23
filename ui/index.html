@@ -31,6 +31,7 @@
     <button data-tab="apps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span>Программы</span></button>
     <button data-tab="sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10zM17 9a4 4 0 0 1 0 6"/></svg><span>Звук</span></button>
     <button data-tab="widget"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Виджет</span></button>
+    <button data-tab="watch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8l1 4H7zM8 21h8l1-4H7zM7 7h10v10H7zM12 10v2.5l1.8 1"/></svg><span>Часы</span></button>
     <button data-tab="profile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"/></svg><span>Профиль</span></button>
     <button data-tab="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.6a7 7 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 2 1.2L10 21h4l.6-2.6a7 7 0 0 0 2-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg><span>Настройки</span></button>
   </nav>
@@ -441,6 +442,101 @@
   </div>
 </section>
 
+<!-- ============ ЧАСЫ ============ -->
+<section id="tab-watch" class="tab">
+  <header class="page-head"><div class="eyebrow">Часы</div><h1>Часы как ключ от компьютера</h1><p class="muted">Пока часы (или телефон) рядом, компьютер работает как обычно. Связь пропала — Карина блокирует Windows и шлёт уведомление на часы.</p></header>
+  <div class="settings">
+    <div class="card wt-status" id="wtCard">
+      <div class="eyebrow">Сейчас</div>
+      <div class="wt-big"><span class="wt-dot" id="wtDot"></span><b id="wtState">Выключено</b></div>
+      <p class="muted small" id="wtSub" style="margin:2px 0 10px"></p>
+      <div class="wt-list" id="wtReadings"></div>
+      <div class="wt-bat" id="wtBat" hidden><span>Заряд часов</span><b id="wtBatV"></b><button class="btn" type="button" id="wtBatBtn">Прочитать заряд</button></div>
+      <div class="note warn" id="wtErr" hidden></div>
+      <p class="muted small" id="wtLast" style="margin:10px 0 0"></p>
+    </div>
+
+    <div class="card" id="cabCard">
+      <div class="eyebrow">Кабинет</div>
+      <p class="muted small">Подключите Карину к кабинету bogestv0.ru: там видно, где сейчас компьютер и часы, и приходят уведомления на телефон (push и Telegram). Код создаётся в кабинете, раздел «Часы». Пароль Карине не нужен.</p>
+      <div id="cabOff">
+        <div class="form">
+          <label>Код из кабинета<input type="text" id="cabCode" maxlength="14" placeholder="KR-XXXX-XXXX" autocomplete="off" spellcheck="false" style="font-family:var(--f-mono);letter-spacing:.08em;text-transform:uppercase"></label>
+          <div class="form-actions"><button class="btn primary" type="button" id="cabPair">Подключить кабинет</button><span class="msg" id="cabMsg"></span></div>
+        </div>
+      </div>
+      <div id="cabOn" hidden>
+        <div class="wt-row"><div class="wt-t"><b id="cabName">Подключено</b><span>cabinet.bogestv0.ru</span></div><div class="wt-s ok">подключено</div><button class="btn" type="button" id="cabUnlink">Отключить</button></div>
+        <p class="muted small" id="cabErr" style="margin:8px 0 0" hidden></p>
+      </div>
+    </div>
+
+    <div class="card" id="pwrCard">
+      <div class="eyebrow">Служба питания</div>
+      <p class="muted small">Отдельная служба Windows, которая работает, даже когда Карина закрыта и до входа в систему. Сообщает кабинету «ПК запустился», «выключается», «перезагружается» и раз в минуту «я на связи». Если пульс пропал без выключения (питание отключили, нет интернета), кабинет сам напишет «пропал из сети». Служба получает только имя компьютера и время; работает с минимальными правами (LocalService).</p>
+      <div class="wt-row" id="pwrRow"><div class="wt-t"><b id="pwrTitle">Не установлена</b><span id="pwrSub">Установка попросит подтверждение Windows (UAC).</span></div><div class="wt-s" id="pwrState"></div><button class="btn primary" type="button" id="pwrInstall">Установить</button><button class="btn" type="button" id="pwrRemove" hidden>Удалить</button></div>
+      <div class="form-actions" style="margin-top:8px"><span class="msg" id="pwrMsg"></span></div>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Что считать «рядом»</div>
+      <p class="muted small">Достаточно, чтобы рядом была любая одна из целей. Нажмите «Найти устройства»: рядом положите часы и телефон, и сразу будет видно, что из них Windows вообще видит.</p>
+      <div class="wt-list" id="wtTargets"></div>
+      <div class="form-actions" style="margin-top:10px">
+        <button class="btn primary" type="button" id="wtScan">Найти устройства</button>
+        <span class="msg" id="wtScanMsg"></span>
+      </div>
+      <div class="wt-list" id="wtFound" style="margin-top:10px"></div>
+      <details class="wt-manual"><summary>Добавить вручную</summary>
+        <div class="form" style="margin-top:8px">
+          <label>Тип<select id="wtKind"><option value="ble">Bluetooth-реклама (адрес или часть имени)</option><option value="paired">Сопряжённое устройство Windows (id)</option><option value="ping">Ping по IP (телефон в Wi-Fi)</option></select></label>
+          <label>Адрес, имя или IP<input type="text" id="wtId" maxlength="300" placeholder="например AA:BB:CC:DD:EE:FF или honor"></label>
+          <label>Как назвать<input type="text" id="wtName" maxlength="60" placeholder="Мои часы"></label>
+          <div class="form-actions"><button class="btn" type="button" id="wtAdd">Добавить</button></div>
+        </div>
+      </details>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Блокировка</div>
+      <div class="form">
+        <label class="switch"><input type="checkbox" id="wtEnabled"><span class="sw"></span><span>Следить за часами</span></label>
+        <label class="switch"><input type="checkbox" id="wtLock"><span class="sw"></span><span>Блокировать компьютер (если выключить, будет только уведомление)</span></label>
+        <label>Блокировать через <output id="wtAfterV"></output><input type="range" id="wtAfter" min="10" max="300" step="5" value="30"></label>
+        <label class="switch"><input type="checkbox" id="wtRssiOn"><span class="sw"></span><span>Считать «ушёл» и по слабому сигналу, а не только при пропаже</span></label>
+        <label id="wtRssiRow" hidden>Порог сигнала <output id="wtRssiV"></output><input type="range" id="wtRssi" min="-100" max="-40" step="1" value="-85"></label>
+        <label class="switch"><input type="checkbox" id="wtBattOn"><span class="sw"></span><span>Пробовать читать заряд часов</span></label>
+        <label>Предупредить о заряде ниже, % (0 — не предупреждать)<input type="number" id="wtLow" min="0" max="50"></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Уведомление на часы</div>
+      <div class="note" id="wtNoteCab" hidden>Карина подключена к кабинету: уведомления идут через него, а настройки ниже не используются. Что и куда присылать, выбирается в кабинете.</div>
+      <p class="muted small">Часы получают уведомления от iPhone. Поэтому Карина шлёт сообщение на телефон, а оно появляется на часах. В приложении Honor/Huawei Health → Уведомления нужно разрешить выбранное приложение (ntfy или Telegram).</p>
+      <div class="form">
+        <div class="wg-row"><span>Куда слать</span><div class="seg" id="wtNK"><button data-v="none" class="on">Никуда</button><button data-v="ntfy">ntfy</button><button data-v="telegram">Telegram</button></div></div>
+        <div id="wtNtfy" hidden>
+          <label>Тема ntfy (длинная, случайная: на ntfy.sh темы публичные)<input type="text" id="wtTopic" maxlength="64" autocomplete="off"></label>
+          <label>Сервер<input type="text" id="wtServer" maxlength="100"></label>
+          <div class="form-actions"><button class="btn" type="button" id="wtTopicNew">Создать тему</button><span class="muted small" style="margin:0">Установите на iPhone приложение ntfy и подпишитесь на эту тему.</span></div>
+        </div>
+        <div id="wtTg" hidden>
+          <label>Токен бота (от @BotFather)<input type="password" id="wtToken" autocomplete="off" placeholder="пусто — оставить как было"></label>
+          <label>Chat id<input type="text" id="wtChat" maxlength="20" inputmode="numeric"></label>
+        </div>
+        <label class="switch"><input type="checkbox" id="wtOnLost"><span class="sw"></span><span>Сообщать, когда связь потеряна и компьютер заблокирован</span></label>
+        <label class="switch"><input type="checkbox" id="wtOnBack"><span class="sw"></span><span>Сообщать, когда часы снова рядом</span></label>
+        <div class="form-actions">
+          <button class="btn" type="button" id="wtTest">Проверить уведомление</button>
+          <button class="btn primary" type="button" id="wtSave">Сохранить</button>
+          <span class="msg" id="wtMsg"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ============ ПРОФИЛЬ ============ -->
 <section id="tab-widget" class="tab">
   <header class="page-head"><div class="eyebrow">Виджет</div><h1>Динамический остров</h1><p class="muted">Плашка на экране, которая показывает, что Карина слушает, думает и говорит. Все настройки острова теперь здесь: где он стоит, что показывает и как выглядит.</p></header>
@@ -786,5 +882,6 @@
 </div>
 <script src="holo.js"></script>
 <script src="app.js"></script>
+<script src="watch.js"></script>
 </body>
 </html>

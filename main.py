@@ -9,6 +9,10 @@ if len(sys.argv) > 2 and sys.argv[1] == "--cleanup":       # вторая коп
     from karina.uninstall import cleanup_main
     sys.exit(cleanup_main(sys.argv[2]))
 
+if len(sys.argv) > 1 and sys.argv[1] in ("--power-service", "--power-install", "--power-remove"):   # служба питания (karina/powersvc.py): Windows запускает её без окна и без остального приложения
+    from karina import powersvc
+    sys.exit({"--power-service": powersvc.service_main, "--power-install": powersvc.install_main, "--power-remove": powersvc.remove_main}[sys.argv[1]]())
+
 if len(sys.argv) > 1 and sys.argv[1] in ("--setup", "--setup-update", "--setup-uninstall"):   # окно установки/удаления (ui/setup.html)
     from karina.config import DATA as _D
     from karina import setup_app

@@ -780,6 +780,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         if (set.notify === false) return;
         note = { head: '✉ ' + (ev.app || 'Сообщение') + (ev.title ? ' · ' + clip(ev.title, 22) : ''), sub: clip(ev.text || ev.title, 60) };
         toast(note.head + (note.sub ? ': ' + note.sub : ''), 7000);
+      } else if (ev.type === 'watch') {
+        if (ev.toast) toast(ev.toast, 8000);          // «Часы как ключ»: связь потеряна / вернулась / низкий заряд
       } else if (ev.type === 'media') {
         info.media = ev.status === 'none' ? null : ev;
         if (ev.status === 'playing') { info.lastPlay = Date.now(); }

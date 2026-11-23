@@ -23,6 +23,9 @@ winrt-Windows.Media.Ocr>=2.0; sys_platform == "win32"            # «Текст 
 winrt-Windows.Graphics.Imaging>=2.0; sys_platform == "win32"
 winrt-Windows.Storage.Streams>=2.0; sys_platform == "win32"
 winrt-Windows.Globalization>=2.0; sys_platform == "win32"
+bleak>=0.22            # «Часы как ключ»: поиск Bluetooth-устройств и уровень сигнала (bleak сам тянет нужные winrt-пакеты)
+winrt-Windows.Devices.Bluetooth>=2.0; sys_platform == "win32"      # «Часы как ключ»: сопряжённые устройства Windows
+winrt-Windows.Devices.Enumeration>=2.0; sys_platform == "win32"
 segno>=1.6             # QR-коды: создание
 zxing-cpp>=2.2         # QR-коды: чтение с экрана
 imageio-ffmpeg>=0.5    # запись экрана (свой ffmpeg внутри пакета)
