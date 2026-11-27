@@ -1,0 +1,657 @@
+"""Инструменты острова: заметки, напоминания и таймер, погода на неделю, история буфера обмена, громкость,
+переключатели системы, снимок экрана. Здесь нет окон: всё можно проверить тестами, системные вызовы работают только в Windows."""
+from __future__ import annotations
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+from collections import deque
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from .config import DATA, FROZEN, ROOT
+
+IS_WIN = sys.platform == "win32"
+NO_WINDOW = 0x08000000
+
+CHARACTERS = ("logo", "eyes", "pixel", "anime")                    # Карина (логотип), Глазки, Пиксель, Аниме (своя картинка ui/chr_anime.png)
+HOLIDAY_MODES = ("dates", "always", "off")
+IDLE_KEYS = ("idle_time", "idle_battery", "idle_temp", "idle_music")       # что показывать на свёрнутой плашке
+DOCKS = ("top", "bottom", "left", "right")                                  # к какому краю экрана прилип остров
+ISLAND_DEFAULTS = {"character": "logo", "holiday": "dates", "snow": True, "notify": True, "city": "", "tools": [], "links": [],
+                    "game_stats": True, "game_apps": [],                         # игровая плашка и свои игры по имени процесса
+                   "mixer_strip": "", "pinned": False, "placed": False, "dock": "top", "pos": 0.5, "mon": None,   # положение: край, место вдоль края (0..1), монитор; помним только если «закреплён»
+                   **{k: True for k in IDLE_KEYS}}
+
+
+# ---------------------------------------------------------------- настройки острова
+def clean_settings(patch: dict, old: dict | None = None) -> dict:
+    """Проверяем значения: в config.json не должно попасть мусора."""
+    out = dict(ISLAND_DEFAULTS)
+    out.update({k: v for k, v in (old or {}).items() if k in ISLAND_DEFAULTS})
+    p = patch or {}
+    if out.get("character") not in CHARACTERS:                 # убранные персонажи (искра, бот, котик, капля, пряник, олень) → Карина
+        out["character"] = "logo"
+    if p.get("character") in CHARACTERS:
+        out["character"] = p["character"]
+    if p.get("holiday") in HOLIDAY_MODES:
+        out["holiday"] = p["holiday"]
+    if "snow" in p:
+        out["snow"] = bool(p["snow"])
+    if "notify" in p:
+        out["notify"] = bool(p["notify"])
+    for k in IDLE_KEYS:
+        if k in p:
+            out[k] = bool(p[k])
+    if "city" in p:
+        out["city"] = str(p["city"] or "").strip()[:60]
+    if "game_stats" in p:
+        out["game_stats"] = bool(p["game_stats"])
+    if "game_apps" in p:
+        v = p["game_apps"]
+        out["game_apps"] = [str(x).strip().lower()[:60] for x in v[:24]] if isinstance(v, (list, tuple)) else []
+    if "tools" in p:
+        from .screen_tools import clean_custom                  # «Ещё»: свои инструменты (имя + команда)
+        out["tools"] = clean_custom(p["tools"])
+    if "links" in p:
+        from .shelf import clean_links                          # ярлыки на главной (программа, папка, файл, сайт)
+        out["links"] = clean_links(p["links"])
+    if "mixer_strip" in p:                                      # дорожка микшера, которой управляет ползунок громкости острова ("" — общая громкость Windows)
+        out["mixer_strip"] = " ".join(str(p["mixer_strip"] or "").split())[:60]
+    if "pinned" in p:
+        out["pinned"] = bool(p["pinned"])
+    if "placed" in p:                                           # место выбрано во вкладке «Виджет»: помним его и без закрепления
+        out["placed"] = bool(p["placed"])
+    if p.get("dock") in DOCKS:
+        out["dock"] = p["dock"]
+    if "pos" in p:
+        out["pos"] = p["pos"]
+    if "mon" in p:
+        out["mon"] = p["mon"]
+    # положение проверяем всегда (в config.json могли править руками)
+    if out.get("dock") not in DOCKS:
+        out["dock"] = "top"
+    try:
+        out["pos"] = min(1.0, max(0.0, float(out.get("pos", 0.5))))
+    except (TypeError, ValueError):
+        out["pos"] = 0.5
+    m = out.get("mon")
+    try:
+        out["mon"] = [int(m[0]), int(m[1])] if isinstance(m, (list, tuple)) and len(m) == 2 else None
+    except (TypeError, ValueError):
+        out["mon"] = None
+    out["pinned"] = bool(out.get("pinned"))
+    return out
+
+
+# ---------------------------------------------------------------- хранилище (заметка, напоминания, таймер)
+class Store:
+    def __init__(self, path: Path | None = None):
+        self.path = path or (DATA / "island.json")
+        self._lock = threading.Lock()
+        self.data = {"note": "", "reminders": [], "timer": None, "seq": 0}
+        try:
+            d = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(d, dict):
+                self.data.update({k: d[k] for k in self.data if k in d})
+        except Exception:
+            pass
+
+    def _save(self):
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.data, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, self.path)
+        except Exception:
+            pass
+
+    # заметка
+    def note_get(self) -> str:
+        return self.data["note"]
+
+    def note_set(self, text: str):
+        with self._lock:
+            self.data["note"] = str(text or "")[:50000]
+            self._save()
+
+    # напоминания
+    def reminders(self) -> list[dict]:
+        return sorted(self.data["reminders"], key=lambda r: r["at"])
+
+    def reminder_add(self, what: str, at: float, repeat: str = "") -> dict:
+        with self._lock:
+            self.data["seq"] += 1
+            r = {"id": self.data["seq"], "what": what, "at": float(at), "repeat": repeat}
+            self.data["reminders"].append(r)
+            self._save()
+            return r
+
+    def reminder_del(self, rid: int) -> bool:
+        with self._lock:
+            n = len(self.data["reminders"])
+            self.data["reminders"] = [r for r in self.data["reminders"] if r["id"] != rid]
+            self._save()
+            return len(self.data["reminders"]) != n
+
+    def due_reminders(self, now: float | None = None) -> list[dict]:
+        """Сработавшие напоминания: разовые удаляются, ежедневные переносятся на завтра."""
+        now = now or time.time()
+        fired = []
+        with self._lock:
+            keep = []
+            for r in self.data["reminders"]:
+                if r["at"] <= now:
+                    fired.append(dict(r))
+                    if r.get("repeat") == "daily":
+                        while r["at"] <= now:
+                            r["at"] += 86400
+                        keep.append(r)
+                else:
+                    keep.append(r)
+            if fired:
+                self.data["reminders"] = keep
+                self._save()
+        return fired
+
+    # таймер
+    def timer_get(self) -> dict | None:
+        t = self.data.get("timer")
+        return dict(t) if t else None
+
+    def timer_start(self, seconds: int) -> dict:
+        seconds = max(1, min(int(seconds), 24 * 3600))
+        with self._lock:
+            self.data["timer"] = {"end": time.time() + seconds, "total": seconds}
+            self._save()
+            return dict(self.data["timer"])
+
+    def timer_stop(self):
+        with self._lock:
+            self.data["timer"] = None
+            self._save()
+
+    def timer_due(self, now: float | None = None) -> bool:
+        t = self.data.get("timer")
+        if t and t["end"] <= (now or time.time()):
+            self.timer_stop()
+            return True
+        return False
+
+
+# ---------------------------------------------------------------- разбор напоминания из текста
+_UNITS = (("сек", 1), ("мин", 60), ("час", 3600))
+
+
+def _clean_what(text: str, spans: list[tuple[int, int]]) -> str:
+    out, last = [], 0
+    for a, b in sorted(spans):
+        out.append(text[last:a])
+        last = max(last, b)
+    out.append(text[last:])
+    s = " ".join("".join(out).split())
+    s = re.sub(r"^(?:напомни(?:ть)?(?:\s+мне)?|не\s+забыть|надо|нужно)\b[\s,:-]*", "", s, flags=re.I).strip(" ,.:;-")
+    return (s[:1].upper() + s[1:]) if s else "Напоминание"
+
+
+def parse_reminder(text: str, now: float | None = None) -> dict | None:
+    """«позвонить маме завтра в 9», «через 20 минут выключить плиту», «таблетки каждый день в 23:00»
+    → {"what", "at", "repeat"} или None, если время не нашли."""
+    t = " ".join(str(text or "").split())
+    if not t:
+        return None
+    now = now or time.time()
+    low = t.lower()
+    spans: list[tuple[int, int]] = []
+    repeat = ""
+    m = re.search(r"\bкаждый\s+день\b|\bежедневно\b", low)
+    if m:
+        repeat = "daily"
+        spans.append(m.span())
+    m = re.search(r"\bчерез\s+(\d{1,4})\s*(сек\w*|мин\w*|час\w*)", low)
+    if m:
+        mult = next((k for p, k in _UNITS if m.group(2).startswith(p)), 60)
+        spans.append(m.span())
+        return {"what": _clean_what(t, spans), "at": now + int(m.group(1)) * mult, "repeat": repeat}
+    m = re.search(r"\b(?:в|к|на)\s+(\d{1,2})(?:[:.\s](\d{2}))?(?!\d)(?:\s*(утра|вечера|дня|ночи))?(?!\s*(?:мин|час|сек))", low)
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2) or 0)
+    part = m.group(3)
+    if part in ("вечера", "дня") and h < 12:
+        h += 12 if (part == "вечера" or h < 7) else 0
+    if part == "ночи" and h == 12:
+        h = 0
+    if h > 23 or mi > 59:
+        return None
+    spans.append(m.span())
+    days = 0
+    for word, d in (("послезавтра", 2), ("завтра", 1), ("сегодня", 0)):
+        mm = re.search(r"\b" + word + r"\b", low)
+        if mm:
+            days = d
+            spans.append(mm.span())
+            break
+    base = datetime.fromtimestamp(now)
+    when = (base + timedelta(days=days)).replace(hour=h, minute=mi, second=0, microsecond=0)
+    if when.timestamp() <= now:
+        when += timedelta(days=1)
+    return {"what": _clean_what(t, spans), "at": when.timestamp(), "repeat": repeat}
+
+
+def when_text(at: float, now: float | None = None) -> str:
+    now = now or time.time()
+    d, n = datetime.fromtimestamp(at), datetime.fromtimestamp(now)
+    day = "сегодня" if d.date() == n.date() else "завтра" if d.date() == (n + timedelta(days=1)).date() else d.strftime("%d.%m")
+    return f"{day} в {d:%H:%M}"
+
+
+# ---------------------------------------------------------------- погода на неделю
+def _icon(code: int) -> str:
+    if code == 0:
+        return "☀️"
+    if code in (1, 2):
+        return "🌤️"
+    if code == 3:
+        return "☁️"
+    if code in (45, 48):
+        return "🌫️"
+    if 51 <= code <= 67 or 80 <= code <= 82:
+        return "🌧️"
+    if 71 <= code <= 77 or code in (85, 86):
+        return "❄️"
+    if code >= 95:
+        return "⛈️"
+    return "⛅"
+
+
+_WCACHE: dict = {}          # город (в нижнем регистре) → (время, результат): свежий кэш 10 минут, при сбое сети отдаём прошлый ответ
+
+
+def weather_week(city_name: str) -> dict:
+    """Погода на неделю. Недавний ответ берём из кэша; если сети нет, показываем прошлый (с пометкой stale), лишь бы не пустая вкладка."""
+    key = str(city_name or "").strip().lower()
+    hit = _WCACHE.get(key)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    try:
+        out = _weather_week(city_name)
+    except Exception as first:
+        try:
+            out = _weather_week_wttr(city_name)                     # запасной сервис: Open-Meteo бывает недоступен (блокировка, прокси, VPN)
+        except Exception as second:
+            if hit:
+                return {**hit[1], "stale": True}
+            raise RuntimeError(f"{first} (запасной сервис wttr.in тоже не ответил: {str(second)[:80] or second.__class__.__name__})") from None
+    _WCACHE[key] = (time.time(), out)
+    return out
+
+
+def _weather_week(city_name: str) -> dict:
+    from . import weather
+    city = weather.find_city(city_name)
+    data = weather._get(weather.FORECAST, {
+        "latitude": city["latitude"], "longitude": city["longitude"], "timezone": "auto", "forecast_days": 7, "wind_speed_unit": "ms",
+        "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"})
+    c, d = data["current"], data["daily"]
+    codes = getattr(weather, "_CODES", {})
+    days = []
+    for i, date in enumerate(d["time"]):
+        dt = datetime.strptime(date, "%Y-%m-%d")
+        days.append({"day": "Сегодня" if i == 0 else "Завтра" if i == 1 else ("пн вт ср чт пт сб вс".split())[dt.weekday()] + dt.strftime(" %d.%m"),
+                     "icon": _icon(d["weather_code"][i]), "text": codes.get(d["weather_code"][i], "облачно"),
+                     "hi": round(d["temperature_2m_max"][i]), "lo": round(d["temperature_2m_min"][i]),
+                     "prob": (d.get("precipitation_probability_max") or [None] * 7)[i]})
+    return {"city": city.get("name", city_name), "now": {"t": round(c["temperature_2m"]), "feels": round(c["apparent_temperature"]),
+            "icon": _icon(c["weather_code"]), "text": codes.get(c["weather_code"], "облачно"), "wind": round(c["wind_speed_10m"])}, "days": days}
+
+
+_WWO_ICON = [({113}, "☀️"), ({116}, "🌤️"), ({119, 122}, "☁️"), ({143, 248, 260}, "🌫️"),
+             ({176, 263, 266, 281, 284, 293, 296, 299, 302, 305, 308, 311, 314, 353, 356, 359}, "🌧️"),
+             ({179, 182, 185, 227, 230, 317, 320, 323, 326, 329, 332, 335, 338, 350, 362, 365, 368, 371, 374, 377}, "❄️"),
+             ({200, 386, 389, 392, 395}, "⛈️")]
+
+
+def _wwo_icon(code) -> str:
+    try:
+        c = int(code)
+    except (TypeError, ValueError):
+        return "⛅"
+    return next((i for codes, i in _WWO_ICON if c in codes), "⛅")
+
+
+def _http_json(url: str, timeout: float = 8.0) -> dict:
+    """GET → JSON: сначала как настроен системный прокси, потом напрямую."""
+    import urllib.request
+    last: Exception | None = None
+    for direct in (False, True):
+        try:
+            op = urllib.request.build_opener(urllib.request.ProxyHandler({})) if direct else urllib.request.build_opener()
+            return json.loads(op.open(urllib.request.Request(url, headers={"User-Agent": "Bogestv0-KARINA"}), timeout=timeout).read().decode("utf-8"))
+        except Exception as e:
+            last = e
+    raise last or RuntimeError("нет связи")
+
+
+def _weather_week_wttr(city_name: str) -> dict:
+    """Запасной прогноз (wttr.in, текущая погода и 3 дня): Open-Meteo может быть недоступен, а вкладка не должна оставаться пустой."""
+    import urllib.parse
+    d = _http_json("https://wttr.in/" + urllib.parse.quote(str(city_name).strip()) + "?format=j1&lang=ru")
+    c = d["current_condition"][0]
+    ru = lambda x: ((x.get("lang_ru") or x.get("weatherDesc") or [{}])[0].get("value") or "облачно").lower()
+    days = []
+    for i, w in enumerate(d.get("weather", [])[:7]):
+        dt = datetime.strptime(w["date"], "%Y-%m-%d")
+        mid = (w.get("hourly") or [{}] * 5)[min(4, len(w.get("hourly") or [{}]) - 1)]
+        days.append({"day": "Сегодня" if i == 0 else "Завтра" if i == 1 else ("пн вт ср чт пт сб вс".split())[dt.weekday()] + dt.strftime(" %d.%m"),
+                     "icon": _wwo_icon(mid.get("weatherCode")), "text": ru(mid), "hi": round(float(w["maxtempC"])), "lo": round(float(w["mintempC"])),
+                     "prob": int(mid.get("chanceofrain") or 0)})
+    area = ((d.get("nearest_area") or [{}])[0].get("areaName") or [{}])[0].get("value") or city_name
+    return {"city": str(city_name).strip() or area, "now": {"t": round(float(c["temp_C"])), "feels": round(float(c["FeelsLikeC"])), "icon": _wwo_icon(c.get("weatherCode")),
+            "text": ru(c), "wind": round(float(c.get("windspeedKmph") or 0) / 3.6)}, "days": days, "source": "wttr.in"}
+
+
+# ---------------------------------------------------------------- история буфера обмена
+class ClipHistory:
+    """Последние скопированные тексты. Хранятся только в памяти и пропадают при выходе из Карины."""
+
+    def __init__(self, limit: int = 30):
+        self.items: deque[str] = deque(maxlen=limit)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def add(self, text: str):
+        text = str(text or "")
+        if not text.strip() or len(text) > 4000:
+            return
+        if text in self.items:
+            self.items.remove(text)
+        self.items.appendleft(text)
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="karina-clip")
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _loop(self):
+        try:
+            import pyperclip
+        except Exception:
+            return
+        last = None
+        while not self._stop.wait(1.2):
+            try:
+                cur = pyperclip.paste()
+            except Exception:
+                continue
+            if cur != last:
+                last = cur
+                self.add(cur)
+
+    def get(self) -> list[str]:
+        return list(self.items)
+
+    def clear(self):
+        self.items.clear()
+
+
+# ---------------------------------------------------------------- система (Windows)
+def _run(args: list[str], timeout: float = 6.0) -> str:
+    try:
+        r = subprocess.run(args, capture_output=True, timeout=timeout, creationflags=NO_WINDOW if IS_WIN else 0)
+        out = r.stdout or b""
+        for enc in ("utf-8", "cp866", "cp1251"):
+            try:
+                return out.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return out.decode("utf-8", "ignore")
+    except Exception:
+        return ""
+
+
+def battery() -> dict | None:
+    if not IS_WIN:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class SPS(ctypes.Structure):
+            _fields_ = [("AC", wintypes.BYTE), ("Flag", wintypes.BYTE), ("Pct", wintypes.BYTE), ("Saver", wintypes.BYTE),
+                        ("Life", wintypes.DWORD), ("Full", wintypes.DWORD)]
+        s = SPS()
+        if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(s)):
+            return None
+        if s.Flag == 128 or s.Pct == 255:                # батареи нет (стационарный компьютер)
+            return {"has": False}
+        return {"has": True, "pct": int(s.Pct), "plugged": s.AC == 1}
+    except Exception:
+        return None
+
+
+_PERS = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+
+
+def dark_get() -> bool | None:
+    if not IS_WIN:
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _PERS) as k:
+            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
+    except Exception:
+        return None
+
+
+def dark_set(on: bool) -> bool:
+    if not IS_WIN:
+        return False
+    try:
+        import winreg, ctypes
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _PERS, 0, winreg.KEY_SET_VALUE) as k:
+            for name in ("AppsUseLightTheme", "SystemUsesLightTheme"):
+                winreg.SetValueEx(k, name, 0, winreg.REG_DWORD, 0 if on else 1)
+        ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x001A, 0, "ImmersiveColorSet", 2, 2000, None)     # WM_SETTINGCHANGE
+        return True
+    except Exception:
+        return False
+
+
+def wifi_ssid() -> str | None:
+    """Имя сети Wi-Fi, если подключены (строки netsh зависят от языка Windows, поэтому ищем по «SSID»)."""
+    if not IS_WIN:
+        return None
+    for line in _run(["netsh", "wlan", "show", "interfaces"]).splitlines():
+        m = re.match(r"^\s*SSID\s*:\s*(.+?)\s*$", line)
+        if m:
+            return m.group(1)
+    return None
+
+
+SETTINGS_PAGES = {"wifi": "ms-settings:network-wifi", "bluetooth": "ms-settings:bluetooth"}
+
+
+def open_settings(page: str) -> bool:
+    uri = SETTINGS_PAGES.get(page)
+    if not uri or not IS_WIN:
+        return False
+    try:
+        os.startfile(uri)
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------- Wi-Fi и Bluetooth: настоящее включение и выключение
+RADIO_KINDS = ("wifi", "bluetooth")
+_RADIO_BY_KIND = {1: "wifi", 3: "bluetooth"}          # RadioKind: WiFi = 1, Bluetooth = 3
+
+
+def _radio_call(work):
+    """Выполняет async-работу с радиомодулями Windows (winrt Windows.Devices.Radios) в СВОЁМ потоке и цикле событий.
+    Права администратора не нужны: так переключает и «быстрые параметры» Windows. Нет пакета winrt — исключение ImportError.
+    Почему в отдельном потоке: вызовы из окна (pywebview/WinForms) идут из потока с COM в режиме STA, и WinRT отвечал ошибкой
+    «OLE отправило запрос и ждёт ответа» (-2147417835): модули не переключались. В новом потоке COM свободен (многопоточный режим)."""
+    import asyncio
+    box: dict = {}
+
+    def run():
+        try:
+            from winrt.windows.devices.radios import Radio, RadioAccessStatus, RadioKind, RadioState
+
+            async def go():
+                if int(await Radio.request_access_async()) != 1:                       # RadioAccessStatus.Allowed
+                    raise PermissionError("Windows не разрешила управлять радиомодулями (Параметры → Конфиденциальность → Радиомодули)")
+                return await work(list(await Radio.get_radios_async()), RadioKind, RadioState, RadioAccessStatus)
+            loop = asyncio.new_event_loop()
+            try:
+                box["r"] = loop.run_until_complete(asyncio.wait_for(go(), 15))
+            finally:
+                loop.close()
+        except BaseException as e:                                                      # ImportError и прочее передаём вызвавшему
+            box["e"] = e
+    t = threading.Thread(target=run, daemon=True, name="karina-radio")
+    t.start()
+    t.join(20)
+    if t.is_alive():
+        raise TimeoutError("Windows не ответила на переключение модуля")
+    if "e" in box:
+        raise box["e"]
+    return box.get("r")
+
+
+def radios_get() -> dict:
+    """{'wifi': True|False|None, 'bluetooth': ...}: включён ли модуль (None — модуля нет или узнать не удалось)."""
+    out = {k: None for k in RADIO_KINDS}
+    if not IS_WIN:
+        return out
+
+    async def work(radios, Kind, State, _A):
+        for r in radios:
+            key = _RADIO_BY_KIND.get(int(r.kind))
+            if key:
+                out[key] = (int(r.state) == 1) or bool(out[key])                # RadioState.On = 1
+    try:
+        _radio_call(work)
+    except Exception:
+        pass
+    return out
+
+
+def radio_set(kind: str, on: bool) -> dict:
+    """Включить или выключить Wi-Fi или Bluetooth. {'ok': bool, 'error': str, 'on': bool|None}."""
+    if kind not in RADIO_KINDS:
+        return {"ok": False, "error": "Неизвестный модуль.", "on": None}
+    if not IS_WIN:
+        return {"ok": False, "error": "Работает только в Windows.", "on": None}
+    found = {"n": 0, "bad": ""}
+
+    async def work(radios, Kind, State, Access):
+        for r in radios:
+            if _RADIO_BY_KIND.get(int(r.kind)) != kind:
+                continue
+            found["n"] += 1
+            st = await r.set_state_async(State(1 if on else 2))                 # RadioState: On = 1, Off = 2
+            if int(st) != 1:                                                   # RadioAccessStatus.Allowed
+                found["bad"] = "Windows отказала в переключении (возможно, включён режим «в самолёте» или модуль занят)."
+    try:
+        _radio_call(work)
+    except ImportError:
+        open_settings(kind)
+        return {"ok": False, "error": "Нет пакета winrt-Windows.Devices.Radios: открыла настройки Windows.", "on": None}
+    except Exception as e:
+        return {"ok": False, "error": str(e) or e.__class__.__name__, "on": None}
+    if not found["n"]:
+        return {"ok": False, "error": "В компьютере нет такого модуля.", "on": None}
+    if found["bad"]:
+        return {"ok": False, "error": found["bad"], "on": None}
+    return {"ok": True, "error": "", "on": bool(on)}
+
+
+# ---------------------------------------------------------------- запуск вместе с Windows
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "Bogestv0 KARINA"           # то же имя, что ставит установщик (галочка «Запускать вместе с Windows»)
+
+
+def autostart_command() -> str:
+    """Команда запуска без окна (--background: сразу в трей, остров появляется сам, если он включён)."""
+    if FROZEN:
+        return f'"{sys.executable}" --background'
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")
+    return f'"{pyw if pyw.exists() else exe}" "{ROOT / "main.py"}" --background'
+
+
+def autostart_get() -> bool | None:
+    if not IS_WIN:
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            return bool(str(winreg.QueryValueEx(k, RUN_NAME)[0]).strip())
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return None
+
+
+def autostart_set(on: bool) -> bool:
+    if not IS_WIN:
+        return False
+    try:
+        import winreg
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            if on:
+                winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, autostart_command())
+            else:
+                try:
+                    winreg.DeleteValue(k, RUN_NAME)
+                except FileNotFoundError:
+                    pass
+        return True
+    except OSError:
+        return False
+
+
+def power(action: str) -> bool:
+    if not IS_WIN:
+        return False
+    try:
+        if action == "lock":
+            import ctypes
+            ctypes.windll.user32.LockWorkStation()
+        elif action == "sleep":
+            subprocess.Popen(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"], creationflags=NO_WINDOW)
+        elif action == "restart":
+            subprocess.Popen(["shutdown", "/r", "/t", "5"], creationflags=NO_WINDOW)
+        elif action == "shutdown":
+            subprocess.Popen(["shutdown", "/s", "/t", "5"], creationflags=NO_WINDOW)
+        else:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def screenshots_dir() -> Path:
+    return Path.home() / "Pictures" / "Karina"
+
+
+def save_screenshot() -> str:
+    """Снимок основного экрана в Изображения\\Karina; возвращает путь к файлу."""
+    from PIL import ImageGrab
+    d = screenshots_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / time.strftime("screen-%Y%m%d-%H%M%S.png")
+    ImageGrab.grab().save(p)
+    return str(p)

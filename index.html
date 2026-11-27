@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<script>document.documentElement.dataset.theme="dark"</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bogestv0 KARINA</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar" id="topbar">
+  <div class="brand"><img src="logo.png" alt=""><span>Bogestv0 <b>KARINA</b></span></div>
+  <div class="winctl" id="winctl" hidden>
+    <button type="button" id="wcMin" title="Свернуть" aria-label="Свернуть"><svg viewBox="0 0 10 10"><path d="M1 5.5h8"/></svg></button>
+    <button type="button" id="wcMax" title="Развернуть" aria-label="Развернуть">
+      <svg class="i-max" viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" rx="1"/></svg>
+      <svg class="i-res" viewBox="0 0 10 10"><path d="M3 3V1.5h5.5V7H7"/><rect x="1.5" y="3" width="5.5" height="5.5" rx="1"/></svg>
+    </button>
+    <button type="button" id="wcClose" class="close" title="Закрыть" aria-label="Закрыть"><svg viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button>
+  </div>
+</header>
+<div class="shell">
+<aside class="side-nav" id="sideNav">
+  <nav class="tabs" id="tabs" aria-label="Разделы">
+    <button data-tab="home" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Главная</span></button>
+    <button data-tab="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.5A8 8 0 1 1 21 12z"/></svg><span>Чат</span></button>
+    <button data-tab="commands"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Команды</span></button>
+    <button data-tab="models"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/></svg><span>Модели</span></button>
+    <button data-tab="cloud"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.6-7.96A5.5 5.5 0 0 1 17 8.5a4.75 4.75 0 0 1 .5 9.5z"/></svg><span>Облако</span></button>
+    <button data-tab="apps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span>Программы</span></button>
+    <button data-tab="sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10zM17 9a4 4 0 0 1 0 6"/></svg><span>Звук</span></button>
+    <button data-tab="widget"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg><span>Виджет</span></button>
+    <button data-tab="profile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"/></svg><span>Профиль</span></button>
+    <button data-tab="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.6a7 7 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 2 1.2L10 21h4l.6-2.6a7 7 0 0 0 2-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg><span>Настройки</span></button>
+  </nav>
+  <div class="side-foot">
+    <span class="chip" id="chipNet"><i></i><span>…</span></span>
+    <button class="btn-upd" id="btnUpdate" title="Проверить обновления"><span id="updLabel">Проверить обновления</span><code id="updVer"></code></button>
+  </div>
+</aside>
+<div class="content">
+<div class="rz" id="rz" hidden>
+  <i data-e="n"></i><i data-e="s"></i><i data-e="w"></i><i data-e="e"></i>
+  <i data-e="nw"></i><i data-e="ne"></i><i data-e="sw"></i><i data-e="se"></i>
+</div>
+
+<div class="upd-modal" id="updBar" hidden role="dialog" aria-modal="true" aria-labelledby="updTitle">
+  <div class="upd-card" id="updCard">
+    <div class="upd-head">
+      <img src="logo.png" alt="">
+      <div><div class="eyebrow">Обновление</div><h2 id="updTitle"></h2><div class="upd-ver" id="updVerLine"></div></div>
+    </div>
+    <div class="upd-body" id="updNotes"></div>
+    <div class="upd-status" id="updStatus" hidden></div>
+    <div class="upd-prog" id="updProg" hidden>
+      <div class="upd-prog-top"><b id="updPct">0%</b><span id="updSize"></span></div>
+      <div class="pbar big" id="updPbar"><i></i></div>
+      <div class="upd-prog-stats">
+        <div><span>Скорость</span><b id="updSpeed">—</b></div>
+        <div><span>Осталось</span><b id="updEta">—</b></div>
+      </div>
+    </div>
+    <div class="upd-actions">
+      <button class="btn" id="updLater">Позже</button>
+      <button class="btn primary" id="updInstall">Обновить сейчас</button>
+    </div>
+  </div>
+</div>
+
+<div class="updbar admbar" id="admBar" hidden>
+  <div class="upd-text"><b>Выдать Карине права администратора?</b><span>Нужны, чтобы управлять программами, которые запущены от администратора, и для дальнейших действий. Windows спросит подтверждение один раз, потом Карина будет открываться с правами без вопросов. Отключить можно в «Настройки → Окно и оформление».</span></div>
+  <div class="upd-actions"><button class="btn primary" id="admYes">Выдать навсегда</button><button class="btn" id="admNo">Не сейчас</button></div>
+</div>
+
+<main>
+<!-- ============ ГЛАВНАЯ ============ -->
+<section id="tab-home" class="tab on">
+  <header class="page-head home-head">
+    <div><div class="eyebrow" id="homeEyebrow">Главная</div><h1 id="homeTitle">Добрый день</h1></div>
+    <div class="head-chips"><span class="pill" id="pillMode">Режим: по имени</span><span class="pill ok" id="pillReady">Всё готово</span></div>
+  </header>
+
+  <!-- Первый запуск: докачка архива компонентов (torch, голос, модели речи) -->
+  <div class="card fr" id="frCard" hidden>
+    <div class="fr-top">
+      <div class="orb-wrap"><div class="orb"><img src="logo.png" alt=""></div></div>
+      <div class="hero-text">
+        <div class="eyebrow" id="frLabel">Настраиваюсь</div>
+        <h2 id="frTitle">Скачиваю компоненты</h2>
+        <p class="muted" id="frHint">Это нужно один раз. Дальше Карина запускается сразу и работает без загрузок.</p>
+      </div>
+    </div>
+    <div class="fr-prog">
+      <div class="fr-nums"><span id="frNums" class="mono">—</span><b id="frPct">0%</b></div>
+      <div class="pbar big" id="frBar"><i></i></div>
+      <div class="fr-meta"><span id="frEta">Подключаюсь…</span><span id="frSrc">github.com · продолжится после обрыва</span></div>
+    </div>
+    <ol class="fr-steps" id="frSteps">
+      <li data-step="download" data-st="run"><i>1</i><span>Архив: torch, голос Карины, модели речи</span><em>скачиваю</em></li>
+      <li data-step="verify" data-st="wait"><i>2</i><span>Проверка файлов (SHA-256)</span><em>в очереди</em></li>
+      <li data-step="extract" data-st="wait"><i>3</i><span>Установка и проверка голоса</span><em>в очереди</em></li>
+      <li data-step="app" data-st="done"><i>✓</i><span>Приложение и интерфейс</span><em>готово</em></li>
+    </ol>
+    <div class="note bad" id="frErr" hidden></div>
+    <div class="fr-actions">
+      <button class="btn" id="frPause" type="button">Пауза</button>
+      <button class="btn primary" id="frRetry" type="button" hidden>Повторить</button>
+      <button class="btn ghost" id="frHide" type="button">Скрыть окно</button>
+    </div>
+  </div>
+
+  <div class="grid-home" id="gridHome">
+    <div class="card hero" id="hero" data-state="loading">
+      <div class="stage" id="stage" aria-hidden="true">
+        <div class="holo-wrap" id="holoWrap">
+          <img class="h-base" src="holo/f/base.webp" alt="" draggable="false">
+        </div>
+        <img class="h-proj" src="holo/f/base.webp" alt="" draggable="false">
+      </div>
+    </div>
+
+    <div class="card side">
+      <div class="eyebrow">Состояние</div>
+      <dl class="kv">
+        <dt>Интернет</dt><dd id="kvNet">—</dd>
+        <dt>Распознавание</dt><dd id="kvStt">—</dd>
+        <dt>Микрофоны</dt><dd id="kvMics">—</dd>
+        <dt>Голос</dt><dd id="kvVoice">—</dd>
+        <dt>Мозг</dt><dd id="kvBrain">—</dd>
+        <dt>Режим</dt><dd id="kvMode">—</dd>
+        <dt>Версия</dt><dd id="kvVer">—</dd>
+      </dl>
+      <div class="note warn" id="ttsWarn" hidden></div>
+      <div class="note bad" id="pluginWarn" hidden></div>
+    </div>
+
+    <div class="card vpn-card" id="hvCard">
+      <div class="vpn-head">
+        <div class="eyebrow">VPN</div>
+        <button class="link" id="hvSettings" type="button">Настройки VPN →</button>
+      </div>
+      <div class="vpn-body">
+        <div class="vpn-state" id="hvState" data-on="0"><i></i><div><b id="hvTitle">VPN выключен</b><span id="hvSub">—</span></div></div>
+        <label class="vpn-pick">Сервер
+          <select id="hvServer"></select></label>
+        <label class="vpn-pick">Куда
+          <select id="hvScope"><option value="all">Весь компьютер</option><option value="apps">Только выбранные приложения</option></select></label>
+        <button class="btn primary vpn-toggle" id="hvToggle" type="button">Включить VPN</button>
+      </div>
+      <div class="note" id="hvNote" hidden></div>
+    </div>
+
+    <div class="card log-card">
+      <div class="talk-top" id="talkTop" data-state="loading">
+        <div class="hero-text">
+          <div class="eyebrow" id="stateLabel">Запуск</div>
+          <h2 id="stateTitle">Загружаюсь…</h2>
+          <p class="muted" id="stateHint">Подождите немного.</p>
+        </div>
+        <div class="hero-actions">
+          <button class="btn primary" id="btnListen">Выключить микрофон</button>
+          <button class="btn" id="btnVoice">Проверить голос</button>
+        </div>
+      </div>
+      <div class="log-head"><div class="eyebrow">Разговор</div><button class="link" id="btnClear">Очистить</button></div>
+      <div class="log" id="log"><div class="empty">Скажите «<span class="nm">Карина</span>, открой блокнот» или напишите команду ниже.</div></div>
+      <form class="send" id="sendForm">
+        <input id="sendInput" placeholder="Напишите команду без голоса…" autocomplete="off">
+        <button class="btn primary" type="submit">Отправить</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ЧАТ ============ -->
+<section id="tab-chat" class="tab">
+  <div class="chat-layout" id="chLayout">
+    <aside class="card chat-side">
+      <button class="btn primary" id="chNew">+ Новый чат</button>
+      <div class="chat-list" id="chList"></div>
+    </aside>
+    <div class="card chat-main" id="chMain">
+      <div class="dropzone" id="chDrop" hidden><div><b>Отпустите, чтобы приложить</b><span>файлы, папки или архивы (zip) — Карина их прочитает и разберёт</span></div></div>
+      <div class="chat-msgs" id="chMsgs"></div>
+      <div class="chat-step" id="chStep" hidden></div>
+      <form class="chat-input" id="chForm">
+        <div class="chat-attach" id="chAttach" hidden></div>
+        <div class="composer">
+          <textarea id="chText" rows="1" placeholder="Напишите Карине…" aria-label="Сообщение"></textarea>
+          <div class="comp-bar">
+            <button class="ico" type="button" id="chPick" title="Приложить файлы (можно и просто перетащить их в окно)">📎</button>
+            <button class="ico" type="button" id="chPickDir" title="Приложить папку целиком (можно и просто перетащить)">📂</button>
+            <span class="comp-sep"></span>
+            <button class="tool" type="button" id="chBrain" title="Кто отвечает: локальная модель → Claude → авто (простое локально, сложное в Claude)">🧠 Мозг: локальный</button>
+            <button class="tool" type="button" id="chWeb" title="Поиск в интернете: авто (когда просьба этого требует) → всегда → выключен">🌐 Поиск: авто</button>
+            <button class="tool switch" type="button" id="chCode" role="switch" aria-checked="true" title="Кодер включён: приложите файлы, папку или архив (или просто опишите программу) — я сама прочитаю, напишу код, проверю запуском и отдам готовые файлы. Выключите, если нужен только обычный разговор.">💻 Код<i></i></button>
+            <button class="tool switch" type="button" id="chRun" role="switch" aria-checked="true" title="Запускать написанный код для проверки (python, pytest, node). Это не песочница: программа выполняется с вашими правами; сеть, подпроцессы и удаление файлов в коде запрещены.">▶ Проверка запуском<i></i></button>
+            <button class="tool" type="button" id="chFolder" title="Открыть папку «Документы\Карина», куда сохраняются созданные файлы">📁 Файлы</button>
+            <span class="grow"></span>
+            <button class="send" type="submit" id="chSend" title="Отправить (Enter)" aria-label="Отправить">➤</button>
+            <button class="send stop" type="button" id="chStop" hidden title="Остановить" aria-label="Остановить">■</button>
+          </div>
+        </div>
+      </form>
+    </div>
+    <aside class="card chat-panel" id="chPanel" hidden>
+      <header class="pn-head">
+        <div class="pn-title"><b id="pnTitle">Просмотр</b><span id="pnSub"></span></div>
+        <div class="pn-actions">
+          <button type="button" id="pnReload" title="Показать заново">↻</button>
+          <button type="button" id="pnWide" title="Шире / уже">⤢</button>
+          <button type="button" id="pnOpen" title="Открыть файл программой">↗</button>
+          <button type="button" id="pnClose" title="Закрыть панель" aria-label="Закрыть">✕</button>
+        </div>
+      </header>
+      <div class="pn-tabs" id="pnTabs"></div>
+      <div class="pn-body" id="pnBody"></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ============ КОМАНДЫ ============ -->
+<section id="tab-commands" class="tab">
+  <header class="page-head"><div class="eyebrow">Команды</div><h1>Что умеет Карина</h1><p class="muted">Начинайте с имени: «<span class="nm">Карина</span>, …». После ответа можно говорить без имени в течение нескольких секунд.</p></header>
+  <div class="card">
+    <div class="eyebrow">Встроенные команды</div>
+    <p class="muted small">Начинайте с имени: «<span class="nm">Карина</span>, …». После ответа можно говорить без имени в течение нескольких секунд.</p>
+    <div class="cmd-grid" id="cmdList"></div>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Свои команды</div>
+    <p class="muted small">Привяжите фразу к действию: запуск программы, сочетание клавиш, ссылка, запрос к локальному API вашей программы.</p>
+    <div class="list" id="customList"></div>
+    <form class="form" id="customForm">
+      <label>Фразы (через запятую)<input name="phrases" placeholder="включи запись, начни запись" required></label>
+      <label>Действие
+        <select name="type">
+          <option value="keys">Сочетание клавиш</option>
+          <option value="run">Запустить программу</option>
+          <option value="url">Открыть ссылку</option>
+          <option value="http">HTTP-запрос к программе</option>
+          <option value="type">Напечатать текст</option>
+          <option value="shell">Команда командной строки</option>
+        </select>
+      </label>
+      <label>Значение<input name="value" placeholder="ctrl+shift+r  ·  C:\Program Files\App\app.exe  ·  http://127.0.0.1:8080/record" required></label>
+      <label>Ответ голосом<input name="reply" placeholder="Запись включена"></label>
+      <div class="form-actions"><button class="btn primary" type="submit">Добавить команду</button><span class="msg" id="customMsg"></span></div>
+    </form>
+  </div>
+</section>
+
+<!-- ============ МОДЕЛИ ============ -->
+<section id="tab-models" class="tab">
+  <header class="page-head"><div class="eyebrow">Модели</div><h1>Мозг и картинки</h1><p class="muted">Кто отвечает в чате и на свободные вопросы голосом. Облачные модели (Claude, Gemini, DeepSeek) и их ключи — во вкладке «Облако». Команды управления компьютером («открой блокнот», «громкость…») всегда выполняются на этом компьютере.</p></header>
+  <div class="card" id="brainCard">
+    <div class="eyebrow">Мозг Карины</div>
+    <div class="list" id="brainList"></div>
+    <div class="form-actions"><button class="btn" type="button" id="brainToCloud">Ключи и облачные модели: вкладка «Облако» →</button></div>
+  </div>
+  <div class="card" id="imgCard">
+    <div class="eyebrow">Картинки</div>
+    <p class="muted small">Карина рисует по просьбе: «нарисуй аниме-девушку с белыми волосами», «сделай обои с горами». Текстовая модель сама не рисует: она пишет подробное описание, а картинку создаёт генератор. По умолчанию это бесплатный сервис Pollinations (нужен интернет, ключ не нужен). Если он недоступен из вашей страны или нужна работа без интернета, подключите свой сервер Stable Diffusion (AUTOMATIC1111 / Forge, запуск с ключом <code>--api</code>) или любой сервис с OpenAI-совместимым API.</p>
+    <div class="eyebrow" style="margin-top:6px">Встроенные модели картинок</div>
+    <p class="muted small">Рисует прямо на вашем компьютере: без интернета (после загрузки), без водяного знака и с любой выбранной текстовой моделью. Скачивается один раз: движок stable-diffusion.cpp и модели. Каждая скачанная модель — отдельный «художник» со своим стилем: при включённом режиссёре (ниже) текстовая модель пишет им описания и предлагает несколько вариантов, а «Выбрать» нужно только для режима одной картинки. Нужна видеокарта от 6–8 ГБ; на процессоре каждая картинка рисуется несколько минут.</p>
+    <div class="note" id="imgHw" hidden></div>
+    <div id="limgList"></div>
+    <div class="eyebrow" style="margin-top:10px">Мощность рисования</div>
+    <p class="muted small">Сколько сил компьютера отдать художникам. «Авто» сама подберёт режим, размер картинки и число шагов под вашу видеокарту (как «Рекомендуется» у текстовых моделей). Если рисует слишком долго — выберите «Экономно» или укажите объём видеопамяти вручную. Размер и шаги сильнее всего влияют на время: картинка вдвое меньше по площади рисуется почти вдвое быстрее.</p>
+    <div class="note" id="imgPowerNow" hidden></div>
+    <div class="form">
+      <label>Режим
+        <select id="imgPower">
+          <option value="auto">Авто — подобрать по моей видеокарте (рекомендуется)</option>
+          <option value="max">Максимум — всё на видеокарте (нужно от 8–10 ГБ видеопамяти)</option>
+          <option value="balanced">Сбалансированно — часть в оперативной памяти (около 5–6 ГБ видеопамяти)</option>
+          <option value="low">Экономно — минимум видеопамяти (около 3–4 ГБ)</option>
+          <option value="cpu">Только процессор (очень медленно, зато работает везде)</option>
+        </select>
+      </label>
+      <label>Скорость или качество
+        <select id="imgQuality">
+          <option value="auto">Авто — по режиму</option>
+          <option value="fast">Быстро — меньше размер и шагов (картинка проще, но готова раньше)</option>
+          <option value="normal">Обычно</option>
+          <option value="high">Качественно — полный размер и все шаги (дольше)</option>
+        </select>
+      </label>
+      <label>Видеопамять
+        <select id="imgVramGb">
+          <option value="0">Определить автоматически</option>
+          <option value="2">2 ГБ</option><option value="3">3 ГБ</option><option value="4">4 ГБ</option><option value="6">6 ГБ</option>
+          <option value="8">8 ГБ</option><option value="10">10 ГБ</option><option value="12">12 ГБ</option><option value="16">16 ГБ</option><option value="24">24 ГБ и больше</option>
+        </select>
+      </label>
+      <label>Потоки процессора (0 — авто; работает, когда рисует процессор)
+        <input id="imgThreads" type="number" min="0" max="64" step="1" value="0" autocomplete="off">
+      </label>
+      <label>Текстовая модель на время рисования
+        <select id="imgUnload">
+          <option value="auto">Авто — выгружать из видеопамяти, если её немного (рекомендуется)</option>
+          <option value="yes">Всегда выгружать (освобождает видеопамять; следующий ответ в чате начнётся на несколько секунд позже)</option>
+          <option value="no">Не выгружать</option>
+        </select>
+      </label>
+      <div class="form-actions"><button class="btn" type="button" id="imgHwRefresh">Определить видеокарту заново</button></div>
+    </div>
+    <div class="form">
+      <label>Чем рисовать
+        <select id="imgProvider">
+          <option value="auto">Авто: встроенный аниме-генератор → свой сервер → Pollinations (запасной)</option>
+          <option value="local">Только встроенный аниме-генератор (на этом компьютере, без водяного знака)</option>
+          <option value="pollinations">Pollinations (бесплатно, через интернет)</option>
+          <option value="sd">Свой сервер Stable Diffusion (AUTOMATIC1111 / Forge)</option>
+          <option value="openai">Свой сервер с OpenAI-совместимым API картинок</option>
+        </select>
+      </label>
+      <label class="switch"><input type="checkbox" id="imgDirector"><span class="sw"></span><span>Режиссёр: текстовая модель (например, Qwen 3.5 9B) пишет описание и поручает рисовать скачанным моделям (NoobAI, Pony, FLUX.2 Klein …) — несколько вариантов в их стилях; правки («поверни её», «на втором варианте…») она отдаёт той модели, которая лучше справится, или всем сразу</span></label>
+      <label class="switch"><input type="checkbox" id="imgAsk"><span class="sw"></span><span>Спрашивать, сколько вариантов нарисовать (кнопки 1–4), когда просьба новая и число не названо</span></label>
+      <label>Сколько вариантов рисовать (если не спрашивать)
+        <select id="imgVariants"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option></select>
+      </label>
+      <label>Адрес своего сервера<input id="imgUrl" placeholder="http://127.0.0.1:7860" autocomplete="off"></label>
+      <label>Модель (для OpenAI-совместимого)<input id="imgModel" placeholder="необязательно" autocomplete="off"></label>
+      <label>Ключ (если нужен)<input id="imgKey" type="password" placeholder="оставьте пустым, чтобы не менять" autocomplete="off"></label>
+      <div class="form-actions">
+        <button class="btn primary" type="button" id="imgSave">Сохранить</button>
+        <button class="btn" type="button" id="imgTest">Проверить: нарисовать пробную</button>
+        <button class="btn" type="button" id="imgKeyClear" hidden>Забыть ключ</button>
+        <span class="msg" id="imgMsg"></span>
+      </div>
+    </div>
+    <p class="muted small">Описание картинки уходит выбранному сервису: Pollinations — это сторонний сервер, «свой сервер» — ваш компьютер или сервис, который вы указали.</p>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Встроенные модели</div>
+    <p class="muted small">Работают прямо в Карине, бесплатно и без интернета. Модель скачивается один раз. Есть видеокарта — она ускорит ответы, нет — всё пойдёт на процессоре, но медленнее.</p>
+    <div class="note" id="mdHw" hidden></div>
+    <div class="list" id="mdList"></div>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Движок</div>
+    <dl class="kv"><dt>Состояние</dt><dd id="mdEngine">—</dd></dl>
+    <div class="form">
+      <label>Где считать
+        <select id="mdGpu">
+          <option value="auto">Видеокарта, а если не получится — процессор (рекомендуется)</option>
+          <option value="cpu">Только процессор</option>
+        </select>
+      </label>
+      <div class="form-actions">
+        <button class="btn" type="button" id="mdTest">Проверить модель</button>
+        <span class="msg" id="mdMsg"></span>
+      </div>
+      <div class="note" id="mdTestOut" hidden></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ОБЛАКО ============ -->
+<section id="tab-cloud" class="tab">
+  <header class="page-head"><div class="eyebrow">Облако</div><h1>Облачные модели</h1><p class="muted">Все модели, которые работают через интернет: Claude, Google Gemini, DeepSeek и любой свой сервер. Кто из них отвечает в чате — выбирается во вкладке «Модели» → «Мозг Карины».</p></header>
+  <div class="card" id="claudeCard">
+    <div class="eyebrow">Claude (Anthropic)</div>
+    <p class="muted small">Самый умный вариант для чата, кода и сложных вопросов: отвечает по вашему ключу API. Ключ один: он же позволяет Карине понимать фразы, которых нет в списке команд (галочка в «Настройках»). Получить ключ: console.anthropic.com.</p>
+    <div class="form">
+      <label>Какой Claude использовать <select id="brainModel"></select></label>
+      <label>Ключ API <input type="password" name="api_key" id="apiKey" autocomplete="off" placeholder="sk-ant-…"></label>
+      <div class="form-actions">
+        <button class="btn primary" type="button" id="claudeSave">Сохранить ключ</button>
+        <button class="btn" type="button" id="brainTest">Проверить Claude</button>
+        <button class="btn" type="button" id="claudeGet">Получить ключ ↗</button>
+        <button class="btn danger" type="button" id="btnClearKey">Удалить сохранённый ключ</button>
+        <span class="msg" id="brainMsg"></span><span class="msg" id="keyMsg"></span>
+      </div>
+      <div class="note" id="brainTestOut" hidden></div>
+    </div>
+    <p class="muted small">В режиме Claude текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы отправляются в Anthropic по вашему ключу и оплачиваются у вас. Файлы с компьютера не отправляются.</p>
+  </div>
+  <div class="card" id="cloudCard">
+    <div class="eyebrow">Gemini, DeepSeek и другие облачные модели</div>
+    <p class="muted small">Быстрый «мозг» для слабых компьютеров. Зарегистрируйтесь у провайдера, нажмите «Получить ключ», вставьте ключ и включите. Gemini даёт бесплатный тариф (карта не нужна), DeepSeek — платный, но очень дешёвый. Можно подключить несколько: у каждого свои лимиты, и когда у одного они кончаются, Карина сразу переходит к следующему в очереди (порядок меняется стрелками). Затем выберите режим «Облачные модели» или «Авто» во вкладке «Модели» → «Мозг Карины».</p>
+    <div class="form"><label>Как чередовать
+      <select id="cloudStrategy">
+        <option value="failover">По очереди: пока лимит не кончится — первый, потом следующий</option>
+        <option value="spread">По кругу: каждый новый вопрос — следующему (лимиты тратятся равномерно)</option>
+      </select></label></div>
+    <div class="cloud-list" id="cloudList"></div>
+    <p class="muted small">Текст вашего вопроса, предыдущие реплики диалога и найденные в интернете страницы уходят выбранному провайдеру по вашему ключу. Файлы с компьютера не отправляются. Ключи хранятся на этом компьютере (и, если включена синхронизация во вкладке «Профиль», в зашифрованном виде в скрытой папке вашего Google Drive). Условия и лимиты бесплатных тарифов провайдеры меняют сами, а доступность из некоторых стран может быть ограничена.</p>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Те же ключи на другом компьютере</div>
+    <p class="muted small">Войдите через Google во вкладке «Профиль»: Карина выдаст персональный код, и ключи облачных моделей, ключ Claude и профиль появятся на другом компьютере после ввода этого кода.</p>
+    <div class="form-actions"><button class="btn" type="button" id="cloudToProfile">Открыть «Профиль» →</button></div>
+  </div>
+</section>
+
+<!-- ============ ПРОГРАММЫ ============ -->
+<section id="tab-apps" class="tab">
+  <header class="page-head"><div class="eyebrow">Программы</div><h1>Чем управляет Карина</h1><p class="muted">«Карина, открой миксер» · «закрой ремоут» · «переключись на анблок». Ассистент также находит всё из меню «Пуск» по названию.</p></header>
+  <div class="card">
+    <div class="eyebrow">Программы, которыми можно управлять</div>
+    <p class="muted small">«Карина, открой миксер» · «закрой ремоут» · «переключись на анблок». Ассистент также находит всё из меню «Пуск» по названию.</p>
+    <div class="list" id="appList"></div>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Добавить свою программу</div>
+    <form class="form" id="appForm">
+      <label>Название<input name="name" placeholder="Моя программа" required></label>
+      <label>Как называть голосом (через запятую)<input name="aliases" placeholder="моя, программа, мой редактор"></label>
+      <label>Путь к программе
+        <span class="row"><input name="path" id="appPath" placeholder="C:\Program Files\…\app.exe" required><button type="button" class="btn" id="btnPick">Выбрать…</button></span>
+      </label>
+      <label>Аргументы запуска (необязательно)<input name="args" placeholder="--minimized"></label>
+      <div class="form-actions"><button class="btn primary" type="submit">Добавить</button><span class="msg" id="appMsg"></span></div>
+    </form>
+  </div>
+</section>
+
+<!-- ============ ЗВУК ============ -->
+<section id="tab-sound" class="tab">
+  <header class="page-head"><div class="eyebrow">Звук</div><h1>Куда Карина выводит звук</h1><p class="muted">Колонки, наушники или виртуальный кабель. Изменения применяются сразу, сохранять не нужно.</p></header>
+  <div class="settings">
+    <div class="card">
+      <div class="eyebrow">Куда Карина выводит звук</div>
+      <p class="muted small">Выберите колонки, наушники или виртуальный кабель, на которые Карина будет говорить. Изменения применяются сразу, сохранять не нужно.</p>
+      <div class="form">
+        <label>Устройство вывода<select id="outDev"></select></label>
+        <label>Громкость голоса Карины <output id="outVolVal"></output><input type="range" id="outVol" min="0" max="100" step="5" value="100"></label>
+        <div class="note warn" id="outWarn" hidden></div>
+        <div class="form-actions">
+          <button class="btn primary" type="button" id="outTest">Проверить звук</button>
+          <button class="btn" type="button" id="outVoice">Проверить голос</button>
+          <button class="btn" type="button" id="outRefresh">Обновить список устройств</button>
+          <span class="msg" id="outMsg"></span>
+        </div>
+        <p class="muted small" style="margin:0">«Устройство Windows по умолчанию» — то, что выбрано в системе; если его сменить в Windows, Карина пойдёт за ним. Громкость здесь — только голоса Карины, общая громкость компьютера не меняется.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ПРОФИЛЬ ============ -->
+<section id="tab-widget" class="tab">
+  <header class="page-head"><div class="eyebrow">Виджет</div><h1>Динамический остров</h1><p class="muted">Плашка на экране, которая показывает, что Карина слушает, думает и говорит. Все настройки острова теперь здесь: где он стоит, что показывает и как выглядит.</p></header>
+  <div class="wg">
+    <div class="card wg-place">
+      <div class="eyebrow">Положение</div>
+      <div class="wg-screen" id="scr">
+        <div class="wg-desk"><i></i><i></i><i></i></div>
+        <div class="wg-pill" id="pill"><span class="wg-dot"></span><b id="pillT">12:48</b><em>Слушаю</em></div>
+        <div class="wg-guide" id="guide"></div>
+      </div>
+      <div class="wg-ctl">
+        <div class="wg-row"><span>Край экрана</span><div class="seg" id="sDock"><button data-v="top" class="on">Сверху</button><button data-v="bottom">Снизу</button><button data-v="left">Слева</button><button data-v="right">Справа</button></div></div>
+        <div class="wg-row"><span>Вдоль края</span><div class="wg-slide"><input type="range" id="sPos" min="0" max="100" value="50"><output id="oPos">по центру</output></div></div>
+        <div class="wg-row" id="rowMon" hidden><span>Монитор</span><div class="seg" id="sMon"></div></div>
+        <label class="switch"><input type="checkbox" id="wgPin"><span class="sw"></span><span>Закрепить: плашку нельзя сдвинуть мышью, пока не открепите</span></label>
+        <div class="wg-actions"><button class="btn" type="button" id="bReset">Вернуть наверх по центру</button><span class="muted small">Или перетащите плашку мышью к любому краю. Выбранное здесь место запоминается и после перезапуска.</span></div>
+      </div>
+    </div>
+
+    <div class="wg-col">
+      <div class="card">
+        <div class="eyebrow">Остров</div>
+        <div class="form">
+          <label class="switch"><input type="checkbox" id="wgEnable"><span class="sw"></span><span>Показывать остров на экране</span></label>
+          <label class="switch"><input type="checkbox" id="wgAuto"><span class="sw"></span><span>Запускать Карину и остров вместе с Windows</span></label>
+        </div>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Свёрнутая плашка</div>
+        <p class="muted small" style="margin:0 0 12px">Что показывать, пока Карина молчит</p>
+        <div class="seg multi" id="sIdle"><button data-k="idle_time">Время</button><button data-k="idle_battery">Заряд</button><button data-k="idle_temp">Температура</button><button data-k="idle_music">Музыка</button></div>
+        <div class="wg-idle" id="idle"><span class="wg-dot idle"></span><b>12:48</b><span>87%</span><span>54°</span><span class="mus">♪ Трек</span></div>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Персонаж</div>
+        <div class="wg-chars" id="chars">
+          <button data-c="anime"><img src="an_idle.png" alt=""><span>Аниме</span></button>
+          <button data-c="eyes"><svg viewBox="0 0 32 32"><rect x="8" y="7" width="6" height="16" rx="3" fill="#f3f3f6"/><rect x="18" y="7" width="6" height="16" rx="3" fill="#f3f3f6"/></svg><span>Глаза</span></button>
+          <button data-c="pixel"><svg viewBox="0 0 32 32" shape-rendering="crispEdges"><path fill="#ff6a1a" d="M10 4h12v2h4v2h2v18h-4v-4h-4v4h-4v-4h-4v4H8v-4H4v4H2V8h2V6h4V4z"/><rect x="9" y="11" width="5" height="6" fill="#15151a"/><rect x="18" y="11" width="5" height="6" fill="#15151a"/></svg><span>Пиксель</span></button>
+          <button data-c="logo"><svg viewBox="0 0 32 32"><rect x="3" y="3" width="26" height="26" rx="8" fill="#1d3247"/><path d="M9 18v-4M13 21V11M17 24V8M21 21V11M25 18v-4" stroke="#6ab3f3" stroke-width="2.2" stroke-linecap="round" transform="translate(-3 0)"/></svg><span>Логотип</span></button>
+        </div>
+        <div class="wg-sets">
+          <div class="wg-row"><span>Новый год на острове</span><div class="seg" id="sHol"><button data-v="dates">По датам</button><button data-v="always">Всегда</button><button data-v="off">Нет</button></div></div>
+          <div class="wg-row"><span>Уведомления (Telegram и др.)</span><div class="seg" id="sNotify"><button data-v="1">Да</button><button data-v="0">Нет</button></div></div>
+          <div class="wg-row"><span>Снег</span><div class="seg" id="sSnow"><button data-v="1">Да</button><button data-v="0">Нет</button></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card wg-wide">
+      <div class="eyebrow">Погода и горячие клавиши</div>
+      <div class="wg-two">
+        <label class="field"><span>Город для погоды на острове</span><input id="wgCity" placeholder="по умолчанию город из профиля" maxlength="60"><small class="muted">Пусто — берётся город из «Профиля».</small></label>
+        <div class="wg-keys" id="wgKeys">
+          <div data-hk="talk"><span>Говорить с Кариной</span><button type="button" class="kbtn"></button></div>
+          <div data-hk="stop"><span>Остановить речь</span><button type="button" class="kbtn"></button></div>
+          <div data-hk="island"><span>Открыть остров</span><button type="button" class="kbtn"></button></div>
+          <div data-hk="snip"><span>Снимок области</span><button type="button" class="kbtn"></button></div>
+          <p class="muted small" id="hkMsg" style="margin:8px 0 0">Нажмите на сочетание и введите новое. Backspace очищает, Esc отменяет.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<section id="tab-profile" class="tab">
+  <header class="page-head"><div class="eyebrow">Профиль</div><h1>О вас</h1><p class="muted">Карина поздравит с днём рождения (вас, партнёра и питомца), назовёт по имени, скажет погоду и время в вашем поясе и будет знать, кто вам дорог.</p></header>
+  <div class="card">
+    <div class="eyebrow">Вход через Google</div>
+    <div id="gSigned" hidden>
+      <div class="row" style="align-items:center;gap:12px"><img id="gPic" alt="" width="44" height="44" style="border-radius:50%" referrerpolicy="no-referrer"><div><b id="gName"></b><div class="muted small" id="gMail"></div></div>
+        <button type="button" class="btn danger" id="gOut" style="margin-left:auto">Выйти</button></div>
+    </div>
+    <div id="gUnsigned">
+      <p class="muted small">Откроется браузер, вы выберете аккаунт Google, и Карина узнает ваше имя и почту. Пароль она не видит. Заодно появится <b>персональный код</b> для переноса профиля и ключей на другие компьютеры (см. «Синхронизация» ниже).</p>
+      <div class="row"><button type="button" class="btn" id="gIn">Войти через Google</button><button type="button" class="btn" id="gCancel" hidden>Отменить</button></div>
+    </div>
+    <div class="note" id="gMsg" hidden></div>
+    <details style="margin-top:10px" id="gSetup"><summary class="muted small">Настройка входа (один раз): Client ID</summary>
+      <div class="form" style="margin-top:8px">
+        <label>Client ID<input id="gClient" placeholder="123456-abc.apps.googleusercontent.com" autocomplete="off"></label>
+        <label>Client secret (если Google его выдал)<input id="gSecret" type="password" autocomplete="off" placeholder="оставьте пустым, чтобы не менять"></label>
+        <div class="row"><button type="button" class="btn" id="gSave">Сохранить</button></div>
+        <ol class="muted small" style="margin:6px 0 0 18px;padding:0">
+          <li>Откройте console.cloud.google.com, создайте проект.</li>
+          <li>«API и сервисы» → «Библиотека» → найдите <b>Google Drive API</b> → «Включить» (нужно для синхронизации между компьютерами).</li>
+          <li>«API и сервисы» → «Экран согласия OAuth»: тип «Внешний», добавьте себя в «Тестовые пользователи».</li>
+          <li>«Учётные данные» → «Создать» → «Идентификатор клиента OAuth» → тип <b>«Приложение для компьютера»</b>.</li>
+          <li>Скопируйте Client ID (и Client secret) сюда. На других компьютерах впишите те же.</li>
+        </ol>
+      </div>
+    </details>
+  </div>
+  <div class="card" id="syncCard">
+    <div class="eyebrow">Синхронизация между компьютерами</div>
+    <p class="muted small">Профиль, ключи облачных моделей (Gemini, DeepSeek, свой сервер), ключ Claude и очередь провайдеров переносятся на другие ваши компьютеры. Всё хранится в скрытой папке <b>вашего</b> Google Drive и зашифровано персональным кодом: без кода прочитать данные не сможет никто, включая Google.</p>
+    <div class="note" id="syOff">Сначала войдите через Google (выше).</div>
+    <div class="note bad" id="syNoAccess" hidden>Вход выполнен без доступа к скрытой папке Drive. Нажмите «Выйти» и войдите снова, разрешив доступ к данным приложения.</div>
+    <div id="syPending" hidden>
+      <div class="note">В вашем Google Drive уже есть данные Карины с другого компьютера. Введите персональный код, который Карина показала при первом входе, — и профиль с ключами подтянутся сюда.</div>
+      <div class="form"><label>Персональный код<input id="syCodeIn" placeholder="KRN-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" style="font-family:var(--mono,monospace);letter-spacing:.06em;text-transform:uppercase"></label>
+        <div class="form-actions"><button type="button" class="btn primary" id="syCodeOk">Подключить этот компьютер</button><button type="button" class="btn danger" id="syReset">Забыл код — начать заново</button></div></div>
+      <p class="muted small">«Начать заново» заменит данные в Drive данными этого компьютера и выдаст новый код. Остальные компьютеры придётся подключить заново.</p>
+    </div>
+    <div id="syActive" hidden>
+      <div class="sy-codebox"><div class="muted small">Ваш персональный код</div><code id="syCode" class="sy-code">••••</code>
+        <div class="row"><button type="button" class="btn" id="syShow">Показать</button><button type="button" class="btn" id="syCopy">Копировать</button></div></div>
+      <p class="muted small">Запишите код в надёжное место: он понадобится при входе с нового компьютера. Восстановить его нельзя (только «начать заново»).</p>
+      <div class="eyebrow" style="margin-top:8px" id="syDevHead">Устройства</div>
+      <div class="list" id="syDevices"></div>
+      <div class="row" style="margin-top:8px"><button type="button" class="btn" id="syNow">Синхронизировать сейчас</button><button type="button" class="btn danger" id="syOffBtn">Отключить этот компьютер</button><span class="muted small" id="syLast"></span></div>
+    </div>
+    <div class="note" id="syMsg" hidden></div>
+  </div>
+  <form class="card" id="profForm">
+    <div class="eyebrow">О вас</div>
+    <div class="form">
+      <div class="row">
+        <label style="flex:1;min-width:180px">Как к вам обращаться<input name="name" maxlength="40" placeholder="Михаил"></label>
+        <label style="flex:1;min-width:180px">Полное имя (необязательно)<input name="full_name" maxlength="80" placeholder="Михаил Иванов"></label>
+        <label style="flex:1;min-width:140px">Пол<select name="gender"></select></label>
+      </div>
+      <div class="row">
+        <label style="flex:1">День рождения<input name="birth_day" type="number" min="1" max="31" placeholder="день"></label>
+        <label style="flex:1">Месяц<select name="birth_month"><option value="0">—</option><option value="1">январь</option><option value="2">февраль</option><option value="3">март</option><option value="4">апрель</option><option value="5">май</option><option value="6">июнь</option><option value="7">июль</option><option value="8">август</option><option value="9">сентябрь</option><option value="10">октябрь</option><option value="11">ноябрь</option><option value="12">декабрь</option></select></label>
+        <label style="flex:1">Год<input name="birth_year" type="number" min="1900" max="2100" placeholder="год"></label>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:160px">Страна<input name="country" maxlength="60" placeholder="Россия"></label>
+        <label style="flex:1;min-width:160px">Город (для погоды)<input name="city" maxlength="60" placeholder="Красноярск"></label>
+      </div>
+      <div class="row" style="align-items:flex-end">
+        <label style="flex:1;min-width:240px">Часовой пояс<select name="timezone"></select></label>
+        <button type="button" class="btn" id="tzAuto" title="Взять часовой пояс этого компьютера">Определить</button>
+      </div>
+      <div class="row">
+        <label style="flex:1;min-width:180px">Чем занимаетесь<input name="occupation" maxlength="80" placeholder="разработчик, студент, врач…"></label>
+        <label style="flex:2;min-width:220px">Интересы<input name="interests" maxlength="300" placeholder="музыка, игры, велосипед, кино"></label>
+      </div>
+      <label>О себе (что Карине полезно знать)<textarea name="about" maxlength="600" rows="3" placeholder="Например: живу один, люблю короткие ответы, по утрам кофе без сахара"></textarea></label>
+    </div>
+    <div class="eyebrow" style="margin-top:14px">Партнёр</div>
+    <div class="form">
+      <div class="row">
+        <label style="flex:1;min-width:160px">Кто<select name="partner_kind"></select></label>
+        <label style="flex:2;min-width:160px">Имя<input name="partner_name" maxlength="40" placeholder="Катя"></label>
+        <label style="flex:1;min-width:90px">День р.<input name="partner_day" type="number" min="1" max="31" placeholder="день"></label>
+        <label style="flex:1;min-width:120px">Месяц<select name="partner_month"><option value="0">—</option><option value="1">январь</option><option value="2">февраль</option><option value="3">март</option><option value="4">апрель</option><option value="5">май</option><option value="6">июнь</option><option value="7">июль</option><option value="8">август</option><option value="9">сентябрь</option><option value="10">октябрь</option><option value="11">ноябрь</option><option value="12">декабрь</option></select></label>
+      </div>
+      <label class="switch"><input type="checkbox" name="share_with_llm"><span class="sw"></span><span>Учитывать профиль в ответах нейросети (при включённом Claude/облаке эти данные передаются в запросе)</span></label>
+    </div>
+    <div class="eyebrow" style="margin-top:14px">Домашние животные</div>
+    <div class="list" id="petList"></div>
+    <div class="row"><button type="button" class="btn" id="petAdd">Добавить питомца</button></div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Сохранить профиль</button><span class="muted small" id="profMsg"></span></div>
+    <p class="muted small">Карина поздравит с днём рождения (вас, партнёра и питомца), назовёт по имени, скажет погоду в вашем городе и будет знать клички: «как зовут мою собаку», «как зовут мою девушку», «скажи погоду».</p>
+  </form>
+</section>
+
+<!-- ============ НАСТРОЙКИ ============ -->
+<section id="tab-settings" class="tab">
+  <header class="page-head"><div class="eyebrow">Настройки</div><h1>Всё в одном месте</h1></header>
+  <form id="setForm" class="settings">
+    <div class="card">
+      <div class="eyebrow">Обращение</div>
+      <div class="form">
+        <label>Имя ассистента<input name="name" required></label>
+        <label>Другие варианты, как её может «услышать» распознавание (через запятую)<input name="aliases"></label>
+        <label class="switch"><input type="checkbox" name="wake_required"><span class="sw"></span><span>Откликаться только на имя</span></label>
+        <label>Слушать без имени после ответа, секунд <output id="outFollow"></output><input type="range" name="followup_seconds" min="0" max="20" step="1"></label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Слух</div>
+      <div class="form">
+        <p class="muted small" style="margin:0">Можно подключить до 4 микрофонов сразу. Каждый слушает сам по себе: если один расслышал плохо, помогают остальные, и Карина берёт лучший вариант фразы. Выключатель отключает микрофон, не убирая его из списка.</p>
+        <div class="mics" id="micList"></div>
+        <div class="form-actions"><button class="btn" type="button" id="btnMicsRefresh">Обновить список устройств</button><span class="msg" id="micsMsg"></span></div>
+        <label>Как микрофоны помогают друг другу
+          <select name="assist">
+            <option value="smart">Умно (рекомендуется): лучший микрофон слушает, остальные помогают, если он расслышал плохо</option>
+            <option value="all">Максимум точности: распознавать со всех микрофонов и выбирать лучшее (медленнее)</option>
+            <option value="best">Быстро: только самый чистый микрофон, остальные — запасные</option>
+          </select>
+        </label>
+        <label>Точность распознавания
+          <select name="model">
+            <option value="tiny">Минимальная — самая быстрая</option>
+            <option value="base">Базовая</option>
+            <option value="small">Хорошая (рекомендуется)</option>
+            <option value="medium">Высокая — нужен мощный компьютер</option>
+          </select>
+        </label>
+        <label>Чувствительность микрофонов <output id="outVad"></output><input type="range" name="vad_threshold" min="0.004" max="0.05" step="0.002"></label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Голос</div>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="tts_enabled"><span class="sw"></span><span>Отвечать голосом</span></label>
+        <p class="muted small" style="margin:0">Голос Карины — живой нейросетевой голос (Карина).</p>
+        <div class="note" id="silBox">
+          <span id="silStatus" class="muted small"></span>
+          <div class="row" style="margin-top:8px"><button type="button" class="btn" id="silDl">Скачать голос</button><button type="button" class="btn" id="silUpd" hidden>Обновить голос</button><button type="button" class="btn danger" id="silDel" hidden>Удалить</button><button type="button" class="btn" id="silCancel" hidden>Отмена</button></div>
+          <div class="pbar" id="silBar" hidden><i></i></div>
+          <p class="muted small" style="margin:8px 0 0">Работает на вашем компьютере, без интернета, не роботизированный. Голос и пакет <b>torch</b> идут в комплекте с Кариной. Лицензия модели — для личного некоммерческого использования.</p>
+        </div>
+        <label>Скорость речи <output id="outRate"></output><input type="range" name="rate" min="-5" max="5" step="1"></label>
+        <label>Поисковик
+          <select name="search_engine"><option value="google">Google</option><option value="yandex">Яндекс</option></select>
+        </label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Микшер и VPN</div>
+      <p class="muted small">«Карина, сделай тише музыку», «убавь звук в игре», «заглуши донаты», «включи сцену звонок», «включи впн», «выключи впн».</p>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="mixer_enabled"><span class="sw"></span><span>Управлять микшером Bogestv0 MIXER</span></label>
+        <label class="switch"><input type="checkbox" name="mixer_prefer"><span class="sw"></span><span>Громкость — через микшер: «сделай тише / громче» без названия → Карина спросит, какую дорожку</span></label>
+        <details class="phrases"><summary>Какие фразы управляют микшером</summary>
+          <ul class="muted small">
+            <li><b>Тише / громче дорожки:</b> «Карина, сделай браузер тише», «сделай музыку громче», «убавь звук в игре», «прибавь донаты»</li>
+            <li><b>На сколько процентов:</b> «сделай браузер тише на 20%» (на 20 пунктов от нынешнего уровня), «сделай музыку громче на 10 процентов»</li>
+            <li><b>Точная громкость:</b> «сделай звук музыки на 20%», «громкость игры пятьдесят процентов», «музыку на 100»</li>
+            <li><b>Чуть / намного:</b> «чуть тише музыку», «намного громче игру», «тише на 3 дБ»</li>
+            <li><b>Заглушить и вернуть:</b> «заглуши донаты», «верни звук в игре»</li>
+            <li><b>Короткие фразы (если включён переключатель выше):</b> «Карина, сделай тише» → «Что сделать тише в микшере?» → «музыку». Ответить можно без имени. «Общая» — изменить громкость компьютера, «отмена» — ничего.</li>
+            <li><b>Сцены и VPN:</b> «включи сцену звонок», «включи впн», «выключи впн»</li>
+            <li><b>Дорожки:</b> игры, музыка, дискорд, донаты, браузер, второй браузер, микрофон; свои названия, которые вы дали в микшере, тоже понимаю.</li>
+          </ul></details>
+        <label>PIN удалённого пульта микшера <input type="password" name="mixer_pin" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="пусто — взять из настроек микшера"></label>
+        <label>Порт пульта (0 — взять из настроек микшера) <input type="number" name="mixer_port" min="0" max="65535"></label>
+        <label>Шаг «тише / громче», дБ <output id="outStep"></output><input type="range" name="mixer_step" min="1" max="9" step="0.5"></label>
+        <div class="row"><button type="button" class="btn" id="mixTest">Проверить связь с микшером</button></div>
+        <div class="note" id="mixOut" hidden></div>
+        <p class="muted small">В микшере один раз включите «Настройки → Удалённый пульт». PIN и порт Карина обычно находит сама.</p>
+        <label class="switch"><input type="checkbox" name="vpn_enabled"><span class="sw"></span><span>Управлять VPN в расширении браузера</span></label>
+        <div class="note" id="vpnOut"></div>
+        <p class="muted small">Нужно расширение Bogestv0 VPN версии 1.4.0 или новее: оно само подключается к Карине на этом компьютере.</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Поиск в интернете (для чата)</div>
+      <p class="muted small">Карина сама придумывает запросы, открывает и читает страницы, при нехватке данных ищет заново и в конце даёт ссылки на источники. Ключи не нужны. Тексты страниц считаются данными, а не командами.</p>
+      <div class="form">
+        <label>Когда искать
+          <select name="search_mode">
+            <option value="auto">Автоматически: когда в просьбе есть «найди», «новости», «сегодня», «цена»…</option>
+            <option value="always">Всегда, на каждый вопрос</option>
+            <option value="off">Никогда (отвечать из знаний модели)</option>
+          </select>
+        </label>
+        <label>Глубина поиска
+          <select name="search_depth">
+            <option value="quick">Быстро: около 6 страниц</option>
+            <option value="normal">Обычно: около 12 страниц</option>
+            <option value="deep">Глубоко: около 24 страниц (дольше)</option>
+            <option value="max">Максимум: до 50 страниц (долго, нужна мощная модель)</option>
+          </select>
+        </label>
+        <div class="form-actions"><button class="btn" type="button" id="btnSearchTest">Проверить поиск</button><span class="msg" id="searchMsg"></span></div>
+        <pre class="muted small" id="searchTest" hidden style="white-space:pre-wrap;margin:0"></pre>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Claude (ключ API, необязательно)</div>
+      <p class="muted small">Ключ вводится во вкладке «Облако». Он нужен для двух вещей: чтобы Claude отвечал в чате и чтобы Карина понимала фразы, которых нет в списке команд (галочка ниже). Без ключа всё работает офлайн на встроенной модели.</p>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="llm_enabled"><span class="sw"></span><span>Понимать свободные фразы через Claude, когда есть интернет</span></label>
+        <div class="form-actions"><button class="btn" type="button" id="setToCloud">Ввести ключ: вкладка «Облако» →</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Характер</div>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="persona_rude"><span class="sw"></span><span>Дерзкая Карина 18+: злится, ругается матом, шутит пошло (только в обычном чате)</span></label>
+        <div class="note">Работает в чате и в простых ответах («как дела», «кто ты»). Код, файлы и команды остаются нейтральными. Насколько хорошо получится — зависит от выбранной модели.</div>
+      </div>
+    </div>
+    <div class="card" id="tnCard">
+      <div class="eyebrow">VPN и прокси</div>
+      <p class="muted small">«Карина, включи впн», «включи прокси», «включи впн только для хрома», «выключи впн», «смени сервер». Перед включением Карина спросит «да или нет» и будет ждать ответ (можно «стоп»). Приложения можно добавить голосом: «добавь приложения в впн». Работает на движке sing-box: он скачивается один раз и запускается Кариной сама.</p>
+      <div class="form">
+        <div class="note" id="tnEngine"></div>
+        <div class="row"><button type="button" class="btn" id="tnDl">Скачать движок</button><button type="button" class="btn danger" id="tnDel" hidden>Удалить движок</button></div>
+        <div class="pbar" id="tnBar" hidden><i></i></div>
+        <label>Ссылки на серверы (vless://, vmess://, trojan://, ss://, hysteria2://) или адрес подписки
+          <textarea id="tnText" rows="3" placeholder="vless://…  или  https://адрес-подписки" spellcheck="false" autocomplete="off"></textarea></label>
+        <div class="row"><button type="button" class="btn" id="tnAdd">Добавить</button><button type="button" class="btn" id="tnRefresh" hidden>Обновить подписку</button></div>
+        <label>Сервер
+          <select id="tnServer"></select></label>
+        <div class="row"><button type="button" class="btn danger" id="tnRemove">Убрать этот сервер</button><button type="button" class="btn danger" id="tnClear">Убрать все</button></div>
+        <label>Как работает
+          <select id="tnMode"><option value="vpn">VPN (весь трафик через виртуальный адаптер, нужны права администратора)</option><option value="proxy">Прокси (системный прокси Windows, без прав администратора)</option></select></label>
+        <label>Куда
+          <select id="tnScope"><option value="all">Весь компьютер</option><option value="apps">Только выбранные приложения (всегда через VPN, нужны права администратора)</option></select></label>
+        <label>Приложения (имена exe через запятую, например chrome.exe, Discord.exe)
+          <input type="text" id="tnApps" placeholder="chrome.exe, Discord.exe" spellcheck="false" autocomplete="off"></label>
+        <label class="switch"><input type="checkbox" id="tnConfirm"><span class="sw"></span><span>Переспрашивать «да или нет» перед включением голосом</span></label>
+        <label class="switch"><input type="checkbox" id="tnCloud"><span class="sw"></span><span>Облачные модели (Gemini, DeepSeek, Claude, свой сервер) сами идут через VPN-сервер. VPN на компьютере при этом не включается и права администратора не нужны</span></label>
+        <label class="switch"><input type="checkbox" id="tnDirectRu"><span class="sw"></span><span>Сайты .ru, .su и .рф открывать напрямую, мимо сервера</span></label>
+        <div class="row"><button type="button" class="btn" id="tnStart">Включить</button><button type="button" class="btn" id="tnStop">Выключить</button></div>
+        <div class="note" id="tnStatus"></div>
+        <div class="note" id="tnMsg" hidden></div>
+        <p class="muted small">Ссылки с паролями хранятся только в настройках Карины на этом компьютере, в окне показаны одни названия. Для режима VPN включите в разделе «Окно и оформление» запуск от имени администратора.</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Обновления</div>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="upd_auto"><span class="sw"></span><span>Проверять новую версию при запуске</span></label>
+        <div class="form-actions"><button class="btn" type="button" id="btnUpdate2">Проверить обновления сейчас</button><span class="msg" id="updMsg"></span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Окно и оформление</div>
+      <div class="form">
+        <label class="switch"><input type="checkbox" name="background"><span class="sw"></span><span>Работать в фоне: закрытие окна сворачивает Карину в трей (выход — через значок в трее)</span></label>
+        <div id="admRow" hidden>
+          <label class="switch"><input type="checkbox" id="admSwitch"><span class="sw"></span><span>Запускать от имени администратора (пока не выключите)</span></label>
+          <div class="note" id="admNote"></div>
+          <div class="form-actions" style="margin-top:8px"><button type="button" class="btn" id="admRestart" hidden>Перезапустить Карину сейчас</button><span class="msg" id="admMsg"></span></div>
+        </div>
+        <input type="hidden" name="theme" value="dark">
+      </div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Удаление</div>
+      <div class="form">
+        <p class="muted small">Можно убрать только скачанное (модели, голос, движки) или стереть Карину целиком вместе с настройками, диалогами и самой программой. Что именно удалять, выбираете вы.</p>
+        <div class="form-actions"><button type="button" class="btn danger" id="btnUninstall">Удалить…</button></div>
+      </div>
+    </div>
+    <div class="savebar">
+      <button class="btn primary" type="submit">Сохранить</button>
+      <button class="btn" type="button" id="btnData">Открыть папку с данными</button>
+      <span class="msg" id="setMsg"></span>
+    </div>
+  </form>
+</section>
+</main>
+</div>
+</div>
+<script src="holo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

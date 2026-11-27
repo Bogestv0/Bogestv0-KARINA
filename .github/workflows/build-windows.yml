@@ -1,0 +1,137 @@
+name: Build Windows (Bogestv0 KARINA)
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Тег релиза, в который залить файлы (например v1.0.0). Пусто — только собрать артефакт'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt --upgrade pyinstaller pyinstaller-hooks-contrib pytest
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Тесты
+        run: |
+          python -m unittest discover -s tests -v
+          python -m pytest tests/test_v170.py -v
+
+      - name: Версия из кода
+        id: ver
+        shell: pwsh
+        run: |
+          $v = python -c "import karina; print(karina.__version__)"
+          "version=$v" >> $env:GITHUB_OUTPUT
+          $tag = "${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}"
+          if ($tag -and $tag -ne "v$v") { Write-Error "Тег $tag не совпадает с версией в karina/__init__.py ($v)"; exit 1 }
+
+      - name: "Движок VPN (sing-box) — для необязательной установки из мастера"
+        run: python build/fetch_vpn_engine.py
+
+      - name: Кэш голоса Карины
+        uses: actions/cache@v4
+        with:
+          path: voices
+          key: silero-voice-v5_6_ru
+
+      - name: "Голос Карины (Silero «Байя») — для архива компонентов"
+        run: python build/fetch_voice.py
+
+      - name: Кэш моделей распознавания
+        uses: actions/cache@v4
+        with:
+          path: whisper_models
+          key: whisper-small-tiny-v1
+
+      - name: "Модели распознавания речи (small и tiny) — для архива компонентов"
+        run: python build/fetch_whisper.py
+
+      - name: Проверка, что голос на месте
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem voices -Filter "silero_*.pt" -ErrorAction SilentlyContinue
+          if (-not $f) { Write-Error "voices/silero_*.pt нет после fetch_voice.py"; exit 1 }
+          $f | ForEach-Object { Write-Host "$($_.Name) $([math]::Round($_.Length/1MB)) МБ" }
+
+      - name: Сборка приложения (PyInstaller)
+        run: pyinstaller build/karina.spec --noconfirm --distpath dist --workpath build/work
+
+      - name: "Архив компонентов (torch, голос, модели) — докачивается Кариной при первом запуске"
+        run: python build/make_pack.py
+
+      - name: Самопроверка собранного exe
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          KARINA_SELFTEST_PACK: ${{ github.workspace }}\dist\Bogestv0-KARINA-Components-${{ steps.ver.outputs.version }}.zip
+        run: |
+          $dir = Join-Path $env:APPDATA "Bogestv0 KARINA"
+          $p = Start-Process -FilePath "dist\Karina\Bogestv0-KARINA.exe" -ArgumentList "--selftest" -PassThru
+          $hung = -not $p.WaitForExit(420000)
+          if ($hung) { taskkill /F /T /PID $p.Id | Out-Null }
+          foreach ($f in "selftest.log", "crash.log", "karina.log") {
+            $path = Join-Path $dir $f
+            if (Test-Path $path) { Write-Host "----- $f"; Get-Content $path }
+          }
+          if ($hung) { Write-Error "Самопроверка зависла (420 с) — см. журнал выше"; exit 1 }
+          if ($p.ExitCode -ne 0) { Write-Error "Самопроверка не пройдена (код $($p.ExitCode))"; exit 1 }
+
+      - name: Установщик (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=${{ steps.ver.outputs.version }}" build\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Портативная версия и контрольные суммы
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          Compress-Archive -Path dist\Karina\* -DestinationPath "dist\Bogestv0-KARINA-Portable-$v.zip"
+          Get-ChildItem dist\*.exe, dist\*.zip | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content dist\SHA256SUMS.txt -Encoding ascii
+          Get-Content dist\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bogestv0-KARINA-windows-x64
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Публикация в релиз
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "Bogestv0 KARINA $TAG. Установщик: Bogestv0-KARINA-Setup-*.exe"
+          gh release upload "$TAG" dist/*.exe dist/*.zip dist/SHA256SUMS.txt --clobber
